@@ -11,8 +11,11 @@ import { provideWebSigner, webAuthorization } from "../engine/web-signer.ts";
 import { startHive } from "./engine.mjs";
 import { testPubkey, testSigner } from "./signer.ts";
 
-/** @param {{ role?: "owner"|"admin"|"member" }} [options] the test key's relay role */
-export async function startWorld({ role = "member" } = {}) {
+/**
+ * @param {{ role?: "owner"|"admin"|"member", workflowsDir?: string }} [options]
+ *   the test key's relay role, and a folder of extra workflow packages
+ */
+export async function startWorld({ role = "member", workflowsDir } = {}) {
   const vite = await createServer({
     root: fileURLToPath(new URL("../../../../", import.meta.url)),
     configFile: false,
@@ -26,6 +29,7 @@ export async function startWorld({ role = "member" } = {}) {
     allowedOrigins: [origin],
     member: testPubkey,
     role,
+    workflowsDir,
   });
   return {
     hive,

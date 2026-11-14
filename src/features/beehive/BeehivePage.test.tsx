@@ -11,7 +11,9 @@ import type { Client } from "./engine/client";
 import {
   CardSchema,
   EventSchema,
+  CheckWorkflowResponseSchema,
   ListCardsResponseSchema,
+  ListWorkflowsResponseSchema,
   PollEventsResponseSchema,
   WhoAmIResponseSchema,
   type Card,
@@ -38,6 +40,12 @@ function engine(options: { cards?: Card[]; role?: string; seq?: bigint } = {}) {
     whoAmI: vi.fn(async () =>
       create(WhoAmIResponseSchema, { role: options.role ?? "run" }),
     ),
+    listWorkflows: vi.fn(async () =>
+      create(ListWorkflowsResponseSchema, {
+        workflows: [{ name: "demo", ok: true, builtin: true }],
+      }),
+    ),
+    checkWorkflow: vi.fn(async () => create(CheckWorkflowResponseSchema, {})),
     getCard: vi.fn(async () => card({ body: "Line one\nLine two" })),
     createCard: vi.fn(async () => card()),
     archiveCards: vi.fn(async () => ({})),
@@ -168,6 +176,19 @@ it("lists archived cards in the Archive view", async () => {
   await userEvent.click(screen.getByRole("tab", { name: "Archive" }));
   expect(await screen.findByText("Fix the build")).toBeVisible();
   expect(e.calls.listCards).toHaveBeenLastCalledWith(true, expect.anything());
+});
+
+it("lists the workflows from the Workflows view and returns to the board", async () => {
+  const e = engine({ cards: [card()] });
+  page(e.client);
+  await screen.findByText("Fix the build");
+  await userEvent.click(screen.getByRole("tab", { name: "Workflows" }));
+  expect(await screen.findByRole("region", { name: "demo" })).toBeVisible();
+  expect(screen.queryByText("Fix the build")).toBeNull();
+  await userEvent.click(screen.getByRole("tab", { name: "Board" }));
+  expect(await screen.findByText("Fix the build")).toBeVisible();
+  // The board kept its read: switching views did not read the cards again.
+  expect(e.calls.listCards).toHaveBeenCalledTimes(1);
 });
 
 it("offers New card only to someone who can run", async () => {

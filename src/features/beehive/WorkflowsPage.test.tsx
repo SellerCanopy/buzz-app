@@ -1,0 +1,181 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
+import { create, type MessageInitShape } from "@bufbuild/protobuf";
+import type { Client } from "./engine/client";
+import {
+  CheckWorkflowResponseSchema,
+  ListWorkflowsResponseSchema,
+} from "./gen/kiln/engine/v1/engine_pb";
+import { WorkflowsPage, stageSummary } from "./WorkflowsPage";
+
+afterEach(cleanup);
+
+type Listed = MessageInitShape<typeof ListWorkflowsResponseSchema>;
+type Checked = MessageInitShape<typeof CheckWorkflowResponseSchema>;
+
+function engine(
+  workflows: NonNullable<Listed["workflows"]>,
+  packages: NonNullable<Checked["packages"]>,
+) {
+  const client = {
+    listWorkflows: vi.fn(async () =>
+      create(ListWorkflowsResponseSchema, { workflows }),
+    ),
+    checkWorkflow: vi.fn(async () =>
+      create(CheckWorkflowResponseSchema, { packages }),
+    ),
+  };
+  return { client: client as unknown as Client, calls: client };
+}
+
+const demo = {
+  name: "demo",
+  version: "0.1.0",
+  description: "A small workflow.",
+  builtin: true,
+  ok: true,
+  stages: [
+    { id: "plan", name: "Plan", kind: "prompt", agent: "builder" },
+    { id: "approve", kind: "approval", pause: true },
+  ],
+};
+
+it("lists each package with its stages, the kind of each and the agent a prompt runs on", async () => {
+  render(
+    <WorkflowsPage
+      client={
+        engine([demo], [{ name: "demo", path: "builtin/demo", findings: [] }])
+          .client
+      }
+    />,
+  );
+  const section = await screen.findByRole("region", { name: "demo" });
+  expect(within(section).getByText("A small workflow.")).toBeVisible();
+  expect(within(section).getByText("Ready")).toBeVisible();
+  expect(within(section).getByText("Built in, Version 0.1.0")).toBeVisible();
+  const stages = within(section).getAllByRole("listitem");
+  expect(stages).toHaveLength(2);
+  expect(stages[0]).toHaveTextContent("Plan");
+  expect(stages[0]).toHaveTextContent("Prompt, agent builder");
+  // A stage with no name shows its id.
+  expect(stages[1]).toHaveTextContent("approve");
+  expect(stages[1]).toHaveTextContent(
+    "Approval, waits for a person to start it",
+  );
+  expect(within(section).queryByRole("list", { name: /Findings/ })).toBeNull();
+});
+
+it("shows each finding with its severity, code and message beside its package", async () => {
+  render(
+    <WorkflowsPage
+      client={
+        engine(
+          [{ name: "broken", ok: false, stages: [] }],
+          [
+            {
+              name: "broken",
+              path: "workflows/broken",
+              findings: [
+                {
+                  path: "workflow.yaml:stages[0].on.passed",
+                  code: "route_target_unknown",
+                  severity: "error",
+                  message: "no such stage",
+                },
+                {
+                  code: "route_cycle_unbounded",
+                  severity: "warning",
+                  message: "a loop has no limit",
+                },
+              ],
+            },
+          ],
+        ).client
+      }
+    />,
+  );
+  const section = await screen.findByRole("region", { name: "broken" });
+  expect(within(section).getByText("Has errors")).toBeVisible();
+  const findings = within(
+    within(section).getByRole("list", { name: "Findings for broken" }),
+  ).getAllByRole("listitem");
+  expect(findings).toHaveLength(2);
+  expect(findings[0]).toHaveTextContent(
+    "Error route_target_unknown no such stage",
+  );
+  expect(findings[0]).toHaveTextContent("workflow.yaml:stages[0].on.passed");
+  expect(findings[1]).toHaveTextContent("Warning route_cycle_unbounded");
+});
+
+it("lists a folder that did not load by its path, apart from the packages", async () => {
+  render(
+    <WorkflowsPage
+      client={
+        engine(
+          [demo],
+          [
+            { name: "demo", path: "builtin/demo", findings: [] },
+            {
+              name: "",
+              path: "workflows/nameless",
+              findings: [
+                {
+                  code: "package_unreadable",
+                  severity: "error",
+                  message: "kiln-package.yaml has no name",
+                },
+              ],
+            },
+          ],
+        ).client
+      }
+    />,
+  );
+  const section = await screen.findByRole("region", {
+    name: "Packages that did not load",
+  });
+  expect(within(section).getByText("workflows/nameless")).toBeVisible();
+  expect(
+    within(section).getByRole("list", {
+      name: "Findings for workflows/nameless",
+    }),
+  ).toHaveTextContent("package_unreadable");
+});
+
+it("says so when no workflow is loaded", async () => {
+  render(<WorkflowsPage client={engine([], []).client} />);
+  expect(await screen.findByText("No workflows")).toBeVisible();
+});
+
+it("shows the failure and reads again on Retry, without claiming there are no workflows", async () => {
+  const e = engine(
+    [demo],
+    [{ name: "demo", path: "builtin/demo", findings: [] }],
+  );
+  e.calls.listWorkflows.mockRejectedValueOnce(
+    new Error("Beehive is not reachable"),
+  );
+  render(<WorkflowsPage client={e.client} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Beehive is not reachable",
+  );
+  expect(screen.queryByText("No workflows")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("region", { name: "demo" })).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("names a kind it does not know as the engine sent it", () => {
+  expect(
+    stageSummary({
+      id: "x",
+      name: "",
+      kind: "review",
+      agent: "",
+      pause: false,
+    } as never),
+  ).toBe("review");
+});

@@ -14,6 +14,7 @@ const nonIconDependencies = new Set([
   "@bufbuild/buf", // Beehive: generates its protobuf types, not an icon catalog.
   "@bufbuild/protobuf", // Beehive: protobuf JSON runtime for generated types.
   "@bufbuild/protoc-gen-es", // Beehive: the generator plugin.
+  "json-schema-to-typescript", // Beehive: generates the workflow file types from its JSON Schema.
   "@buzz/author",
   "@deepseek-ai/cordis",
   "@dnd-kit/core", // Pointer drag and drop for sidebar channel moves.

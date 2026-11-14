@@ -77,6 +77,55 @@ const find = (id: unknown) => {
 };
 const lastSeq = () => String(log.length);
 
+// Two packages and a folder that did not load, to show what the page lists and
+// reports. `broken` routes to a stage that does not exist.
+const WORKFLOWS = [
+  {
+    name: "demo",
+    version: "0.1.0",
+    description: "A small workflow for trying Beehive.",
+    builtin: true,
+    ok: true,
+    stages: [
+      { id: "plan", name: "Plan", kind: "prompt", agent: "builder" },
+      { id: "approve", name: "Approve", kind: "approval", pause: true },
+    ],
+  },
+  {
+    name: "broken",
+    version: "1",
+    ok: false,
+    stages: [{ id: "build", name: "Build", kind: "prompt", agent: "builder" }],
+  },
+];
+const CHECKS = [
+  { name: "demo", path: "builtin/demo", findings: [] },
+  {
+    name: "broken",
+    path: "workflows/broken",
+    findings: [
+      {
+        path: "workflow.yaml:stages[0].on.passed",
+        code: "route_target_unknown",
+        severity: "error",
+        message: "stage build routes passed to a stage that does not exist",
+      },
+    ],
+  },
+  {
+    name: "",
+    path: "workflows/nameless",
+    findings: [
+      {
+        path: "kiln-package.yaml",
+        code: "package_unreadable",
+        severity: "error",
+        message: "kiln-package.yaml has no name",
+      },
+    ],
+  },
+];
+
 async function handle(
   method: string,
   body: Record<string, unknown>,
@@ -97,6 +146,10 @@ async function handle(
       };
     case "WhoAmI":
       return { role: fixture.role };
+    case "ListWorkflows":
+      return { workflows: WORKFLOWS };
+    case "CheckWorkflow":
+      return { packages: CHECKS, ok: false };
     case "GetCard":
       return wire(find(body.cardId), true);
     case "CreateCard": {

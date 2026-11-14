@@ -11,6 +11,8 @@ import {
   ArchiveCardsRequestSchema,
   ArchiveCardsResponseSchema,
   CardSchema,
+  CheckWorkflowRequestSchema,
+  CheckWorkflowResponseSchema,
   CreateCardRequestSchema,
   CreateTaskRequestSchema,
   GetCardRequestSchema,
@@ -18,6 +20,12 @@ import {
   GetStatusResponseSchema,
   ListCardsRequestSchema,
   ListCardsResponseSchema,
+  ListStageTemplatesRequestSchema,
+  ListStageTemplatesResponseSchema,
+  ListTemplateVariablesRequestSchema,
+  ListTemplateVariablesResponseSchema,
+  ListWorkflowsRequestSchema,
+  ListWorkflowsResponseSchema,
   PollEventsRequestSchema,
   PollEventsResponseSchema,
   RemoveCardRequestSchema,
@@ -136,6 +144,39 @@ export function createClient(session: Session) {
         WhoAmIRequestSchema,
         WhoAmIResponseSchema,
         create(WhoAmIRequestSchema),
+        signal,
+      ),
+    listWorkflows: (signal?: AbortSignal) =>
+      unary(
+        "ListWorkflows",
+        ListWorkflowsRequestSchema,
+        ListWorkflowsResponseSchema,
+        create(ListWorkflowsRequestSchema),
+        signal,
+      ),
+    /** Check one package by name, or every package and folder when `name` is empty. */
+    checkWorkflow: (name = "", signal?: AbortSignal) =>
+      unary(
+        "CheckWorkflow",
+        CheckWorkflowRequestSchema,
+        CheckWorkflowResponseSchema,
+        create(CheckWorkflowRequestSchema, { name }),
+        signal,
+      ),
+    listTemplateVariables: (signal?: AbortSignal) =>
+      unary(
+        "ListTemplateVariables",
+        ListTemplateVariablesRequestSchema,
+        ListTemplateVariablesResponseSchema,
+        create(ListTemplateVariablesRequestSchema),
+        signal,
+      ),
+    listStageTemplates: (signal?: AbortSignal) =>
+      unary(
+        "ListStageTemplates",
+        ListStageTemplatesRequestSchema,
+        ListStageTemplatesResponseSchema,
+        create(ListStageTemplatesRequestSchema),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

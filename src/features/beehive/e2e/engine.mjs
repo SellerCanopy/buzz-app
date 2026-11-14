@@ -116,12 +116,14 @@ function stopChild(child) {
  * @param {string[]} [options.allowedOrigins] browser origins the engine allows
  * @param {string} [options.member] a public key (hex) to seed as a relay member
  * @param {"owner"|"admin"|"member"} [options.role] that member's relay role
+ * @param {string} [options.workflowsDir] a folder of extra workflow packages to load
  * @returns {Promise<{ url: string, stop(): Promise<void>, restart(): Promise<void> }>}
  */
 export async function startHive({
   allowedOrigins = [],
   member,
   role = "member",
+  workflowsDir,
 } = {}) {
   const missing = hiveUnavailable();
   if (missing) throw new Error(missing);
@@ -152,6 +154,7 @@ export async function startHive({
         BUZZ_HIVE_TOKEN_SECRET: SECRET,
         BUZZ_HIVE_COMMUNITY_HOST: host,
         BUZZ_HIVE_ALLOWED_ORIGINS: allowedOrigins.join(","),
+        ...(workflowsDir ? { BUZZ_HIVE_WORKFLOWS_DIR: workflowsDir } : {}),
       },
     });
   let child = launch();

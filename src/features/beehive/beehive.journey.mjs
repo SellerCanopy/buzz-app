@@ -154,3 +154,82 @@ test("a card another person adds shows up on the open board without a new read",
   const calls = await page.evaluate(() => window.beehiveFixture.calls);
   expect(calls.slice(before).some((c) => c.includes("ListCards"))).toBe(false);
 });
+
+async function openWorkflows(page) {
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await pane.getByRole("tab", { name: "Workflows" }).click();
+  return pane;
+}
+
+test("the Workflows view lists the built-in packages with their stages", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  const pane = await openWorkflows(page);
+  const demo = pane.getByRole("region", { name: "demo" });
+  await expect(
+    demo.getByText("A small workflow for trying Beehive."),
+  ).toBeVisible();
+  await expect(demo.getByText("Ready")).toBeVisible();
+  const stages = demo.getByRole("list", { name: "Stages of demo" });
+  await expect(stages.getByRole("listitem")).toHaveCount(2);
+  await expect(stages.getByRole("listitem").first()).toContainText(
+    "Prompt, agent builder",
+  );
+  const calls = await page.evaluate(() => window.beehiveFixture.calls);
+  expect(calls.some((c) => c.includes("/ListWorkflows bearer"))).toBe(true);
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("a broken package shows its finding with the code, and a folder that did not load shows its own", async ({
+  page,
+}) => {
+  const pane = await openWorkflows(page);
+  const broken = pane.getByRole("region", { name: "broken" });
+  await expect(broken.getByText("Has errors")).toBeVisible();
+  const finding = broken
+    .getByRole("list", { name: "Findings for broken" })
+    .getByRole("listitem");
+  await expect(finding).toContainText("Error");
+  await expect(finding).toContainText("route_target_unknown");
+  await expect(finding).toContainText("a stage that does not exist");
+  const unloaded = pane.getByRole("region", {
+    name: "Packages that did not load",
+  });
+  await expect(unloaded.getByText("workflows/nameless")).toBeVisible();
+  await expect(unloaded).toContainText("package_unreadable");
+});
+
+test("the Workflows view keeps the board's cards and comes back to them", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await addCard(pane, "Stay on the board");
+  await pane.getByRole("tab", { name: "Workflows" }).click();
+  await expect(pane.getByRole("region", { name: "demo" })).toBeVisible();
+  await expect(pane.getByText("Stay on the board")).toHaveCount(0);
+  await pane.getByRole("tab", { name: "Board" }).click();
+  await expect(pane.getByText("Stay on the board")).toBeVisible();
+});
+
+test("the Workflows view stays inside a narrow window in dark appearance with large text", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 420, height: 800 });
+  await page.goto(url);
+  await page.getByRole("button", { name: "Toggle appearance" }).click();
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "24px";
+  });
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await pane.getByRole("tab", { name: "Workflows" }).click();
+  const finding = pane
+    .getByRole("list", { name: "Findings for broken" })
+    .getByRole("listitem");
+  await expect(finding).toBeVisible();
+  const box = await finding.boundingBox();
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(420);
+});

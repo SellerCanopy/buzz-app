@@ -10,8 +10,9 @@ import type { Card } from "./gen/kiln/engine/v1/engine_pb";
 import type { Client } from "./engine/client";
 import { useLive } from "./engine/useLive";
 import { stateLabel } from "./labels";
+import { WorkflowsPage } from "./WorkflowsPage";
 
-type View = "board" | "archive";
+type View = "board" | "archive" | "workflows";
 
 /** Board columns by where a card is: Backlog has no workflow, the rest follow its state. */
 const COLUMNS = [
@@ -40,7 +41,7 @@ export function columnOf(card: Card): (typeof COLUMNS)[number]["key"] {
   }
 }
 
-/** The board of live cards, or the archive. A card opens on its own page. */
+/** The board of live cards, the archive, or the workflows list. A card opens on its own page. */
 export function BoardPage({
   client,
   canRun,
@@ -56,21 +57,32 @@ export function BoardPage({
   const { live, retry } = useLive(client, view === "archive");
   const failed = live.status === "error";
   const cards = live.status === "ready" ? live.cards : [];
+  const toolbar = (
+    <div className="beehive-toolbar">
+      <Tabs
+        variant="segmented"
+        size="sm"
+        label="View"
+        value={view}
+        onValueChange={setView}
+        items={[
+          { value: "board", label: "Board" },
+          { value: "archive", label: "Archive" },
+          { value: "workflows", label: "Workflows" },
+        ]}
+      />
+    </div>
+  );
+  if (view === "workflows")
+    return (
+      <>
+        {toolbar}
+        <WorkflowsPage client={client} />
+      </>
+    );
   return (
     <>
-      <div className="beehive-toolbar">
-        <Tabs
-          variant="segmented"
-          size="sm"
-          label="Cards to show"
-          value={view}
-          onValueChange={setView}
-          items={[
-            { value: "board", label: "Board" },
-            { value: "archive", label: "Archive" },
-          ]}
-        />
-      </div>
+      {toolbar}
       <LoadingRegion
         pending={live.status === "loading"}
         label="Loading cards…"

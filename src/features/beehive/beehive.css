@@ -68,3 +68,40 @@
   flex-direction: column;
   gap: var(--space-4);
 }
+.beehive-workflows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.beehive-workflow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.beehive-workflow p {
+  margin: 0;
+}
+.beehive-stages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 0 var(--space-6);
+}
+.beehive-stages li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  overflow-wrap: anywhere;
+}
+.beehive-findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
