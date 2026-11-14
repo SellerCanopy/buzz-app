@@ -6,7 +6,7 @@ import { beehiveOrigin } from "./engine/origin";
 import { createSession } from "./engine/session";
 import { routeCard } from "./routes";
 
-export const inject = ["pages", "navigation", "relay"];
+export const inject = ["pages", "navigation", "relay", "conversation"];
 
 /** Beehive is off, with no dock entry, until a build gives it an address. */
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -26,6 +26,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         relay={ctx.relay}
         navigation={props.navigation}
         navigator={ctx.navigation}
+        Thread={ctx.conversation.ui.Thread}
       />
     ),
   });

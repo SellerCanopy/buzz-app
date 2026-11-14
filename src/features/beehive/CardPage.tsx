@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { XIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
@@ -6,40 +6,51 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { Tabs, type TabItem } from "../../shared/design-system/ui/Tabs";
 import type { Card, Run } from "./gen/kiln/engine/v1/engine_pb";
+import type { EmbeddedThreadProps } from "../conversation/EmbeddedThread";
+import type { Navigation } from "../navigation/controller";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
 import { FilesTab } from "./FilesTab";
 import { stateLabel, stepStatus } from "./labels";
+import { LiveTab } from "./LiveTab";
+import type { CardTab } from "./routes";
 
 type Loaded =
   | { status: "loading" }
   | { status: "ready"; card: Card; run: Run | undefined }
   | { status: "error"; message: string };
 
-type Section = "details" | "steps" | "files";
-
 /**
- * One card: its details, the stages its latest run went through and the files they saved, and
- * Start run, Resume, Archive and Restore for a person who can run.
+ * One card: the current stage's thread, the stages its latest run went through, the files they
+ * saved and its details, and Start run, Resume, Archive and Restore for a person who can run.
+ * The tab is part of the page's route, so Back returns to the tab a person left.
  */
 export function CardPage({
   client,
   relay,
+  navigator,
+  Thread,
   id,
+  tab,
   canRun,
+  onTab,
   onClose,
 }: {
   client: Client;
   relay: RelayData;
+  navigator: Navigation | undefined;
+  Thread: (props: EmbeddedThreadProps) => ReactNode;
   id: string;
+  /** The tab the visit names; the card's own default when it names none. */
+  tab: CardTab | undefined;
   canRun: boolean;
+  onTab(tab: CardTab): void;
   onClose(): void;
 }) {
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string>();
-  const [section, setSection] = useState<Section>("details");
 
   useEffect(() => {
     // `attempt` re-reads the card after a failure or an action.
@@ -98,10 +109,14 @@ export function CardPage({
   const card = loaded.status === "ready" ? loaded.card : undefined;
   const run = loaded.status === "ready" ? loaded.run : undefined;
   const hasSteps = !!run?.steps.length;
-  const sections: TabItem<Section>[] = [{ value: "details", label: "Details" }];
+  // A card with no run has no thread and has saved nothing, so those tabs wait for the first run.
+  const sections: TabItem<CardTab>[] = [];
+  if (run) sections.push({ value: "live", label: "Live" });
   if (hasSteps) sections.push({ value: "steps", label: "Steps" });
-  // A card with no run has saved nothing, so the tab waits for the first run.
   if (run) sections.push({ value: "files", label: "Files" });
+  sections.push({ value: "details", label: "Details" });
+  const fallback: CardTab = card?.stages.length ? "live" : "details";
+  const section = tab && sections.some((s) => s.value === tab) ? tab : fallback;
   return (
     <div className="beehive-card-page">
       <Header
@@ -166,13 +181,18 @@ export function CardPage({
           <Tabs
             variant="panel"
             label="Card sections"
-            value={
-              sections.some((s) => s.value === section) ? section : "details"
-            }
+            value={section}
             items={sections}
-            onValueChange={setSection}
+            onValueChange={onTab}
             renderPanel={(value) =>
-              value === "steps" && run ? (
+              value === "live" && run ? (
+                <LiveTab
+                  card={card}
+                  relay={relay}
+                  navigator={navigator}
+                  Thread={Thread}
+                />
+              ) : value === "steps" && run ? (
                 <Steps run={run} />
               ) : value === "files" && run ? (
                 <FilesTab client={client} relay={relay} cardId={card.id} />

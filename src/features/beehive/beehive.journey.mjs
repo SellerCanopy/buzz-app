@@ -275,6 +275,11 @@ test("an admin sets the update channel, then starts a run on a card with a workf
   await pane.getByRole("tab", { name: "Board" }).click();
   await todo.getByRole("button", { name: /Ship the board/ }).click();
   await pane.getByRole("button", { name: "Start run" }).click();
+  // A card with a stage thread opens on its Live tab.
+  await expect(
+    pane.getByRole("region", { name: "Stage thread" }),
+  ).toBeVisible();
+  await pane.getByRole("tab", { name: "Details" }).click();
   await expect(
     pane.getByRole("tabpanel", { name: "Details" }).getByText("Running"),
   ).toBeVisible();
@@ -382,4 +387,118 @@ test("Settings stays inside a narrow window in dark appearance with large text",
   const box = await channel.boundingBox();
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(420);
+});
+
+/** An admin's card whose first stage reported, so it holds two stage threads. */
+async function cardWithTwoThreads(page, title = "Ship the board") {
+  await page.addInitScript(() => {
+    window.beehiveFixture = { role: "admin" };
+  });
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await pane.getByRole("tab", { name: "Settings" }).click();
+  await pane.getByRole("combobox", { name: "Update channel" }).click();
+  await page.getByRole("option", { name: "# updates" }).click();
+  await pane.getByRole("tab", { name: "Board" }).click();
+  const created = await page.evaluate(
+    (name) => window.beehiveFixture.externalCreate(name, "demo"),
+    title,
+  );
+  await pane
+    .getByRole("region", { name: "To do" })
+    .getByRole("button", { name: title })
+    .click();
+  await pane.getByRole("button", { name: "Start run" }).click();
+  await pane.getByRole("button", { name: "Close card" }).click();
+  await page.evaluate(
+    (id) => window.beehiveFixture.externalPass(id),
+    created.id,
+  );
+  await pane
+    .getByRole("region", { name: "Waiting" })
+    .getByRole("button", { name: title })
+    .click();
+  return pane;
+}
+
+test("the Live tab shows the current stage's thread and the picker reaches the earlier one", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  const pane = await cardWithTwoThreads(page);
+  const tabs = pane.getByRole("tab");
+  await expect(tabs).toHaveText(["Live", "Steps", "Files", "Details"]);
+  const thread = pane.getByRole("region", { name: "Stage thread" });
+  await expect(thread).toContainText("Thread in #updates");
+  const current = await thread.getAttribute("data-root");
+
+  // One entry per stage, the current one marked.
+  const picker = pane.getByRole("combobox", { name: "Stage" });
+  await expect(picker).toHaveText("approve");
+  await picker.click();
+  await expect(page.getByRole("option")).toHaveText([
+    /^plan/,
+    /^approve\s*Current/,
+  ]);
+  await page.getByRole("option", { name: /^plan/ }).click();
+  await expect(picker).toHaveText("plan");
+  await expect(thread).not.toHaveAttribute("data-root", current);
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("a tab is a visit: Back returns to the tab a person left", async ({
+  page,
+}) => {
+  const pane = await cardWithTwoThreads(page);
+  const selected = (name) =>
+    expect(pane.getByRole("tab", { name })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  await selected("Live");
+  await pane.getByRole("tab", { name: "Steps" }).click();
+  await selected("Steps");
+  await pane.getByRole("tab", { name: "Files" }).click();
+  await selected("Files");
+  await page.getByRole("button", { name: "Back" }).click();
+  await selected("Steps");
+  await page.getByRole("button", { name: "Back" }).click();
+  await selected("Live");
+  await page.getByRole("button", { name: "Forward" }).click();
+  await selected("Steps");
+  // Close retires the card's tab visits along with the card.
+  await pane.getByRole("button", { name: "Close card" }).click();
+  await expect(pane.getByRole("tab", { name: "Steps" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Forward" })).toBeDisabled();
+});
+
+test("the Live tab stays inside a narrow window in dark appearance with large text", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 420, height: 800 });
+  const longTitle =
+    "Rework the whole intake pipeline so every attachment is scanned before it reaches review";
+  const pane = await cardWithTwoThreads(page, longTitle);
+  await page.getByRole("button", { name: "Toggle appearance" }).click();
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "24px";
+  });
+  const inside = async (locator) => {
+    const box = await locator.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(420);
+    return box;
+  };
+  const title = pane.getByRole("heading", { name: longTitle });
+  const titleBox = await inside(title);
+  const close = await inside(pane.getByRole("button", { name: "Close card" }));
+  // The actions wrap below the title rather than over it.
+  const overlaps =
+    titleBox.x < close.x + close.width &&
+    close.x < titleBox.x + titleBox.width &&
+    titleBox.y < close.y + close.height &&
+    close.y < titleBox.y + titleBox.height;
+  expect(overlaps).toBe(false);
+  await inside(pane.getByRole("combobox", { name: "Stage" }));
+  await inside(pane.getByRole("region", { name: "Stage thread" }));
 });

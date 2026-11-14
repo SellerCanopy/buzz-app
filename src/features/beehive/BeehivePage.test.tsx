@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState, type ReactElement } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import type { Navigation } from "../navigation/controller";
@@ -24,6 +25,7 @@ import {
   RunSchema,
   RunStepSchema,
   SettingSchema,
+  StageThreadSchema,
   PollEventsResponseSchema,
   WhoAmIResponseSchema,
   type ArtifactVersion,
@@ -152,6 +154,14 @@ function engine(
   return { client: client as unknown as Client, calls: client, polls };
 }
 
+const CHANNEL = "5f1c2d3e-0000-4000-8000-000000000001";
+const OTHER = "5f1c2d3e-0000-4000-8000-000000000002";
+const channels = fakeRelay([
+  { id: CHANNEL, name: "updates" },
+  { id: OTHER, name: "general" },
+  { id: "dm-1", name: "A direct message", channelType: "dm" },
+]);
+
 const board: OpenTarget = {
   version: 1,
   kind: "page",
@@ -163,28 +173,44 @@ const cardView: OpenTarget = {
   route: { version: 1, params: { card: ID } },
 } as OpenTarget;
 
+/** A navigator that follows the visit it opens, as the shell does; its calls are recorded. */
 function shell(target: OpenTarget = board) {
-  const navigator = { open: vi.fn(async () => ({})), dismiss: vi.fn() };
-  return {
-    navigator: navigator as unknown as Navigation,
-    mock: navigator,
-    navigation: {
-      entryId: "visit-1",
-      target,
-      signal: new AbortController().signal,
-    } as never,
+  const mock = { open: vi.fn(), dismiss: vi.fn() };
+  const signal = new AbortController().signal;
+  const Host = ({ children }: { children(props: object): ReactElement }) => {
+    const [current, setCurrent] = useState(target);
+    mock.open.mockImplementation(async (next: OpenTarget) => {
+      setCurrent(next);
+      return {};
+    });
+    return children({
+      navigator: mock as unknown as Navigation,
+      navigation: { entryId: "visit-1", target: current, signal } as never,
+    });
   };
+  return { mock, Host };
 }
+
+/** The host's embedded thread, reduced to what the page hands it. */
+const Thread = (props: { channelId: string; messageId: string }) => (
+  <div data-testid="thread" data-channel={props.channelId}>
+    {props.messageId}
+  </div>
+);
 
 function page(client: Client, target?: OpenTarget, relay = fakeRelay([])) {
   const s = shell(target);
   render(
-    <BeehivePage
-      client={client}
-      relay={relay}
-      navigation={s.navigation}
-      navigator={s.navigator}
-    />,
+    <s.Host>
+      {(props) => (
+        <BeehivePage
+          client={client}
+          relay={relay}
+          Thread={Thread as never}
+          {...props}
+        />
+      )}
+    </s.Host>,
   );
   return s.mock;
 }
@@ -348,6 +374,60 @@ it("shows a card's details when its visit is shown, keeping the board mounted", 
   expect(e.calls.listCards).toHaveBeenCalled();
 });
 
+const ROOT = "ab".repeat(32);
+
+it("opens a card on its Live tab when a stage has a thread, and a tab choice is a visit", async () => {
+  const e = engine({
+    runs: [run({ state: "running", steps: [step({ stage: "build" })] })],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({
+      workflow: "demo",
+      state: "running",
+      stageId: "build",
+      stages: [
+        create(StageThreadSchema, {
+          stage: "build",
+          visit: 1,
+          rootEventId: ROOT,
+          channelId: CHANNEL,
+        }),
+      ],
+    }),
+  );
+  const nav = page(e.client, cardView, channels);
+  expect(await screen.findByTestId("thread")).toHaveTextContent(ROOT);
+  expect(screen.getByRole("tab", { name: "Live" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await userEvent.click(screen.getByRole("tab", { name: "Steps" }));
+  expect(nav.open).toHaveBeenCalledWith({
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "steps" } },
+  });
+});
+
+it("shows the tab a visit names", async () => {
+  const e = engine({
+    runs: [run({ state: "running", steps: [step({ stage: "build" })] })],
+  });
+  e.calls.getCard.mockResolvedValue(card({ workflow: "demo" }));
+  page(e.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "steps" } },
+  } as OpenTarget);
+  expect(
+    await screen.findByRole("list", { name: "Stages of the run" }),
+  ).toBeVisible();
+});
+
+it("has no Live tab for a card that never ran", async () => {
+  page(engine().client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  expect(screen.queryByRole("tab", { name: "Live" })).toBeNull();
+});
+
 it("archives the open card and restores it", async () => {
   const e = engine();
   e.calls.getCard
@@ -385,14 +465,6 @@ it("says so when the card cannot be read", async () => {
     "card does not exist",
   );
 });
-
-const CHANNEL = "5f1c2d3e-0000-4000-8000-000000000001";
-const OTHER = "5f1c2d3e-0000-4000-8000-000000000002";
-const channels = fakeRelay([
-  { id: CHANNEL, name: "updates" },
-  { id: OTHER, name: "general" },
-  { id: "dm-1", name: "A direct message", channelType: "dm" },
-]);
 
 it("starts a run on an idle card with a workflow and reads the card again", async () => {
   const e = engine();

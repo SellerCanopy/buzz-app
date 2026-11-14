@@ -69,8 +69,30 @@ type FakeEvent = {
   cardId: string;
   payloadJson: string;
 };
+type FakeThread = {
+  stage: string;
+  visit: number;
+  rootEventId: string;
+  agentPubkey: string;
+  channelId: string;
+};
 const cards: FakeCard[] = [];
 const runs = new Map<string, FakeRun>();
+// The thread each stage started in the update channel, in the order they began.
+const threads = new Map<string, FakeThread[]>();
+const postThread = (cardId: string, stage: string) =>
+  threads.set(cardId, [
+    ...(threads.get(cardId) ?? []),
+    {
+      stage,
+      visit: 1,
+      rootEventId: (threads.get(cardId)?.length ?? 0)
+        .toString(16)
+        .padStart(64, "e"),
+      agentPubkey: "a".repeat(64),
+      channelId: JSON.parse(updateChannel) as string,
+    },
+  ]);
 // What each card's stages saved, keyed by card id, every version oldest first.
 const saved = new Map<string, Record<string, unknown>[]>();
 const log: FakeEvent[] = [];
@@ -183,8 +205,14 @@ async function handle(
       return { workflows: WORKFLOWS };
     case "CheckWorkflow":
       return { packages: CHECKS, ok: false };
-    case "GetCard":
-      return wire(find(body.cardId), true);
+    case "GetCard": {
+      const card = find(body.cardId);
+      return {
+        ...wire(card, true),
+        stageId: runs.get(card.id)?.stageId ?? "",
+        stages: threads.get(card.id) ?? [],
+      };
+    }
     case "GetSettings":
       return {
         settings: [
@@ -227,6 +255,7 @@ async function handle(
         steps: [{ stage: "plan", visit: 1, round: 1 }],
       };
       runs.set(card.id, run);
+      postThread(card.id, "plan");
       return run;
     }
     case "StageDone": {
@@ -270,6 +299,7 @@ async function handle(
       ]);
       run.steps.push({ stage: "approve", visit: 1, round: 1, held: true });
       run.stageId = "approve";
+      postThread(card.id, "approve");
       run.state = "paused";
       card.state = "waiting";
       publish("card.state", card);
@@ -417,6 +447,24 @@ const board: OpenTarget = {
 
 const relay = fakeRelay(CHANNELS);
 
+/** Stands in for the host's embedded thread, which needs a live relay session. */
+function Thread({
+  channelName,
+  messageId,
+}: {
+  channelName: string;
+  messageId: string;
+}) {
+  return (
+    <section aria-label="Stage thread" data-root={messageId}>
+      <p>{`Thread in #${channelName}`}</p>
+      <p className="text-subtle" style={{ overflowWrap: "anywhere" }}>
+        {messageId}
+      </p>
+    </section>
+  );
+}
+
 function Fixture() {
   useKeyboardFocusVisibility();
   const [history, setHistory] = useState({ entries: [entry(board)], index: 0 });
@@ -498,6 +546,7 @@ function Fixture() {
           relay={relay}
           navigation={navigation}
           navigator={navigator}
+          Thread={Thread as never}
         />
       </div>
     </main>

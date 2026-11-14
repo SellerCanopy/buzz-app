@@ -37,6 +37,7 @@ async function start() {
   createPluginManager(root, { storage, bundled: [], builtIn: beehive });
   provideNavigation(root);
   root.provide("relay", fakeRelay([]));
+  root.provide("conversation", { ui: { Thread: () => null } });
   const pages = new PagesService(root);
   await vi.advanceTimersByTimeAsync(0);
   return pages;
