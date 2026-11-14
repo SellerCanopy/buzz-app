@@ -324,6 +324,25 @@ test("a card whose next stage is held shows its steps, and Resume lets it carry 
   await expect(items.nth(0)).toContainText("passed, then approve");
   await expect(items.nth(1)).toContainText("Held until someone resumes it");
 
+  // What the first stage saved: the newest version of a document, an older one on request,
+  // and a file with a link to download it.
+  await pane.getByRole("tab", { name: "Files" }).click();
+  await expect(pane.getByRole("region", { name: "plan" })).toContainText(
+    "Ship the board in two steps",
+  );
+  await pane.getByRole("combobox", { name: "Version" }).click();
+  await page.getByRole("option", { name: "1", exact: true }).click();
+  await expect(pane.getByRole("region", { name: "plan" })).toContainText(
+    "Draft one",
+  );
+  await pane.getByRole("combobox", { name: "File" }).click();
+  await page.getByRole("option", { name: "sketch" }).click();
+  await expect(pane.getByText("image/png · 2 KB")).toBeVisible();
+  await expect(pane.getByRole("link", { name: "Download" })).toHaveAttribute(
+    "href",
+    "https://relay.example.org/media/sketch.png",
+  );
+
   await pane.getByRole("button", { name: "Resume" }).click();
   await pane.getByRole("tab", { name: "Details" }).click();
   await expect(

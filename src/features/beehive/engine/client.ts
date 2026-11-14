@@ -8,6 +8,7 @@ import {
 import {
   AddNoteRequestSchema,
   AddNoteResponseSchema,
+  ArtifactVersionSchema,
   ArchiveCardsRequestSchema,
   ArchiveCardsResponseSchema,
   CardSchema,
@@ -20,6 +21,10 @@ import {
   GetSettingsResponseSchema,
   GetStatusRequestSchema,
   GetStatusResponseSchema,
+  ListArtifactsRequestSchema,
+  ListArtifactsResponseSchema,
+  ListArtifactVersionsRequestSchema,
+  ListArtifactVersionsResponseSchema,
   ListCardsRequestSchema,
   ListCardsResponseSchema,
   ListRunsRequestSchema,
@@ -32,6 +37,7 @@ import {
   ListWorkflowsResponseSchema,
   PollEventsRequestSchema,
   PollEventsResponseSchema,
+  ReadArtifactRequestSchema,
   RemoveCardRequestSchema,
   RemoveCardResponseSchema,
   ResumeCardRequestSchema,
@@ -172,6 +178,42 @@ export function createClient(session: Session) {
         ResumeCardRequestSchema,
         RunSchema,
         create(ResumeCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /** The documents and files a card's stages saved, one entry per name. */
+    listArtifacts: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "ListArtifacts",
+        ListArtifactsRequestSchema,
+        ListArtifactsResponseSchema,
+        create(ListArtifactsRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Every version of one artifact, oldest first, without a document's text. */
+    listArtifactVersions: (
+      cardId: string,
+      name: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "ListArtifactVersions",
+        ListArtifactVersionsRequestSchema,
+        ListArtifactVersionsResponseSchema,
+        create(ListArtifactVersionsRequestSchema, { cardId, name }),
+        signal,
+      ),
+    /** One version of an artifact with its text. Version 0 reads the latest. */
+    readArtifact: (
+      cardId: string,
+      name: string,
+      version = 0,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "ReadArtifact",
+        ReadArtifactRequestSchema,
+        ArtifactVersionSchema,
+        create(ReadArtifactRequestSchema, { cardId, name, version }),
         signal,
       ),
     /** What applies at the community scope: every key, with the layer that set it. */

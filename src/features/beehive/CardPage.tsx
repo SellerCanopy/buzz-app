@@ -6,7 +6,9 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { Tabs, type TabItem } from "../../shared/design-system/ui/Tabs";
 import type { Card, Run } from "./gen/kiln/engine/v1/engine_pb";
+import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
+import { FilesTab } from "./FilesTab";
 import { stateLabel, stepStatus } from "./labels";
 
 type Loaded =
@@ -14,19 +16,21 @@ type Loaded =
   | { status: "ready"; card: Card; run: Run | undefined }
   | { status: "error"; message: string };
 
-type Section = "details" | "steps";
+type Section = "details" | "steps" | "files";
 
 /**
- * One card: its details and the stages its latest run went through, and Start run, Resume,
- * Archive and Restore for a person who can run.
+ * One card: its details, the stages its latest run went through and the files they saved, and
+ * Start run, Resume, Archive and Restore for a person who can run.
  */
 export function CardPage({
   client,
+  relay,
   id,
   canRun,
   onClose,
 }: {
   client: Client;
+  relay: RelayData;
   id: string;
   canRun: boolean;
   onClose(): void;
@@ -96,6 +100,8 @@ export function CardPage({
   const hasSteps = !!run?.steps.length;
   const sections: TabItem<Section>[] = [{ value: "details", label: "Details" }];
   if (hasSteps) sections.push({ value: "steps", label: "Steps" });
+  // A card with no run has saved nothing, so the tab waits for the first run.
+  if (run) sections.push({ value: "files", label: "Files" });
   return (
     <div className="beehive-card-page">
       <Header
@@ -160,12 +166,16 @@ export function CardPage({
           <Tabs
             variant="panel"
             label="Card sections"
-            value={hasSteps ? section : "details"}
+            value={
+              sections.some((s) => s.value === section) ? section : "details"
+            }
             items={sections}
             onValueChange={setSection}
             renderPanel={(value) =>
               value === "steps" && run ? (
                 <Steps run={run} />
+              ) : value === "files" && run ? (
+                <FilesTab client={client} relay={relay} cardId={card.id} />
               ) : (
                 <Details card={card} />
               )

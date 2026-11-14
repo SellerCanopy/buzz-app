@@ -71,6 +71,8 @@ type FakeEvent = {
 };
 const cards: FakeCard[] = [];
 const runs = new Map<string, FakeRun>();
+// What each card's stages saved, keyed by card id, every version oldest first.
+const saved = new Map<string, Record<string, unknown>[]>();
 const log: FakeEvent[] = [];
 const waiters = new Set<() => void>();
 
@@ -241,12 +243,65 @@ async function handle(
         result: "passed",
         routedTo: "approve",
       });
+      // The first stage saved a document and a file before it reported.
+      saved.set(card.id, [
+        {
+          name: "plan",
+          version: 1,
+          kind: "text",
+          content: "Draft one",
+          size: "9",
+        },
+        {
+          name: "plan",
+          version: 2,
+          kind: "text",
+          content: "Ship the board in two steps",
+          size: "27",
+        },
+        {
+          name: "sketch",
+          version: 1,
+          kind: "file",
+          mediaType: "image/png",
+          size: "2048",
+          mediaRef: "https://relay.example.org/media/sketch.png",
+        },
+      ]);
       run.steps.push({ stage: "approve", visit: 1, round: 1, held: true });
       run.stageId = "approve";
       run.state = "paused";
       card.state = "waiting";
       publish("card.state", card);
       return run;
+    }
+    case "ListArtifacts": {
+      const all = saved.get(String(body.cardId)) ?? [];
+      const names = [...new Set(all.map((v) => String(v.name)))];
+      return {
+        artifacts: names.map((name) => {
+          const last = all.filter((v) => v.name === name).at(-1);
+          return { name, latest: last?.version, kind: last?.kind };
+        }),
+      };
+    }
+    case "ListArtifactVersions": {
+      const all = saved.get(String(body.cardId)) ?? [];
+      return {
+        versions: all
+          .filter((v) => v.name === body.name)
+          .map((v) => ({ ...v, content: "" })),
+      };
+    }
+    case "ReadArtifact": {
+      const all = (saved.get(String(body.cardId)) ?? []).filter(
+        (v) => v.name === body.name,
+      );
+      const found =
+        all.find((v) => v.version === body.version) ?? all[all.length - 1];
+      if (!found)
+        throw new EngineError("not_found", "artifact does not exist", 404);
+      return found;
     }
     case "ListRuns": {
       const run = runs.get(String(body.cardId));

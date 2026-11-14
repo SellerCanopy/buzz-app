@@ -10,9 +10,13 @@ import { BeehivePage } from "./BeehivePage";
 import { fakeRelay } from "./fake-relay";
 import type { Client } from "./engine/client";
 import {
+  ArtifactInfoSchema,
+  ArtifactVersionSchema,
   CardSchema,
   EventSchema,
   CheckWorkflowResponseSchema,
+  ListArtifactsResponseSchema,
+  ListArtifactVersionsResponseSchema,
   ListCardsResponseSchema,
   ListRunsResponseSchema,
   ListWorkflowsResponseSchema,
@@ -22,6 +26,7 @@ import {
   SettingSchema,
   PollEventsResponseSchema,
   WhoAmIResponseSchema,
+  type ArtifactVersion,
   type Card,
   type Run,
 } from "./gen/kiln/engine/v1/engine_pb";
@@ -43,6 +48,8 @@ function engine(
     seq?: bigint;
     /** The channel id the update_channel setting holds, or none. */
     updateChannel?: string;
+    /** What the card's stages saved, every version of each, oldest first. */
+    saved?: ArtifactVersion[];
   } = {},
 ) {
   const polls: { after: bigint; answer(events: Card[], type: string): void }[] =
@@ -69,6 +76,32 @@ function engine(
     listRuns: vi.fn(async () =>
       create(ListRunsResponseSchema, { runs: options.runs ?? [] }),
     ),
+    listArtifacts: vi.fn(async () => {
+      const names = [...new Set((options.saved ?? []).map((v) => v.name))];
+      return create(ListArtifactsResponseSchema, {
+        artifacts: names.map((name) => {
+          const all = (options.saved ?? []).filter((v) => v.name === name);
+          const last = all[all.length - 1] as ArtifactVersion;
+          return create(ArtifactInfoSchema, {
+            name,
+            latest: last.version,
+            kind: last.kind,
+          });
+        }),
+      });
+    }),
+    listArtifactVersions: vi.fn(async (_card: string, name: string) =>
+      create(ListArtifactVersionsResponseSchema, {
+        versions: (options.saved ?? [])
+          .filter((v) => v.name === name)
+          .map((v) => ({ ...v, content: "" })),
+      }),
+    ),
+    readArtifact: vi.fn(async (_card: string, name: string, version = 0) => {
+      const all = (options.saved ?? []).filter((v) => v.name === name);
+      return (all.find((v) => v.version === version) ??
+        all[all.length - 1]) as ArtifactVersion;
+    }),
     resumeCard: vi.fn(async () =>
       create(RunSchema, { id: "run-1", cardId: ID, state: "running" }),
     ),
@@ -480,6 +513,99 @@ it("has no Steps tab for a card that never ran", async () => {
   page(engine().client, cardView);
   await screen.findByRole("tab", { name: "Details" });
   expect(screen.queryByRole("tab", { name: "Steps" })).toBeNull();
+});
+
+const saved = (fields: MessageInitShape<typeof ArtifactVersionSchema>) =>
+  create(ArtifactVersionSchema, { kind: "text", version: 1, ...fields });
+
+/** A card that ran, with what its stages saved. */
+function withFiles(versions: ArtifactVersion[], relay = fakeRelay([])) {
+  const e = engine({
+    runs: [run({ state: "running", steps: [step({ stage: "build" })] })],
+    saved: versions,
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  page(e.client, cardView, relay);
+  return e;
+}
+
+it("shows a document's text and every version of it in the Files tab", async () => {
+  const e = withFiles([
+    saved({ name: "plan", version: 1, content: "First draft" }),
+    saved({ name: "plan", version: 2, content: "Second draft" }),
+  ]);
+  await userEvent.click(await screen.findByRole("tab", { name: "Files" }));
+  expect(await screen.findByLabelText("plan")).toHaveTextContent(
+    "Second draft",
+  );
+  expect(e.calls.readArtifact).toHaveBeenCalledWith(
+    ID,
+    "plan",
+    2,
+    expect.anything(),
+  );
+  await userEvent.click(screen.getByRole("combobox", { name: /Version/ }));
+  await userEvent.click(await screen.findByRole("option", { name: "1" }));
+  expect(await screen.findByLabelText("plan")).toHaveTextContent("First draft");
+});
+
+it("shows a file's type and size with a link to download it", async () => {
+  withFiles([
+    saved({
+      name: "picture",
+      kind: "file",
+      mediaType: "image/png",
+      size: 2048n,
+      mediaRef: "https://relay.example.org/media/abc.png",
+    }),
+  ]);
+  await userEvent.click(await screen.findByRole("tab", { name: "Files" }));
+  expect(await screen.findByText("image/png · 2 KB")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+    "href",
+    "https://relay.example.org/media/abc.png",
+  );
+});
+
+it("names the command that fetches a file the app cannot open", async () => {
+  const relay = fakeRelay([]);
+  const ready = relay.snapshot();
+  (ready.session as unknown as { media(url: string): undefined }).media = () =>
+    undefined;
+  withFiles(
+    [
+      saved({
+        name: "picture",
+        kind: "file",
+        mediaType: "image/png",
+        size: 10n,
+        mediaRef: "https://relay.example.org/media/abc.png",
+      }),
+    ],
+    relay,
+  );
+  await userEvent.click(await screen.findByRole("tab", { name: "Files" }));
+  expect(await screen.findByText(/buzz media get/)).toHaveTextContent(
+    "https://relay.example.org/media/abc.png",
+  );
+  expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+});
+
+it("says so when a card has saved nothing, and shows a failure with a retry", async () => {
+  const e = withFiles([]);
+  e.calls.listArtifacts.mockRejectedValueOnce(new Error("Beehive is down"));
+  await userEvent.click(await screen.findByRole("tab", { name: "Files" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Beehive is down");
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("No files yet")).toBeVisible();
+});
+
+it("has no Files tab for a card that never ran", async () => {
+  page(engine().client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  expect(screen.queryByRole("tab", { name: "Files" })).toBeNull();
 });
 
 it("resumes a held card and reads it again", async () => {

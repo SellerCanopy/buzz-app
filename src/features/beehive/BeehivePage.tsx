@@ -102,6 +102,7 @@ export function BeehivePage({
             <CardPage
               key={open}
               client={client}
+              relay={relay}
               id={open}
               canRun={canRun}
               onClose={closeCard}

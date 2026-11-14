@@ -25,6 +25,7 @@ export function fakeRelay(channels: FakeChannel[]): RelayData {
         subscribeList: () => () => {},
         ensureList: () => () => {},
       },
+      media: (url: string) => url,
     },
   };
   return {
