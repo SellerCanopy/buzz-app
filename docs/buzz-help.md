@@ -1562,3 +1562,6 @@ occurs. It contains operation metadata, with no draft text or secrets. See
 
 Plugins can add actions to your avatar menu. Profile-related actions may appear just above Settings; other plugin actions appear below it.
 
+## Beehive
+
+Beehive is a workflow engine whose stages run on your Buzz agents. It appears as a hexagon in the dock only when your Buzz build is set up with a Beehive address. You sign in to it with your Buzz key, with no separate sign-in screen. Today it opens a board of cards, which is empty until cards are added. If Beehive can't be reached, the board says so and offers Retry.

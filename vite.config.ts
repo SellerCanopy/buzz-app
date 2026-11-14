@@ -213,6 +213,9 @@ export default defineConfig(async ({ command, mode }) => {
       ),
       "import.meta.env.VITE_BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES":
         JSON.stringify(workflowRestrictedCommunities),
+      "import.meta.env.VITE_BUZZ_BEEHIVE_URL": JSON.stringify(
+        sharedBuildValue("BUZZ_BUILD_BEEHIVE_URL") ?? "",
+      ),
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(builderlabUrl),
       "import.meta.env.VITE_BUZZ_FEDERATED_IDENTITY": JSON.stringify(
         federatedUrl === undefined ? "0" : "1",

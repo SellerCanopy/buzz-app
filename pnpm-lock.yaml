@@ -17,6 +17,9 @@ importers:
       '@base-ui/react':
         specifier: 1.9.0
         version: 1.9.0(patch_hash=958237d028ca73b236150c1367b09699dd0d42738be177382595af9b5fd91709)(@date-fns/tz@1.5.0)(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@bufbuild/protobuf':
+        specifier: 2.17.0
+        version: 2.17.0
       '@deepseek-ai/cordis':
         specifier: 4.0.2
         version: 4.0.2
@@ -168,6 +171,12 @@ importers:
       '@biomejs/biome':
         specifier: 2.5.14
         version: 2.5.14
+      '@bufbuild/buf':
+        specifier: 1.75.0
+        version: 1.75.0
+      '@bufbuild/protoc-gen-es':
+        specifier: 2.17.0
+        version: 2.17.0(@bufbuild/protobuf@2.17.0)
       '@hypothesi/tauri-mcp-server':
         specifier: 0.13.1
         version: 0.13.1
@@ -354,6 +363,69 @@ packages:
   '@bramus/specificity@2.4.2':
     resolution: {integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==}
     hasBin: true
+
+  '@bufbuild/buf-darwin-arm64@1.75.0':
+    resolution: {integrity: sha512-QiQYSmtVUcKy9DK/d+zJ3+D4iUQmmiDQ3i8/yBr8cf7Nr28lqKMAIKznJE/uGRsjr90fHaUQO+Xsedec0ArN5g==}
+    engines: {node: '>=12'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@bufbuild/buf-darwin-x64@1.75.0':
+    resolution: {integrity: sha512-U2W+MRE9jJ7Am7x02ZWt87U5lfPrjKMdB1aZDslsuyOHo+fEUvZolupmhoW30v6syNAWBOfkoi0k5TLc2FNGqQ==}
+    engines: {node: '>=12'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@bufbuild/buf-linux-aarch64@1.75.0':
+    resolution: {integrity: sha512-eX+XyokzJDqsNIFo8b1O3DBvbnksOozPJX4QVsNn61JqSUtWspyTNeYqwg8lRDancML+bDqZEDFPABjAsVCQGQ==}
+    engines: {node: '>=12'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@bufbuild/buf-linux-armv7@1.75.0':
+    resolution: {integrity: sha512-2RVhmr3vJ145DazYTk9dWAzeQPtcJ0SiSzY02v1Su/JIfgzhv9lgOm+y3nGuLjyZFF8UfTtmuHfHso5zDBgsCQ==}
+    engines: {node: '>=12'}
+    cpu: [arm]
+    os: [linux]
+
+  '@bufbuild/buf-linux-x64@1.75.0':
+    resolution: {integrity: sha512-YGGJAx0lpMCE7aMWjNOJcfoEaG/e+iYHnTC4SZ0P5eS4IffMryA9Z4/bb1m1wNXAEJ8ATFMEZOAk/5x9VE47ig==}
+    engines: {node: '>=12'}
+    cpu: [x64]
+    os: [linux]
+
+  '@bufbuild/buf-win32-arm64@1.75.0':
+    resolution: {integrity: sha512-iRge6Ntta41gt0i7P8/EZFDWe3uLNnCEN86r1tKTWctumWxPET3UJcSzzYPyL4gxvzu1/1VTu+AB3+MYAqHy6Q==}
+    engines: {node: '>=12'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@bufbuild/buf-win32-x64@1.75.0':
+    resolution: {integrity: sha512-/BgLt3VWndocuG4lbMdlBc1i41I+Bap4zm8R1Cnmov6DtoAQp4dy/leRrvT4aDArIUQ1o7W/Y92xTRITedU4ww==}
+    engines: {node: '>=12'}
+    cpu: [x64]
+    os: [win32]
+
+  '@bufbuild/buf@1.75.0':
+    resolution: {integrity: sha512-uMuBCULLDax9/3d5Lo9mea38vuPDv4mrRVE4XfSq3qPcD5UUxlg0RJ9hm84lYCzI3A3lIvLeChxrw9c1RUiD2w==}
+    engines: {node: '>=12'}
+    hasBin: true
+
+  '@bufbuild/protobuf@2.17.0':
+    resolution: {integrity: sha512-hcPkSz6D7MiTU/5VBBhK+kxaYDoOdQ6yJRFJ3kS8Nydp+VZXfg1vrpABKPNod8bXMufsVCmiUJVIKFzCzta4uw==}
+
+  '@bufbuild/protoc-gen-es@2.17.0':
+    resolution: {integrity: sha512-Uk8Hx145z76lDOEPhWChy53jtKITUnqG0vASuOiRybbZbBbx4oho9JDqt8QZsHemeTCNl6q4yy4Qpc2iV5outQ==}
+    engines: {node: '>=22'}
+    hasBin: true
+    peerDependencies:
+      '@bufbuild/protobuf': 2.17.0
+    peerDependenciesMeta:
+      '@bufbuild/protobuf':
+        optional: true
+
+  '@bufbuild/protoplugin@2.17.0':
+    resolution: {integrity: sha512-4ExU8AGygKkwIx3U8D5kyBOn9rcCM1qnj4wCP95RbP1CRe73QvVGHQ/lOp6IQiyvQMh9BGrYGht+ZDa8gwC2fg==}
 
   '@csstools/color-helpers@6.1.1':
     resolution: {integrity: sha512-gLNsunvwf3mCi5u5o46/Z/JcJMnhbHSaZ69rkgPzNM3J4s8hWwpPUQB6/tt0EDFyCiWzxANlx+2LJwpYj4zS1w==}
@@ -1045,6 +1117,11 @@ packages:
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [win32]
+
+  '@typescript/vfs@1.6.6':
+    resolution: {integrity: sha512-gXw0+tpchiQUjTcbnNIPnyLFIhbwJ7M1VaxLQ1vXhjQxtTBK3sdDLY1ih0jxCu1I5K3V0dDxq8CkVZtIMspC3A==}
+    peerDependencies:
+      typescript: '*'
 
   '@ungap/structured-clone@1.4.0':
     resolution: {integrity: sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==}
@@ -2093,6 +2170,11 @@ packages:
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
+  typescript@5.4.5:
+    resolution: {integrity: sha512-vcI4UpRgg81oIRUFwR0WSIHKt11nJ7SAVlYNIu+QpqeyXP+gpQJy/Z4+F0aGxSE4MqwjyXvW/TzgkLAx2AGHwQ==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
   typescript@7.0.2:
     resolution: {integrity: sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==}
     engines: {node: '>=16.20.0'}
@@ -2439,6 +2521,55 @@ snapshots:
   '@bramus/specificity@2.4.2':
     dependencies:
       css-tree: 3.2.1
+
+  '@bufbuild/buf-darwin-arm64@1.75.0':
+    optional: true
+
+  '@bufbuild/buf-darwin-x64@1.75.0':
+    optional: true
+
+  '@bufbuild/buf-linux-aarch64@1.75.0':
+    optional: true
+
+  '@bufbuild/buf-linux-armv7@1.75.0':
+    optional: true
+
+  '@bufbuild/buf-linux-x64@1.75.0':
+    optional: true
+
+  '@bufbuild/buf-win32-arm64@1.75.0':
+    optional: true
+
+  '@bufbuild/buf-win32-x64@1.75.0':
+    optional: true
+
+  '@bufbuild/buf@1.75.0':
+    optionalDependencies:
+      '@bufbuild/buf-darwin-arm64': 1.75.0
+      '@bufbuild/buf-darwin-x64': 1.75.0
+      '@bufbuild/buf-linux-aarch64': 1.75.0
+      '@bufbuild/buf-linux-armv7': 1.75.0
+      '@bufbuild/buf-linux-x64': 1.75.0
+      '@bufbuild/buf-win32-arm64': 1.75.0
+      '@bufbuild/buf-win32-x64': 1.75.0
+
+  '@bufbuild/protobuf@2.17.0': {}
+
+  '@bufbuild/protoc-gen-es@2.17.0(@bufbuild/protobuf@2.17.0)':
+    dependencies:
+      '@bufbuild/protoplugin': 2.17.0
+    optionalDependencies:
+      '@bufbuild/protobuf': 2.17.0
+    transitivePeerDependencies:
+      - supports-color
+
+  '@bufbuild/protoplugin@2.17.0':
+    dependencies:
+      '@bufbuild/protobuf': 2.17.0
+      '@typescript/vfs': 1.6.6(typescript@5.4.5)
+      typescript: 5.4.5
+    transitivePeerDependencies:
+      - supports-color
 
   '@csstools/color-helpers@6.1.1': {}
 
@@ -2954,6 +3085,13 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  '@typescript/vfs@1.6.6(typescript@5.4.5)':
+    dependencies:
+      debug: 4.4.3
+      typescript: 5.4.5
+    transitivePeerDependencies:
+      - supports-color
 
   '@ungap/structured-clone@1.4.0': {}
 
@@ -4138,6 +4276,8 @@ snapshots:
   tslib@2.3.0: {}
 
   tslib@2.8.1: {}
+
+  typescript@5.4.5: {}
 
   typescript@7.0.2:
     optionalDependencies:
