@@ -6,6 +6,7 @@ import { createPluginManager } from "../../plugins/manager";
 import type { PluginStorage } from "../../plugins/storage";
 import { provideNavigation } from "../navigation/service";
 import { PagesService } from "../pages/service";
+import { fakeRelay } from "./fake-relay";
 
 const beehive = conversationFeatures.filter(
   ({ manifest }) => manifest.id === "buzz.beehive",
@@ -35,6 +36,7 @@ async function start() {
   roots.push(root);
   createPluginManager(root, { storage, bundled: [], builtIn: beehive });
   provideNavigation(root);
+  root.provide("relay", fakeRelay([]));
   const pages = new PagesService(root);
   await vi.advanceTimersByTimeAsync(0);
   return pages;

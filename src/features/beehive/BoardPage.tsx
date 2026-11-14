@@ -10,9 +10,11 @@ import type { Card } from "./gen/kiln/engine/v1/engine_pb";
 import type { Client } from "./engine/client";
 import { useLive } from "./engine/useLive";
 import { stateLabel } from "./labels";
+import type { RelayData } from "../relay/service";
+import { SettingsPage } from "./SettingsPage";
 import { WorkflowsPage } from "./WorkflowsPage";
 
-type View = "board" | "archive" | "workflows";
+type View = "board" | "archive" | "workflows" | "settings";
 
 /** Board columns by where a card is: Backlog has no workflow, the rest follow its state. */
 const COLUMNS = [
@@ -44,12 +46,16 @@ export function columnOf(card: Card): (typeof COLUMNS)[number]["key"] {
 /** The board of live cards, the archive, or the workflows list. A card opens on its own page. */
 export function BoardPage({
   client,
+  relay,
   canRun,
+  isAdmin,
   onOpen,
   onNew,
 }: {
   client: Client;
+  relay: RelayData;
   canRun: boolean;
+  isAdmin: boolean;
   onOpen(card: string): void;
   onNew(): void;
 }) {
@@ -69,6 +75,7 @@ export function BoardPage({
           { value: "board", label: "Board" },
           { value: "archive", label: "Archive" },
           { value: "workflows", label: "Workflows" },
+          { value: "settings", label: "Settings" },
         ]}
       />
     </div>
@@ -78,6 +85,13 @@ export function BoardPage({
       <>
         {toolbar}
         <WorkflowsPage client={client} />
+      </>
+    );
+  if (view === "settings")
+    return (
+      <>
+        {toolbar}
+        <SettingsPage client={client} relay={relay} isAdmin={isAdmin} />
       </>
     );
   return (

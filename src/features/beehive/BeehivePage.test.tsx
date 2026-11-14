@@ -7,6 +7,7 @@ import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { BeehivePage } from "./BeehivePage";
+import { fakeRelay } from "./fake-relay";
 import type { Client } from "./engine/client";
 import {
   CardSchema,
@@ -14,6 +15,9 @@ import {
   CheckWorkflowResponseSchema,
   ListCardsResponseSchema,
   ListWorkflowsResponseSchema,
+  GetSettingsResponseSchema,
+  RunSchema,
+  SettingSchema,
   PollEventsResponseSchema,
   WhoAmIResponseSchema,
   type Card,
@@ -27,7 +31,15 @@ const card = (fields: MessageInitShape<typeof CardSchema> = {}) =>
   create(CardSchema, { id: ID, title: "Fix the build", ...fields });
 
 /** A Beehive with a parked long poll the test can answer. */
-function engine(options: { cards?: Card[]; role?: string; seq?: bigint } = {}) {
+function engine(
+  options: {
+    cards?: Card[];
+    role?: string;
+    seq?: bigint;
+    /** The channel id the update_channel setting holds, or none. */
+    updateChannel?: string;
+  } = {},
+) {
   const polls: { after: bigint; answer(events: Card[], type: string): void }[] =
     [];
   const client = {
@@ -48,6 +60,22 @@ function engine(options: { cards?: Card[]; role?: string; seq?: bigint } = {}) {
     checkWorkflow: vi.fn(async () => create(CheckWorkflowResponseSchema, {})),
     getCard: vi.fn(async () => card({ body: "Line one\nLine two" })),
     createCard: vi.fn(async () => card()),
+    startRun: vi.fn(async () => create(RunSchema, { id: "run-1", cardId: ID })),
+    getCommunitySettings: vi.fn(async () =>
+      create(GetSettingsResponseSchema, {
+        settings: [
+          create(SettingSchema, {
+            key: "update_channel",
+            valueJson: options.updateChannel
+              ? JSON.stringify(options.updateChannel)
+              : "null",
+          }),
+        ],
+      }),
+    ),
+    setCommunitySetting: vi.fn(async (key: string, valueJson: string) =>
+      create(SettingSchema, { key, valueJson }),
+    ),
     archiveCards: vi.fn(async () => ({})),
     restoreCard: vi.fn(async () => card()),
     pollEvents: vi.fn(
@@ -104,11 +132,12 @@ function shell(target: OpenTarget = board) {
   };
 }
 
-function page(client: Client, target?: OpenTarget) {
+function page(client: Client, target?: OpenTarget, relay = fakeRelay([])) {
   const s = shell(target);
   render(
     <BeehivePage
       client={client}
+      relay={relay}
       navigation={s.navigation}
       navigator={s.navigator}
     />,
@@ -311,4 +340,156 @@ it("says so when the card cannot be read", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "card does not exist",
   );
+});
+
+const CHANNEL = "5f1c2d3e-0000-4000-8000-000000000001";
+const OTHER = "5f1c2d3e-0000-4000-8000-000000000002";
+const channels = fakeRelay([
+  { id: CHANNEL, name: "updates" },
+  { id: OTHER, name: "general" },
+  { id: "dm-1", name: "A direct message", channelType: "dm" },
+]);
+
+it("starts a run on an idle card with a workflow and reads the card again", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ workflow: "demo", state: "idle" }));
+  page(e.client, cardView);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Start run" }),
+  );
+  await vi.waitFor(() => expect(e.calls.startRun).toHaveBeenCalledWith(ID));
+  await vi.waitFor(() => expect(e.calls.getCard).toHaveBeenCalledTimes(2));
+});
+
+it("shows the engine's refusal to start a run word for word", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ workflow: "demo", state: "idle" }));
+  e.calls.startRun.mockRejectedValue(
+    new Error(
+      "choose an update channel in Beehive settings before starting a run",
+    ),
+  );
+  page(e.client, cardView);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Start run" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "choose an update channel in Beehive settings before starting a run",
+  );
+});
+
+it("offers Start run only to a person who can run, on a card that can start", async () => {
+  const backlog = engine();
+  page(backlog.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
+  cleanup();
+
+  const running = engine();
+  running.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  page(running.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
+  cleanup();
+
+  const reader = engine({ role: "read" });
+  reader.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "idle" }),
+  );
+  page(reader.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
+});
+
+it("lets an admin pick the update channel in Settings", async () => {
+  const e = engine({ role: "admin" });
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  const select = await screen.findByRole("combobox", {
+    name: "Update channel",
+  });
+  expect(select).toHaveTextContent("No channel");
+  await userEvent.click(select);
+  // Only open stream channels are offered.
+  expect(screen.queryByRole("option", { name: /direct message/ })).toBeNull();
+  await userEvent.click(
+    await screen.findByRole("option", { name: "# updates" }),
+  );
+  await vi.waitFor(() =>
+    expect(e.calls.setCommunitySetting).toHaveBeenCalledWith(
+      "update_channel",
+      JSON.stringify(CHANNEL),
+    ),
+  );
+  await vi.waitFor(() => expect(select).toHaveTextContent("# updates"));
+});
+
+it("shows the saved channel and clears it with No channel", async () => {
+  const e = engine({ role: "admin", updateChannel: CHANNEL });
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  const select = await screen.findByRole("combobox", {
+    name: "Update channel",
+  });
+  await vi.waitFor(() => expect(select).toHaveTextContent("# updates"));
+  await userEvent.click(select);
+  await userEvent.click(
+    await screen.findByRole("option", { name: "No channel" }),
+  );
+  await vi.waitFor(() =>
+    expect(e.calls.setCommunitySetting).toHaveBeenCalledWith(
+      "update_channel",
+      "",
+    ),
+  );
+});
+
+it("keeps the saved channel and shows the engine's answer when it refuses a channel", async () => {
+  const e = engine({ role: "admin", updateChannel: OTHER });
+  e.calls.setCommunitySetting.mockRejectedValue(
+    new Error("add the Beehive account to this channel, then save again"),
+  );
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  const select = await screen.findByRole("combobox", {
+    name: "Update channel",
+  });
+  await vi.waitFor(() => expect(select).toHaveTextContent("# general"));
+  await userEvent.click(select);
+  await userEvent.click(
+    await screen.findByRole("option", { name: "# updates" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "add the Beehive account to this channel, then save again",
+  );
+  expect(select).toHaveTextContent("# general");
+});
+
+it("shows the update channel to a person who is not an admin without a way to change it", async () => {
+  const e = engine({ role: "run", updateChannel: CHANNEL });
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  const select = await screen.findByRole("combobox", {
+    name: "Update channel",
+  });
+  await vi.waitFor(() => expect(select).toHaveTextContent("# updates"));
+  expect(select).toBeDisabled();
+});
+
+it("says so when the settings cannot be read and Retry reads them again", async () => {
+  const e = engine({ role: "admin" });
+  e.calls.getCommunitySettings.mockRejectedValueOnce(
+    new Error("Beehive is not reachable"),
+  );
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Beehive is not reachable",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(
+    await screen.findByRole("combobox", { name: "Update channel" }),
+  ).toBeVisible();
 });

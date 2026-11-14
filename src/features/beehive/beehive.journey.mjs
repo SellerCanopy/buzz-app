@@ -233,3 +233,83 @@ test("the Workflows view stays inside a narrow window in dark appearance with la
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(420);
 });
+
+test("an admin sets the update channel, then starts a run on a card with a workflow", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.addInitScript(() => {
+    window.beehiveFixture = { role: "admin" };
+  });
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await page.evaluate(() =>
+    window.beehiveFixture.externalCreate("Ship the board", "demo"),
+  );
+  const todo = pane.getByRole("region", { name: "To do" });
+  await todo.getByRole("button", { name: /Ship the board/ }).click();
+
+  // With no update channel the engine refuses, and the page shows its words.
+  await pane.getByRole("button", { name: "Start run" }).click();
+  await expect(pane.getByRole("alert")).toHaveText(
+    "choose an update channel in Beehive settings before starting a run",
+  );
+  await pane.getByRole("button", { name: "Close card" }).click();
+
+  await pane.getByRole("tab", { name: "Settings" }).click();
+  const channel = pane.getByRole("combobox", { name: "Update channel" });
+  await expect(channel).toHaveText("No channel");
+  // A channel the Beehive account has not joined is refused and the choice stays.
+  await channel.click();
+  await page.getByRole("option", { name: "# empty-room" }).click();
+  await expect(pane.getByRole("alert")).toHaveText(
+    "add the Beehive account to this channel, then save again",
+  );
+  await expect(channel).toHaveText("No channel");
+  await channel.click();
+  await page.getByRole("option", { name: "# updates" }).click();
+  await expect(channel).toHaveText("# updates");
+  await expect(pane.getByRole("alert")).toHaveCount(0);
+
+  await pane.getByRole("tab", { name: "Board" }).click();
+  await todo.getByRole("button", { name: /Ship the board/ }).click();
+  await pane.getByRole("button", { name: "Start run" }).click();
+  await expect(
+    pane.getByRole("tabpanel", { name: "Details" }).getByText("Running"),
+  ).toBeVisible();
+  await expect(pane.getByRole("button", { name: "Start run" })).toHaveCount(0);
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("a person who can run but is not an admin sees the update channel and cannot change it", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await pane.getByRole("tab", { name: "Settings" }).click();
+  await expect(
+    pane.getByRole("combobox", { name: "Update channel" }),
+  ).toBeDisabled();
+});
+
+test("Settings stays inside a narrow window in dark appearance with large text", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.beehiveFixture = { role: "admin" };
+  });
+  await page.setViewportSize({ width: 420, height: 800 });
+  await page.goto(url);
+  await page.getByRole("button", { name: "Toggle appearance" }).click();
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "24px";
+  });
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await pane.getByRole("tab", { name: "Settings" }).click();
+  const channel = pane.getByRole("combobox", { name: "Update channel" });
+  await expect(channel).toBeVisible();
+  const box = await channel.boundingBox();
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(420);
+});

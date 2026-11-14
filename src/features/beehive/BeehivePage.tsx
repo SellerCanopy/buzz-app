@@ -8,6 +8,7 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import type { Navigation } from "../navigation/controller";
 import type { PageProps } from "../pages/service";
+import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
 import { BoardPage } from "./BoardPage";
 import { CardPage } from "./CardPage";
@@ -15,18 +16,23 @@ import { NewCardDialog } from "./NewCardDialog";
 import { boardTarget, cardTarget, isBeehivePage, visitedCard } from "./routes";
 import "./beehive.css";
 
-/** Whether the signed-in person may add and archive cards. Unknown counts as no. */
-function useCanRun(client: Client) {
-  const [canRun, setCanRun] = useState(false);
+/** What the signed-in person may do. Unknown counts as nothing. */
+function useAccess(client: Client) {
+  const [access, setAccess] = useState({ canRun: false, isAdmin: false });
   useEffect(() => {
     const abort = new AbortController();
     client
       .whoAmI(abort.signal)
-      .then((me) => setCanRun(me.role === "run" || me.role === "admin"))
-      .catch(() => setCanRun(false));
+      .then((me) =>
+        setAccess({
+          canRun: me.role === "run" || me.role === "admin",
+          isAdmin: me.role === "admin",
+        }),
+      )
+      .catch(() => setAccess({ canRun: false, isAdmin: false }));
     return () => abort.abort();
   }, [client]);
-  return canRun;
+  return access;
 }
 
 /**
@@ -35,12 +41,14 @@ function useCanRun(client: Client) {
  */
 export function BeehivePage({
   client,
+  relay,
   navigation,
   navigator,
 }: {
   client: Client;
+  relay: RelayData;
 } & Pick<PageProps, "navigation"> & { navigator?: Navigation | undefined }) {
-  const canRun = useCanRun(client);
+  const { canRun, isAdmin } = useAccess(client);
   const [adding, setAdding] = useState(false);
   const target = navigation?.target;
   const open = target ? visitedCard(target) : undefined;
@@ -83,7 +91,9 @@ export function BeehivePage({
           <div hidden={open !== undefined}>
             <BoardPage
               client={client}
+              relay={relay}
               canRun={canRun}
+              isAdmin={isAdmin}
               onOpen={openCard}
               onNew={() => setAdding(true)}
             />

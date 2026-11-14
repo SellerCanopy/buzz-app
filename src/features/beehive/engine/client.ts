@@ -16,6 +16,8 @@ import {
   CreateCardRequestSchema,
   CreateTaskRequestSchema,
   GetCardRequestSchema,
+  GetSettingsRequestSchema,
+  GetSettingsResponseSchema,
   GetStatusRequestSchema,
   GetStatusResponseSchema,
   ListCardsRequestSchema,
@@ -31,6 +33,10 @@ import {
   RemoveCardRequestSchema,
   RemoveCardResponseSchema,
   RestoreCardRequestSchema,
+  RunSchema,
+  SetSettingRequestSchema,
+  SettingSchema,
+  StartStageRequestSchema,
   WhoAmIRequestSchema,
   WhoAmIResponseSchema,
 } from "../gen/kiln/engine/v1/engine_pb";
@@ -136,6 +142,37 @@ export function createClient(session: Session) {
         PollEventsRequestSchema,
         PollEventsResponseSchema,
         create(PollEventsRequestSchema, { afterSeq, waitSeconds }),
+        signal,
+      ),
+    /** Start a run on a card at its workflow's first stage. */
+    startRun: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "StartStage",
+        StartStageRequestSchema,
+        RunSchema,
+        create(StartStageRequestSchema, { cardId }),
+        signal,
+      ),
+    /** What applies at the community scope: every key, with the layer that set it. */
+    getCommunitySettings: (signal?: AbortSignal) =>
+      unary(
+        "GetSettings",
+        GetSettingsRequestSchema,
+        GetSettingsResponseSchema,
+        create(GetSettingsRequestSchema, { scope: "user" }),
+        signal,
+      ),
+    /** Set one community setting to a JSON value. An empty `valueJson` removes it. */
+    setCommunitySetting: (
+      key: string,
+      valueJson: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SetSetting",
+        SetSettingRequestSchema,
+        SettingSchema,
+        create(SetSettingRequestSchema, { scope: "user", key, valueJson }),
         signal,
       ),
     whoAmI: (signal?: AbortSignal) =>

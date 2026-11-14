@@ -14,7 +14,7 @@ type Loaded =
   | { status: "ready"; card: Card }
   | { status: "error"; message: string };
 
-/** One card: its details, and Archive or Restore for a person who can run. */
+/** One card: its details, and Start run, Archive and Restore for a person who can run. */
 export function CardPage({
   client,
   id,
@@ -55,13 +55,13 @@ export function CardPage({
     return () => abort.abort();
   }, [client, id, attempt]);
 
-  const toggleArchive = async (card: Card) => {
+  /** Run one action on the card, then read it again. A refusal shows as the engine words it. */
+  const act = async (action: () => Promise<unknown>) => {
     if (pending) return;
     setPending(true);
     setActionError(undefined);
     try {
-      if (card.archived) await client.restoreCard(card.id);
-      else await client.archiveCards([card.id]);
+      await action();
       setAttempt((n) => n + 1);
     } catch (error) {
       setActionError(
@@ -71,6 +71,13 @@ export function CardPage({
       setPending(false);
     }
   };
+  const toggleArchive = (card: Card) =>
+    act(() =>
+      card.archived
+        ? client.restoreCard(card.id)
+        : client.archiveCards([card.id]),
+    );
+  const startRun = (card: Card) => act(() => client.startRun(card.id));
 
   const card = loaded.status === "ready" ? loaded.card : undefined;
   return (
@@ -79,6 +86,15 @@ export function CardPage({
         title={card?.title ?? "Card"}
         actions={
           <>
+            {card && canRun && canStart(card) && (
+              <Button
+                variant="prominent"
+                disabled={pending}
+                onClick={() => void startRun(card)}
+              >
+                Start run
+              </Button>
+            )}
             {card && canRun && (
               <Button
                 loading={pending}
@@ -128,6 +144,11 @@ export function CardPage({
       </LoadingRegion>
     </div>
   );
+}
+
+/** A card with a workflow and no run in flight can start one. */
+function canStart(card: Card): boolean {
+  return !card.archived && !!card.workflow && card.state === "idle";
 }
 
 function Details({ card }: { card: Card }) {
