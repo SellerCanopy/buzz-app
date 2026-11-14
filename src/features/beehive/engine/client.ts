@@ -22,6 +22,8 @@ import {
   GetStatusResponseSchema,
   ListCardsRequestSchema,
   ListCardsResponseSchema,
+  ListRunsRequestSchema,
+  ListRunsResponseSchema,
   ListStageTemplatesRequestSchema,
   ListStageTemplatesResponseSchema,
   ListTemplateVariablesRequestSchema,
@@ -32,6 +34,7 @@ import {
   PollEventsResponseSchema,
   RemoveCardRequestSchema,
   RemoveCardResponseSchema,
+  ResumeCardRequestSchema,
   RestoreCardRequestSchema,
   RunSchema,
   SetSettingRequestSchema,
@@ -151,6 +154,24 @@ export function createClient(session: Session) {
         StartStageRequestSchema,
         RunSchema,
         create(StartStageRequestSchema, { cardId }),
+        signal,
+      ),
+    /** A card's runs, newest first. */
+    listRuns: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "ListRuns",
+        ListRunsRequestSchema,
+        ListRunsResponseSchema,
+        create(ListRunsRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Let a held card carry on: a stage held before it started posts its task. */
+    resumeCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "ResumeCard",
+        ResumeCardRequestSchema,
+        RunSchema,
+        create(ResumeCardRequestSchema, { cardId }),
         signal,
       ),
     /** What applies at the community scope: every key, with the layer that set it. */

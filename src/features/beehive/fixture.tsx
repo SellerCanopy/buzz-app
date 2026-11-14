@@ -24,6 +24,8 @@ type Fixture = {
   calls: string[];
   /** Another person adds a card: it reaches the engine, not this page's client. */
   externalCreate(title: string, workflow?: string): Promise<unknown>;
+  /** The agent of the card's first stage reports passed; the next stage is held. */
+  externalPass(cardId: string): Promise<unknown>;
 };
 const fixture: Fixture = Object.assign(
   {
@@ -32,6 +34,7 @@ const fixture: Fixture = Object.assign(
     calls: [] as string[],
     externalCreate: (title: string, workflow = "") =>
       handle("CreateCard", { title, workflow }),
+    externalPass: (cardId: string) => handle("StageDone", { cardId }),
   },
   (window as unknown as { beehiveFixture?: Partial<Fixture> }).beehiveFixture,
 );
@@ -45,6 +48,21 @@ type FakeCard = {
   archived: boolean;
   body: string;
 };
+type FakeStep = {
+  stage: string;
+  visit: number;
+  round: number;
+  result?: string;
+  routedTo?: string;
+  held?: boolean;
+};
+type FakeRun = {
+  id: string;
+  cardId: string;
+  stageId: string;
+  state: string;
+  steps: FakeStep[];
+};
 type FakeEvent = {
   seq: string;
   type: string;
@@ -52,6 +70,7 @@ type FakeEvent = {
   payloadJson: string;
 };
 const cards: FakeCard[] = [];
+const runs = new Map<string, FakeRun>();
 const log: FakeEvent[] = [];
 const waiters = new Set<() => void>();
 
@@ -197,7 +216,55 @@ async function handle(
         );
       card.state = "running";
       publish("card.state", card);
-      return { id: crypto.randomUUID(), cardId: card.id, state: "running" };
+      // The demo workflow's first stage is plan.
+      const run: FakeRun = {
+        id: crypto.randomUUID(),
+        cardId: card.id,
+        stageId: "plan",
+        state: "running",
+        steps: [{ stage: "plan", visit: 1, round: 1 }],
+      };
+      runs.set(card.id, run);
+      return run;
+    }
+    case "StageDone": {
+      // The demo workflow holds the card before approve until a person resumes it.
+      const card = find(body.cardId);
+      const run = runs.get(card.id);
+      if (run?.state !== "running")
+        throw new EngineError(
+          "failed_precondition",
+          "no stage is running",
+          400,
+        );
+      Object.assign(run.steps[0] as FakeStep, {
+        result: "passed",
+        routedTo: "approve",
+      });
+      run.steps.push({ stage: "approve", visit: 1, round: 1, held: true });
+      run.stageId = "approve";
+      run.state = "paused";
+      card.state = "waiting";
+      publish("card.state", card);
+      return run;
+    }
+    case "ListRuns": {
+      const run = runs.get(String(body.cardId));
+      return { runs: run ? [run] : [], seq: lastSeq() };
+    }
+    case "ResumeCard": {
+      const card = find(body.cardId);
+      const run = runs.get(card.id);
+      if (run?.state !== "paused")
+        throw new EngineError(
+          "failed_precondition",
+          "the run is not held; only a paused card can be resumed",
+          400,
+        );
+      run.state = "running";
+      card.state = "running";
+      publish("card.state", card);
+      return run;
     }
     case "CreateCard": {
       const card: FakeCard = {

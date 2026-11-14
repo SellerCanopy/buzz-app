@@ -4,17 +4,22 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import { Tabs } from "../../shared/design-system/ui/Tabs";
-import type { Card } from "./gen/kiln/engine/v1/engine_pb";
+import { Tabs, type TabItem } from "../../shared/design-system/ui/Tabs";
+import type { Card, Run } from "./gen/kiln/engine/v1/engine_pb";
 import type { Client } from "./engine/client";
-import { stateLabel } from "./labels";
+import { stateLabel, stepStatus } from "./labels";
 
 type Loaded =
   | { status: "loading" }
-  | { status: "ready"; card: Card }
+  | { status: "ready"; card: Card; run: Run | undefined }
   | { status: "error"; message: string };
 
-/** One card: its details, and Start run, Archive and Restore for a person who can run. */
+type Section = "details" | "steps";
+
+/**
+ * One card: its details and the stages its latest run went through, and Start run, Resume,
+ * Archive and Restore for a person who can run.
+ */
 export function CardPage({
   client,
   id,
@@ -30,14 +35,20 @@ export function CardPage({
   const [attempt, setAttempt] = useState(0);
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string>();
+  const [section, setSection] = useState<Section>("details");
 
   useEffect(() => {
     // `attempt` re-reads the card after a failure or an action.
     void attempt;
     const abort = new AbortController();
-    client
-      .getCard(id, abort.signal)
-      .then((card) => setLoaded({ status: "ready", card }))
+    Promise.all([
+      client.getCard(id, abort.signal),
+      client.listRuns(id, abort.signal),
+    ])
+      // The newest run is first.
+      .then(([card, runs]) =>
+        setLoaded({ status: "ready", card, run: runs.runs[0] }),
+      )
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
         setLoaded((current) =>
@@ -78,8 +89,13 @@ export function CardPage({
         : client.archiveCards([card.id]),
     );
   const startRun = (card: Card) => act(() => client.startRun(card.id));
+  const resume = (card: Card) => act(() => client.resumeCard(card.id));
 
   const card = loaded.status === "ready" ? loaded.card : undefined;
+  const run = loaded.status === "ready" ? loaded.run : undefined;
+  const hasSteps = !!run?.steps.length;
+  const sections: TabItem<Section>[] = [{ value: "details", label: "Details" }];
+  if (hasSteps) sections.push({ value: "steps", label: "Steps" });
   return (
     <div className="beehive-card-page">
       <Header
@@ -93,6 +109,15 @@ export function CardPage({
                 onClick={() => void startRun(card)}
               >
                 Start run
+              </Button>
+            )}
+            {card && canRun && run?.state === "paused" && (
+              <Button
+                variant="prominent"
+                disabled={pending}
+                onClick={() => void resume(card)}
+              >
+                Resume
               </Button>
             )}
             {card && canRun && (
@@ -135,10 +160,16 @@ export function CardPage({
           <Tabs
             variant="panel"
             label="Card sections"
-            value="details"
-            items={[{ value: "details", label: "Details" }]}
-            onValueChange={() => {}}
-            renderPanel={() => <Details card={card} />}
+            value={hasSteps ? section : "details"}
+            items={sections}
+            onValueChange={setSection}
+            renderPanel={(value) =>
+              value === "steps" && run ? (
+                <Steps run={run} />
+              ) : (
+                <Details card={card} />
+              )
+            }
           />
         )}
       </LoadingRegion>
@@ -171,5 +202,26 @@ function Details({ card }: { card: Card }) {
         </dd>
       </div>
     </dl>
+  );
+}
+
+/** The stages the run entered, oldest first, each with where it stands. */
+function Steps({ run }: { run: Run }) {
+  return (
+    <ol className="beehive-steps" aria-label="Stages of the run">
+      {run.steps.map((step, index) => (
+        <li key={`${step.stage}:${step.visit}`}>
+          <span>{step.stage}</span>
+          <span className="text-body-sm text-subtle">
+            {stepStatus(step, run, index === run.steps.length - 1)}
+          </span>
+          {step.summary && (
+            <span className="beehive-step-summary text-body-sm">
+              {step.summary}
+            </span>
+          )}
+        </li>
+      ))}
+    </ol>
   );
 }

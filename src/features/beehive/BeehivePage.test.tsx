@@ -14,13 +14,16 @@ import {
   EventSchema,
   CheckWorkflowResponseSchema,
   ListCardsResponseSchema,
+  ListRunsResponseSchema,
   ListWorkflowsResponseSchema,
   GetSettingsResponseSchema,
   RunSchema,
+  RunStepSchema,
   SettingSchema,
   PollEventsResponseSchema,
   WhoAmIResponseSchema,
   type Card,
+  type Run,
 } from "./gen/kiln/engine/v1/engine_pb";
 import { PAGE_ID, PLUGIN_ID } from "./routes";
 
@@ -34,6 +37,8 @@ const card = (fields: MessageInitShape<typeof CardSchema> = {}) =>
 function engine(
   options: {
     cards?: Card[];
+    /** The card's runs, newest first. */
+    runs?: Run[];
     role?: string;
     seq?: bigint;
     /** The channel id the update_channel setting holds, or none. */
@@ -61,6 +66,12 @@ function engine(
     getCard: vi.fn(async () => card({ body: "Line one\nLine two" })),
     createCard: vi.fn(async () => card()),
     startRun: vi.fn(async () => create(RunSchema, { id: "run-1", cardId: ID })),
+    listRuns: vi.fn(async () =>
+      create(ListRunsResponseSchema, { runs: options.runs ?? [] }),
+    ),
+    resumeCard: vi.fn(async () =>
+      create(RunSchema, { id: "run-1", cardId: ID, state: "running" }),
+    ),
     getCommunitySettings: vi.fn(async () =>
       create(GetSettingsResponseSchema, {
         settings: [
@@ -401,6 +412,132 @@ it("offers Start run only to a person who can run, on a card that can start", as
   page(reader.client, cardView);
   await screen.findByRole("tab", { name: "Details" });
   expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
+});
+
+const step = (fields: MessageInitShape<typeof RunStepSchema>) =>
+  create(RunStepSchema, { visit: 1, round: 1, ...fields });
+const run = (fields: MessageInitShape<typeof RunSchema> = {}) =>
+  create(RunSchema, { id: "run-1", cardId: ID, ...fields });
+
+it("lists the stages of the card's run with where each stands", async () => {
+  const e = engine({
+    runs: [
+      run({
+        state: "running",
+        stageId: "review",
+        steps: [
+          step({
+            stage: "build",
+            result: "passed",
+            routedTo: "review",
+            summary: "built it",
+          }),
+          step({ stage: "review", round: 2, result: "needs_work" }),
+        ],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("tab", { name: "Steps" }));
+  const stages = await screen.findByRole("list", { name: "Stages of the run" });
+  const [first, second] = within(stages).getAllByRole("listitem");
+  expect(first).toHaveTextContent("build");
+  expect(first).toHaveTextContent("passed, then review");
+  expect(first).toHaveTextContent("built it");
+  expect(second).toHaveTextContent("review");
+  expect(second).toHaveTextContent("Running, round 2, last result needs work");
+});
+
+it("marks a stage that was skipped, and one that is held", async () => {
+  const e = engine({
+    runs: [
+      run({
+        state: "paused",
+        stageId: "ship",
+        steps: [
+          step({ stage: "lint", skipped: true }),
+          step({ stage: "ship", held: true }),
+        ],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "waiting" }),
+  );
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("tab", { name: "Steps" }));
+  const [first, second] = within(
+    await screen.findByRole("list", { name: "Stages of the run" }),
+  ).getAllByRole("listitem");
+  expect(first).toHaveTextContent("Skipped");
+  expect(second).toHaveTextContent("Held until someone resumes it");
+});
+
+it("has no Steps tab for a card that never ran", async () => {
+  page(engine().client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  expect(screen.queryByRole("tab", { name: "Steps" })).toBeNull();
+});
+
+it("resumes a held card and reads it again", async () => {
+  const e = engine({
+    runs: [
+      run({
+        state: "paused",
+        stageId: "ship",
+        steps: [step({ stage: "ship", held: true })],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "waiting" }),
+  );
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("button", { name: "Resume" }));
+  await vi.waitFor(() => expect(e.calls.resumeCard).toHaveBeenCalledWith(ID));
+  await vi.waitFor(() => expect(e.calls.getCard).toHaveBeenCalledTimes(2));
+});
+
+it("offers Resume only to a person who can run, on a held card", async () => {
+  const held = [run({ state: "paused", steps: [step({ stage: "ship" })] })];
+  const reader = engine({ role: "read", runs: held });
+  reader.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "waiting" }),
+  );
+  page(reader.client, cardView);
+  await screen.findByRole("tab", { name: "Steps" });
+  expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+  cleanup();
+
+  const running = engine({
+    runs: [run({ state: "running", steps: [step({ stage: "ship" })] })],
+  });
+  running.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  page(running.client, cardView);
+  await screen.findByRole("tab", { name: "Steps" });
+  expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+});
+
+it("shows the engine's refusal to resume word for word", async () => {
+  const e = engine({
+    runs: [run({ state: "paused", steps: [step({ stage: "ship" })] })],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "waiting" }),
+  );
+  e.calls.resumeCard.mockRejectedValue(
+    new Error("the run is running; only a paused card can be resumed"),
+  );
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("button", { name: "Resume" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "only a paused card can be resumed",
+  );
 });
 
 it("lets an admin pick the update channel in Settings", async () => {

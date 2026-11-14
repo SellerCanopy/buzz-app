@@ -282,6 +282,57 @@ test("an admin sets the update channel, then starts a run on a card with a workf
   expect(errors.unexplained()).toEqual([]);
 });
 
+test("a card whose next stage is held shows its steps, and Resume lets it carry on", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.addInitScript(() => {
+    window.beehiveFixture = { role: "admin" };
+  });
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await pane.getByRole("tab", { name: "Settings" }).click();
+  await pane.getByRole("combobox", { name: "Update channel" }).click();
+  await page.getByRole("option", { name: "# updates" }).click();
+  await pane.getByRole("tab", { name: "Board" }).click();
+  const created = await page.evaluate(() =>
+    window.beehiveFixture.externalCreate("Ship the board", "demo"),
+  );
+  await pane
+    .getByRole("region", { name: "To do" })
+    .getByRole("button", { name: /Ship the board/ })
+    .click();
+  await pane.getByRole("button", { name: "Start run" }).click();
+  await pane.getByRole("tab", { name: "Steps" }).click();
+  const stages = pane.getByRole("list", { name: "Stages of the run" });
+  await expect(stages.getByRole("listitem")).toHaveCount(1);
+  await expect(pane.getByRole("button", { name: "Resume" })).toHaveCount(0);
+
+  // The first stage's agent reports. The workflow holds the card before approve.
+  await pane.getByRole("button", { name: "Close card" }).click();
+  await page.evaluate(
+    (id) => window.beehiveFixture.externalPass(id),
+    created.id,
+  );
+  await pane
+    .getByRole("region", { name: "Waiting" })
+    .getByRole("button", { name: /Ship the board/ })
+    .click();
+  await pane.getByRole("tab", { name: "Steps" }).click();
+  const items = stages.getByRole("listitem");
+  await expect(items).toHaveCount(2);
+  await expect(items.nth(0)).toContainText("passed, then approve");
+  await expect(items.nth(1)).toContainText("Held until someone resumes it");
+
+  await pane.getByRole("button", { name: "Resume" }).click();
+  await pane.getByRole("tab", { name: "Details" }).click();
+  await expect(
+    pane.getByRole("tabpanel", { name: "Details" }).getByText("Running"),
+  ).toBeVisible();
+  await expect(pane.getByRole("button", { name: "Resume" })).toHaveCount(0);
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("a person who can run but is not an admin sees the update channel and cannot change it", async ({
   page,
 }) => {
