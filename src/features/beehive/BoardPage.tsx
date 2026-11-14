@@ -1,79 +1,156 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { HexagonIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { Card } from "./gen/kiln/engine/v1/engine_pb";
 import type { Client } from "./engine/client";
+import { useLive } from "./engine/useLive";
+import { stateLabel } from "./labels";
 
-type Board =
-  | { status: "loading" }
-  | { status: "ready"; cards: Card[] }
-  | { status: "error"; message: string };
+type View = "board" | "archive";
 
-/** The board: every card that is not archived, or an empty state when there are none. */
-export function BoardPage({ client }: { client: Client }) {
-  const [board, setBoard] = useState<Board>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
-  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+/** Board columns by where a card is: Backlog has no workflow, the rest follow its state. */
+const COLUMNS = [
+  { key: "backlog", label: "Backlog" },
+  { key: "todo", label: "To do" },
+  { key: "running", label: "Running" },
+  { key: "waiting", label: "Waiting" },
+  { key: "attention", label: "Needs attention" },
+  { key: "done", label: "Done" },
+] as const;
 
-  useEffect(() => {
-    // `attempt` restarts the read; it is not otherwise used.
-    void attempt;
-    const abort = new AbortController();
-    setBoard((current) =>
-      current.status === "ready" ? current : { status: "loading" },
-    );
-    client
-      .listCards(false, abort.signal)
-      .then((reply) => setBoard({ status: "ready", cards: reply.cards }))
-      .catch((error: unknown) => {
-        if (abort.signal.aborted) return;
-        setBoard((current) =>
-          current.status === "ready"
-            ? current
-            : {
-                status: "error",
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Beehive did not answer",
-              },
-        );
-      });
-    return () => abort.abort();
-  }, [client, attempt]);
+export function columnOf(card: Card): (typeof COLUMNS)[number]["key"] {
+  if (!card.workflow) return "backlog";
+  switch (card.state) {
+    case "running":
+      return "running";
+    case "waiting":
+      return "waiting";
+    case "failed":
+    case "stopped":
+      return "attention";
+    case "done":
+      return "done";
+    default:
+      return "todo";
+  }
+}
 
-  const failed = board.status === "error";
+/** The board of live cards, or the archive. A card opens on its own page. */
+export function BoardPage({
+  client,
+  canRun,
+  onOpen,
+  onNew,
+}: {
+  client: Client;
+  canRun: boolean;
+  onOpen(card: string): void;
+  onNew(): void;
+}) {
+  const [view, setView] = useState<View>("board");
+  const { live, retry } = useLive(client, view === "archive");
+  const failed = live.status === "error";
+  const cards = live.status === "ready" ? live.cards : [];
   return (
-    <LoadingRegion
-      pending={board.status === "loading"}
-      label="Loading cards…"
-      feedback={
-        failed ? (
-          <div className="beehive-error">
-            <p role="alert" className="text-danger">
-              {board.message}
-            </p>
-            <Button onClick={retry}>Retry</Button>
-          </div>
-        ) : undefined
-      }
-    >
-      {board.status === "ready" && board.cards.length === 0 && (
-        <EmptyState
-          icon={<HexagonIcon size="1.5rem" />}
-          title="No cards yet"
-          description="Cards you add will show up here."
+    <>
+      <div className="beehive-toolbar">
+        <Tabs
+          variant="segmented"
+          size="sm"
+          label="Cards to show"
+          value={view}
+          onValueChange={setView}
+          items={[
+            { value: "board", label: "Board" },
+            { value: "archive", label: "Archive" },
+          ]}
         />
-      )}
-      {board.status === "ready" && board.cards.length > 0 && (
-        <ul aria-label="Cards">
-          {board.cards.map((card) => (
-            <li key={card.id.toString()}>{card.title}</li>
-          ))}
-        </ul>
-      )}
-    </LoadingRegion>
+      </div>
+      <LoadingRegion
+        pending={live.status === "loading"}
+        label="Loading cards…"
+        feedback={
+          failed ? (
+            <div className="beehive-error">
+              <p role="alert" className="text-danger">
+                {live.message}
+              </p>
+              <Button onClick={retry}>Retry</Button>
+            </div>
+          ) : undefined
+        }
+      >
+        {live.status === "ready" && cards.length === 0 && (
+          <EmptyState
+            icon={<HexagonIcon size="1.5rem" />}
+            title={view === "board" ? "No cards yet" : "Nothing archived"}
+            description={
+              view === "board"
+                ? "Cards you add will show up here."
+                : "Cards you archive are kept here and can be restored."
+            }
+            action={
+              view === "board" && canRun ? (
+                <Button
+                  variant="prominent"
+                  onClick={onNew}
+                  title="Add a card to the board"
+                >
+                  New card
+                </Button>
+              ) : undefined
+            }
+          />
+        )}
+        {live.status === "ready" && cards.length > 0 && view === "board" && (
+          <div className="beehive-columns">
+            {COLUMNS.map((column) => {
+              const inColumn = cards.filter((c) => columnOf(c) === column.key);
+              return (
+                <section
+                  key={column.key}
+                  aria-label={column.label}
+                  className="beehive-column"
+                >
+                  <InlineHeader title={column.label} />
+                  <ul className="beehive-cards">
+                    {inColumn.map((card) => (
+                      <CardRow key={card.id} card={card} onOpen={onOpen} />
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
+          </div>
+        )}
+        {live.status === "ready" && cards.length > 0 && view === "archive" && (
+          <ul className="beehive-cards" aria-label="Archived cards">
+            {cards.map((card) => (
+              <CardRow key={card.id} card={card} onOpen={onOpen} />
+            ))}
+          </ul>
+        )}
+      </LoadingRegion>
+    </>
+  );
+}
+
+function CardRow({ card, onOpen }: { card: Card; onOpen(card: string): void }) {
+  return (
+    <li>
+      <NavigationItem
+        multiline
+        label={card.title}
+        trailing={
+          <span className="text-body-sm text-subtle">{stateLabel(card)}</span>
+        }
+        onClick={() => onOpen(card.id)}
+      />
+    </li>
   );
 }

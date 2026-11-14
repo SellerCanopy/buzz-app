@@ -30,10 +30,10 @@ test("Beehive signs in and shows an empty board", async ({ page }) => {
   await expect(pane.getByRole("alert")).toHaveCount(0);
   // The token trade came first, then the board read carried the token.
   const calls = await page.evaluate(() => window.beehiveFixture.calls);
-  expect(calls).toEqual([
-    "/auth/token Nostr fixture",
+  expect(calls[0]).toBe("/auth/token Nostr fixture");
+  expect(calls).toContain(
     "/kiln.engine.v1.EngineService/ListCards bearer fixture-token",
-  ]);
+  );
   expect(errors.unexplained()).toEqual([]);
 });
 
@@ -71,4 +71,86 @@ test("the empty board is readable in dark appearance and with large text", async
   const box = await empty.boundingBox();
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(420);
+});
+
+async function addCard(pane, title) {
+  await pane.getByRole("button", { name: "New card" }).first().click();
+  const dialog = pane.page().getByRole("dialog", { name: "New card" });
+  await dialog.getByLabel("Title").fill(title);
+  await dialog.getByRole("button", { name: "Add card" }).click();
+  await expect(dialog).toHaveCount(0);
+}
+
+test("a person adds a card and sees it on the board, then archives it and sees it leave", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await expect(pane.getByText("No cards yet")).toBeVisible();
+
+  await addCard(pane, "Fix the build");
+  // The new card arrives through the event log, not through the form.
+  const backlog = pane.getByRole("region", { name: "Backlog" });
+  await expect(backlog.getByText("Fix the build")).toBeVisible();
+  await expect(pane.getByText("No cards yet")).toHaveCount(0);
+
+  await pane.getByRole("button", { name: /Fix the build/ }).click();
+  await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
+  await pane.getByRole("button", { name: "Archive" }).click();
+  await expect(pane.getByRole("button", { name: "Restore" })).toBeVisible();
+  await pane.getByRole("button", { name: "Close card" }).click();
+
+  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByText("Fix the build")).toHaveCount(0);
+  await pane.getByRole("tab", { name: "Archive" }).click();
+  await expect(pane.getByText("Fix the build")).toBeVisible();
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("a card is a visit: Back returns to the board and Forward to the card", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await addCard(pane, "Write the docs");
+  await pane.getByRole("button", { name: /Write the docs/ }).click();
+  await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(pane.getByRole("tab", { name: "Details" })).toHaveCount(0);
+  await expect(pane.getByText("Write the docs")).toBeVisible();
+  await page.getByRole("button", { name: "Forward" }).click();
+  await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
+  // Close retires the visit: Back does not stop on the card again.
+  await pane.getByRole("button", { name: "Close card" }).click();
+  await expect(pane.getByRole("tab", { name: "Details" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Forward" })).toBeDisabled();
+});
+
+test("a person who can only read sees the board without a way to add cards", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.beehiveFixture = { role: "read" };
+  });
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("button", { name: "New card" })).toHaveCount(0);
+});
+
+test("a card another person adds shows up on the open board without a new read", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await expect(pane.getByText("No cards yet")).toBeVisible();
+  const before = await page.evaluate(() => window.beehiveFixture.calls.length);
+  // Another person's write goes straight to the engine, not through this page.
+  await page.evaluate(() =>
+    window.beehiveFixture.externalCreate("Added elsewhere"),
+  );
+  await expect(pane.getByText("Added elsewhere")).toBeVisible();
+  const calls = await page.evaluate(() => window.beehiveFixture.calls);
+  expect(calls.slice(before).some((c) => c.includes("ListCards"))).toBe(false);
 });

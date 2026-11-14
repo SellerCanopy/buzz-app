@@ -4,8 +4,9 @@ import { createClient } from "./engine/client";
 import { chooseCarrier } from "./engine/carrier";
 import { beehiveOrigin } from "./engine/origin";
 import { createSession } from "./engine/session";
+import { routeCard } from "./routes";
 
-export const inject = ["pages"];
+export const inject = ["pages", "navigation"];
 
 /** Beehive is off, with no dock entry, until a build gives it an address. */
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -18,6 +19,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     layout: "workspace",
     primary: true,
     placement: "dock",
-    component: () => <BeehivePage client={client} />,
+    route: { version: 1, validate: (params) => !!routeCard(params) },
+    component: (props) => (
+      <BeehivePage
+        client={client}
+        navigation={props.navigation}
+        navigator={ctx.navigation}
+      />
+    ),
   });
 };

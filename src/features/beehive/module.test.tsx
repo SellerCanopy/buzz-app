@@ -4,6 +4,7 @@ import { conversationFeatures } from "../../app/conversation-features";
 import { pagePlacement } from "../../app/shell/presentation";
 import { createPluginManager } from "../../plugins/manager";
 import type { PluginStorage } from "../../plugins/storage";
+import { provideNavigation } from "../navigation/service";
 import { PagesService } from "../pages/service";
 
 const beehive = conversationFeatures.filter(
@@ -33,6 +34,7 @@ async function start() {
   const root = new Context();
   roots.push(root);
   createPluginManager(root, { storage, bundled: [], builtIn: beehive });
+  provideNavigation(root);
   const pages = new PagesService(root);
   await vi.advanceTimersByTimeAsync(0);
   return pages;

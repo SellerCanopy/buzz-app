@@ -6,10 +6,23 @@ import {
   type MessageShape,
 } from "@bufbuild/protobuf";
 import {
+  AddNoteRequestSchema,
+  AddNoteResponseSchema,
+  ArchiveCardsRequestSchema,
+  ArchiveCardsResponseSchema,
+  CardSchema,
+  CreateCardRequestSchema,
+  CreateTaskRequestSchema,
+  GetCardRequestSchema,
   GetStatusRequestSchema,
   GetStatusResponseSchema,
   ListCardsRequestSchema,
   ListCardsResponseSchema,
+  PollEventsRequestSchema,
+  PollEventsResponseSchema,
+  RemoveCardRequestSchema,
+  RemoveCardResponseSchema,
+  RestoreCardRequestSchema,
   WhoAmIRequestSchema,
   WhoAmIResponseSchema,
 } from "../gen/kiln/engine/v1/engine_pb";
@@ -41,6 +54,80 @@ export function createClient(session: Session) {
         ListCardsRequestSchema,
         ListCardsResponseSchema,
         create(ListCardsRequestSchema, { archived }),
+        signal,
+      ),
+    getCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "GetCard",
+        GetCardRequestSchema,
+        CardSchema,
+        create(GetCardRequestSchema, { cardId }),
+        signal,
+      ),
+    createCard: (
+      input: { title: string; description?: string; workflow?: string },
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "CreateCard",
+        CreateCardRequestSchema,
+        CardSchema,
+        create(CreateCardRequestSchema, input),
+        signal,
+      ),
+    createTask: (
+      input: { sentence: string; description?: string; workflow?: string },
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "CreateTask",
+        CreateTaskRequestSchema,
+        CardSchema,
+        create(CreateTaskRequestSchema, input),
+        signal,
+      ),
+    archiveCards: (cardIds: string[], signal?: AbortSignal) =>
+      unary(
+        "ArchiveCards",
+        ArchiveCardsRequestSchema,
+        ArchiveCardsResponseSchema,
+        create(ArchiveCardsRequestSchema, { cardIds }),
+        signal,
+      ),
+    restoreCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "RestoreCard",
+        RestoreCardRequestSchema,
+        CardSchema,
+        create(RestoreCardRequestSchema, { cardId }),
+        signal,
+      ),
+    removeCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "RemoveCard",
+        RemoveCardRequestSchema,
+        RemoveCardResponseSchema,
+        create(RemoveCardRequestSchema, { cardId }),
+        signal,
+      ),
+    addNote: (
+      input: { cardId: string; summary: string; detail?: string },
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "AddNote",
+        AddNoteRequestSchema,
+        AddNoteResponseSchema,
+        create(AddNoteRequestSchema, input),
+        signal,
+      ),
+    /** One long poll: returns at once with events after `afterSeq`, or empty after `waitSeconds`. */
+    pollEvents: (afterSeq: bigint, waitSeconds: number, signal?: AbortSignal) =>
+      unary(
+        "PollEvents",
+        PollEventsRequestSchema,
+        PollEventsResponseSchema,
+        create(PollEventsRequestSchema, { afterSeq, waitSeconds }),
         signal,
       ),
     whoAmI: (signal?: AbortSignal) =>
