@@ -36,10 +36,12 @@ import {
   ReadArtifactRequestSchema,
   ResumeCardRequestSchema,
   RestoreCardRequestSchema,
+  RetryRunRequestSchema,
   RunSchema,
   SetSettingRequestSchema,
   SettingSchema,
   StartStageRequestSchema,
+  StopRunRequestSchema,
   WhoAmIRequestSchema,
   WhoAmIResponseSchema,
 } from "../gen/kiln/engine/v1/engine_pb";
@@ -146,6 +148,24 @@ export function createClient(session: Session) {
         StartStageRequestSchema,
         RunSchema,
         create(StartStageRequestSchema, { cardId }),
+        signal,
+      ),
+    /** End a run that has not ended: the card moves to Stopped. */
+    stopRun: (runId: string, signal?: AbortSignal) =>
+      unary(
+        "StopRun",
+        StopRunRequestSchema,
+        RunSchema,
+        create(StopRunRequestSchema, { runId }),
+        signal,
+      ),
+    /** Start a new run from the stage a failed or stopped run reached, with the same settings. */
+    retryRun: (runId: string, signal?: AbortSignal) =>
+      unary(
+        "RetryRun",
+        RetryRunRequestSchema,
+        RunSchema,
+        create(RetryRunRequestSchema, { runId }),
         signal,
       ),
     /** A card's runs, newest first. */

@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { XIcon } from "../../shared/design-system/icons";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -24,7 +25,8 @@ type Loaded =
 
 /**
  * One card: the current stage's thread, the stages its latest run went through, the files they
- * saved and its details, and Start run, Resume, Archive and Restore for a person who can run.
+ * saved and its details, and Start run, Resume, Stop run, Retry run, Archive and Restore for a
+ * person who can run.
  * The tab is part of the page's route, so Back returns to the tab a person left.
  */
 export function CardPage({
@@ -53,6 +55,9 @@ export function CardPage({
   const [attempt, setAttempt] = useState(0);
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string>();
+  // Stopping asks first. The confirmation is a transient surface, so it has no history visit.
+  const [confirmStop, setConfirmStop] = useState(false);
+  const cancelStop = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     // `attempt` re-reads the card after a failure or an action.
@@ -102,6 +107,8 @@ export function CardPage({
     );
   const startRun = (card: Card) => act(() => client.startRun(card.id));
   const resume = (card: Card) => act(() => client.resumeCard(card.id));
+  const stop = (current: Run) => act(() => client.stopRun(current.id));
+  const retry = (current: Run) => act(() => client.retryRun(current.id));
 
   const card = loaded.status === "ready" ? loaded.card : undefined;
   const run = loaded.status === "ready" ? loaded.run : undefined;
@@ -138,6 +145,24 @@ export function CardPage({
                 Resume
               </Button>
             )}
+            {card && run && canRun && canStop(run) && (
+              <Button
+                variant="destructive"
+                disabled={pending}
+                onClick={() => setConfirmStop(true)}
+              >
+                Stop run
+              </Button>
+            )}
+            {card && run && canRun && canRetry(card, run) && (
+              <Button
+                variant="prominent"
+                disabled={pending}
+                onClick={() => void retry(run)}
+              >
+                Retry run
+              </Button>
+            )}
             {card && canRun && (
               <Button
                 loading={pending}
@@ -155,6 +180,33 @@ export function CardPage({
           </>
         }
       />
+      {confirmStop && run && (
+        <AlertDialog
+          title="Stop this run?"
+          description="The run ends and the card moves to Stopped. What its stages already saved stays, and you can retry the run afterwards."
+          pending={pending}
+          initialFocus={cancelStop}
+          onClose={() => setConfirmStop(false)}
+          actions={
+            <>
+              <Button
+                ref={cancelStop}
+                disabled={pending}
+                onClick={() => setConfirmStop(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                loading={pending}
+                onClick={() => void stop(run).then(() => setConfirmStop(false))}
+              >
+                Stop run
+              </Button>
+            </>
+          }
+        />
+      )}
       {actionError && (
         <p role="alert" className="text-danger">
           {actionError}
@@ -217,6 +269,20 @@ function canStart(card: Card): boolean {
   return !card.archived && !!card.workflow && card.state === "idle";
 }
 
+/** A run that has not ended can be stopped. */
+function canStop(run: Run): boolean {
+  return run.state !== "ended";
+}
+
+/** A card whose run failed or was stopped can start again from the stage it reached. */
+function canRetry(card: Card, run: Run): boolean {
+  return (
+    !card.archived &&
+    run.state === "ended" &&
+    (card.state === "failed" || card.state === "stopped")
+  );
+}
+
 function Details({ card }: { card: Card }) {
   return (
     <dl className="beehive-details">
@@ -250,6 +316,11 @@ function Steps({ run }: { run: Run }) {
           <span className="text-body-sm text-subtle">
             {stepStatus(step, run, index === run.steps.length - 1)}
           </span>
+          {step.failure && (
+            <span className="beehive-step-summary text-body-sm text-danger">
+              {step.failure}
+            </span>
+          )}
           {step.summary && (
             <span className="beehive-step-summary text-body-sm">
               {step.summary}

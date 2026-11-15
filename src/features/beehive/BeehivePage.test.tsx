@@ -111,6 +111,12 @@ function engine(
     resumeCard: vi.fn(async () =>
       create(RunSchema, { id: "run-1", cardId: ID, state: "running" }),
     ),
+    stopRun: vi.fn(async () =>
+      create(RunSchema, { id: "run-1", cardId: ID, state: "ended" }),
+    ),
+    retryRun: vi.fn(async () =>
+      create(RunSchema, { id: "run-2", cardId: ID, state: "running" }),
+    ),
     getCommunitySettings: vi.fn(async () =>
       create(GetSettingsResponseSchema, {
         settings: [
@@ -974,6 +980,151 @@ it("shows the engine's refusal to resume word for word", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "only a paused card can be resumed",
   );
+});
+
+it("asks before stopping a run, and stops it only when confirmed", async () => {
+  const e = engine({
+    runs: [run({ state: "running", steps: [step({ stage: "build" })] })],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  page(e.client, cardView);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Stop run" }),
+  );
+  const dialog = await screen.findByRole("alertdialog");
+  expect(dialog).toHaveTextContent("Stop this run?");
+  // Cancel is where focus starts, so Enter does not stop the run.
+  await vi.waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(e.calls.stopRun).not.toHaveBeenCalled();
+
+  await userEvent.click(screen.getByRole("button", { name: "Stop run" }));
+  const again = await screen.findByRole("alertdialog");
+  await userEvent.click(
+    within(again).getByRole("button", { name: "Stop run" }),
+  );
+  await vi.waitFor(() => expect(e.calls.stopRun).toHaveBeenCalledWith("run-1"));
+  await vi.waitFor(() => expect(e.calls.getCard).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+});
+
+it("stops a held run too, and shows the engine's refusal word for word", async () => {
+  const e = engine({
+    runs: [run({ state: "paused", steps: [step({ stage: "ship" })] })],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "waiting" }),
+  );
+  e.calls.stopRun.mockRejectedValue(new Error("the run has already ended"));
+  page(e.client, cardView);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Stop run" }),
+  );
+  const dialog = await screen.findByRole("alertdialog");
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Stop run" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "the run has already ended",
+  );
+});
+
+it("retries a failed or stopped card as a new run, and reads it again", async () => {
+  for (const state of ["failed", "stopped"]) {
+    const e = engine({
+      runs: [
+        run({
+          state: "ended",
+          steps: [
+            step({ stage: "build", failure: "build timed out after 30m" }),
+          ],
+        }),
+      ],
+    });
+    e.calls.getCard.mockResolvedValue(card({ workflow: "demo", state }));
+    page(e.client, cardView);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Retry run" }),
+    );
+    await vi.waitFor(() =>
+      expect(e.calls.retryRun).toHaveBeenCalledWith("run-1"),
+    );
+    await vi.waitFor(() => expect(e.calls.getCard).toHaveBeenCalledTimes(2));
+    // A retry needs no confirmation, and a card that is not running has nothing to stop.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
+    cleanup();
+  }
+});
+
+it("offers Stop run and Retry run only to a person who can run, when they apply", async () => {
+  const ended = [run({ state: "ended", steps: [step({ stage: "build" })] })];
+  const reader = engine({ role: "read", runs: ended });
+  reader.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "failed" }),
+  );
+  page(reader.client, cardView);
+  await screen.findByRole("tab", { name: "Steps" });
+  expect(screen.queryByRole("button", { name: "Retry run" })).toBeNull();
+  cleanup();
+
+  const done = engine({ runs: ended });
+  done.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "done" }),
+  );
+  page(done.client, cardView);
+  await screen.findByRole("tab", { name: "Steps" });
+  expect(screen.queryByRole("button", { name: "Retry run" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
+  cleanup();
+
+  const archived = engine({ runs: ended });
+  archived.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "failed", archived: true }),
+  );
+  page(archived.client, cardView);
+  await screen.findByRole("tab", { name: "Steps" });
+  expect(screen.queryByRole("button", { name: "Retry run" })).toBeNull();
+  cleanup();
+
+  const running = engine({
+    role: "read",
+    runs: [run({ state: "running", steps: [step({ stage: "build" })] })],
+  });
+  running.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  page(running.client, cardView);
+  await screen.findByRole("tab", { name: "Steps" });
+  expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
+});
+
+it("shows why a stage failed beside the stage", async () => {
+  const e = engine({
+    runs: [
+      run({
+        state: "ended",
+        steps: [step({ stage: "build", failure: "build timed out after 30m" })],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "failed" }),
+  );
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("tab", { name: "Steps" }));
+  expect(
+    within(
+      await screen.findByRole("list", { name: "Stages of the run" }),
+    ).getByText("build timed out after 30m"),
+  ).toBeInTheDocument();
 });
 
 it("lets an admin pick the update channel in Settings", async () => {
