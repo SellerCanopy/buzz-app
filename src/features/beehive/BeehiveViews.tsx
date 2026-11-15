@@ -6,6 +6,7 @@ import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
 import { useInbox } from "./engine/useInbox";
 import { CardList } from "./CardList";
+import { IntakePage } from "./IntakePage";
 import { NeedsYouPage } from "./NeedsYouPage";
 import { SettingsPage } from "./SettingsPage";
 import { UsagePage } from "./UsagePage";
@@ -15,6 +16,7 @@ type View =
   | "board"
   | "needs-you"
   | "archive"
+  | "intake"
   | "workflows"
   | "usage"
   | "settings";
@@ -85,6 +87,7 @@ export function BeehiveViews({
               ),
             },
             { value: "archive", label: "Archive" },
+            { value: "intake", label: "Intake" },
             { value: "workflows", label: "Workflows" },
             { value: "usage", label: "Usage" },
             { value: "settings", label: "Settings" },
@@ -101,6 +104,7 @@ export function BeehiveViews({
           onRetry={retry}
         />
       )}
+      {view === "intake" && <IntakePage client={client} canRun={canRun} />}
       {view === "workflows" && <WorkflowsPage client={client} />}
       {view === "usage" && <UsagePage client={client} />}
       {view === "settings" && (

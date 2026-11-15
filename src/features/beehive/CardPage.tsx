@@ -16,6 +16,7 @@ import { errorMessage } from "./engine/transport";
 import { ActivityTab } from "./ActivityTab";
 import { FilesTab } from "./FilesTab";
 import { stateLabel, stepStatus } from "./labels";
+import { IssueTab } from "./IssueTab";
 import { LiveTab } from "./LiveTab";
 import type { CardTab } from "./routes";
 
@@ -124,6 +125,8 @@ export function CardPage({
   if (hasSteps) sections.push({ value: "steps", label: "Steps" });
   if (run) sections.push({ value: "files", label: "Files" });
   sections.push({ value: "activity", label: "Activity" });
+  // A card made from an issue also shows the issue, as the host last returned it.
+  if (card?.issue) sections.push({ value: "issue", label: "Issue" });
   sections.push({ value: "details", label: "Details" });
   const fallback: CardTab = card?.stages.length ? "live" : "details";
   const section = tab && sections.some((s) => s.value === tab) ? tab : fallback;
@@ -269,6 +272,8 @@ export function CardPage({
                 <FilesTab client={client} relay={relay} cardId={card.id} />
               ) : value === "activity" ? (
                 <ActivityTab client={client} cardId={card.id} />
+              ) : value === "issue" && card.issue ? (
+                <IssueTab client={client} card={card} />
               ) : (
                 <Details card={card} />
               )
