@@ -25,6 +25,7 @@ const board = {
 it("accepts only a route naming one card by its uuid and, optionally, a known tab", () => {
   expect(routeCard({ card: ID })).toBe(ID);
   expect(routeCard({ card: ID, tab: "live" })).toBe(ID);
+  expect(routeCard({ card: ID, tab: "activity" })).toBe(ID);
   expect(routeCard({ card: ID, tab: "nope" })).toBeUndefined();
   expect(routeCard({ tab: "live" })).toBeUndefined();
   expect(routeCard({ card: "7" })).toBeUndefined();

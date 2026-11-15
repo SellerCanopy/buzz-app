@@ -11,7 +11,9 @@ import {
   ArtifactVersionSchema,
   ArchiveCardsRequestSchema,
   ArchiveCardsResponseSchema,
+  AnswerInboxRequestSchema,
   CardSchema,
+  InboxItemSchema,
   CheckWorkflowRequestSchema,
   CheckWorkflowResponseSchema,
   CreateCardRequestSchema,
@@ -21,12 +23,18 @@ import {
   GetSettingsResponseSchema,
   GetStatusRequestSchema,
   GetStatusResponseSchema,
+  GetUsageRequestSchema,
+  GetUsageResponseSchema,
+  ListActivityRequestSchema,
+  ListActivityResponseSchema,
   ListArtifactsRequestSchema,
   ListArtifactsResponseSchema,
   ListArtifactVersionsRequestSchema,
   ListArtifactVersionsResponseSchema,
   ListCardsRequestSchema,
   ListCardsResponseSchema,
+  ListInboxRequestSchema,
+  ListInboxResponseSchema,
   ListRunsRequestSchema,
   ListRunsResponseSchema,
   ListWorkflowsRequestSchema,
@@ -267,6 +275,47 @@ export function createClient(session: Session) {
         CheckWorkflowRequestSchema,
         CheckWorkflowResponseSchema,
         create(CheckWorkflowRequestSchema),
+        signal,
+      ),
+    /** What waits for a person: the open items, with the sequence number to follow events from. */
+    listInbox: (signal?: AbortSignal) =>
+      unary(
+        "ListInbox",
+        ListInboxRequestSchema,
+        ListInboxResponseSchema,
+        create(ListInboxRequestSchema, { includeResolved: false }),
+        signal,
+      ),
+    /** Answer an item with one of its choices. `text` is the reason or the reply. */
+    answerInbox: (
+      itemId: string,
+      choice: string,
+      text = "",
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "AnswerInbox",
+        AnswerInboxRequestSchema,
+        InboxItemSchema,
+        create(AnswerInboxRequestSchema, { itemId, choice, text }),
+        signal,
+      ),
+    /** A card's activity, oldest first: notes, answers and what the stages logged. */
+    listActivity: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "ListActivity",
+        ListActivityRequestSchema,
+        ListActivityResponseSchema,
+        create(ListActivityRequestSchema, { cardId }),
+        signal,
+      ),
+    /** What agents did: runs, how long they took, and the cards and runs agents started each week. */
+    getUsage: (signal?: AbortSignal) =>
+      unary(
+        "GetUsage",
+        GetUsageRequestSchema,
+        GetUsageResponseSchema,
+        create(GetUsageRequestSchema),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

@@ -8,7 +8,13 @@ type PageTarget = Extract<OpenTarget, { kind: "page" }>;
 const CARD_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export const CARD_TABS = ["live", "steps", "files", "details"] as const;
+export const CARD_TABS = [
+  "live",
+  "steps",
+  "files",
+  "activity",
+  "details",
+] as const;
 export type CardTab = (typeof CARD_TABS)[number];
 
 function routeObject(

@@ -20,6 +20,7 @@ import {
   ListArtifactsResponseSchema,
   ListArtifactVersionsResponseSchema,
   ListCardsResponseSchema,
+  ListInboxResponseSchema,
   ListRunsResponseSchema,
   ListWorkflowsResponseSchema,
   GetSettingsResponseSchema,
@@ -38,6 +39,11 @@ import { PAGE_ID, PLUGIN_ID } from "./routes";
 afterEach(cleanup);
 
 const ID = "0b8f4d1e-6c1f-4f0e-9d53-2f3f6a0a1c11";
+/**
+ * The page also follows the inbox for the Needs you count. Its read returns this sequence
+ * number, far past the board's, so its parked poll is told apart and kept out of `polls`.
+ */
+const INBOX_SEQ = 900_000n;
 const card = (fields: MessageInitShape<typeof CardSchema> = {}) =>
   create(CardSchema, { id: ID, title: "Fix the build", ...fields });
 
@@ -66,6 +72,9 @@ function engine(
         cards: (options.cards ?? []).filter((c) => c.archived === archived),
         seq: options.seq ?? 5n,
       }),
+    ),
+    listInbox: vi.fn(async () =>
+      create(ListInboxResponseSchema, { items: [], seq: INBOX_SEQ }),
     ),
     whoAmI: vi.fn(async () =>
       create(WhoAmIResponseSchema, { role: options.role ?? "run" }),
@@ -137,7 +146,7 @@ function engine(
     pollEvents: vi.fn(
       (after: bigint, _wait?: number, signal?: AbortSignal) =>
         new Promise((resolve) =>
-          polls.push({
+          (after >= INBOX_SEQ ? [] : polls).push({
             after,
             signal,
             answer: (cards, type) =>

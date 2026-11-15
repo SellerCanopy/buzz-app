@@ -12,6 +12,7 @@ import type { Navigation } from "../navigation/controller";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
+import { ActivityTab } from "./ActivityTab";
 import { FilesTab } from "./FilesTab";
 import { stateLabel, stepStatus } from "./labels";
 import { LiveTab } from "./LiveTab";
@@ -25,7 +26,7 @@ type Loaded =
 
 /**
  * One card: the current stage's thread, the stages its latest run went through, the files they
- * saved and its details, and Start run, Resume, Stop run, Retry run, Archive and Restore for a
+ * saved, what happened on it and its details, and Start run, Resume, Stop run, Retry run, Archive and Restore for a
  * person who can run.
  * The tab is part of the page's route, so Back returns to the tab a person left.
  */
@@ -118,6 +119,7 @@ export function CardPage({
   if (run) sections.push({ value: "live", label: "Live" });
   if (hasSteps) sections.push({ value: "steps", label: "Steps" });
   if (run) sections.push({ value: "files", label: "Files" });
+  sections.push({ value: "activity", label: "Activity" });
   sections.push({ value: "details", label: "Details" });
   const fallback: CardTab = card?.stages.length ? "live" : "details";
   const section = tab && sections.some((s) => s.value === tab) ? tab : fallback;
@@ -253,6 +255,8 @@ export function CardPage({
                 <Steps run={run} />
               ) : value === "files" && run ? (
                 <FilesTab client={client} relay={relay} cardId={card.id} />
+              ) : value === "activity" ? (
+                <ActivityTab client={client} cardId={card.id} />
               ) : (
                 <Details card={card} />
               )

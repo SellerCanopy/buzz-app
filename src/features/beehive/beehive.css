@@ -27,6 +27,18 @@
   gap: var(--space-3);
   margin: 0 0 var(--space-4);
 }
+/*
+ * Six views do not fit a narrow window with enlarged text. The toolbar scrolls sideways and
+ * keeps each tab readable, rather than the page scrolling or the tabs squeezing together.
+ * The padding leaves room for the focus ring that the scroll box would clip.
+ */
+.beehive-toolbar {
+  overflow-x: auto;
+  padding: var(--space-1);
+}
+.beehive-toolbar > * {
+  flex: none;
+}
 .beehive-columns {
   display: grid;
   grid-auto-flow: column;
@@ -185,4 +197,106 @@
   min-width: 0;
   min-height: 24rem;
   block-size: 60vh;
+}
+.beehive-inbox,
+.beehive-activity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.beehive-inbox > li,
+.beehive-activity > li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.beehive-inbox p {
+  margin: var(--space-1) 0 0;
+}
+/* A gate's buttons wrap under a long card title at a narrow width. */
+.beehive-inbox .buzz-content-header {
+  flex-wrap: wrap;
+}
+.beehive-inbox .buzz-content-header-copy {
+  flex: 1 1 12rem;
+}
+.beehive-inbox .buzz-content-header-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-inline-size: 100%;
+}
+.beehive-activity > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+}
+.beehive-usage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  max-width: 48rem;
+}
+.beehive-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-3) 0 0;
+}
+.beehive-figures dd {
+  margin: 0;
+}
+.beehive-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+.beehive-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.beehive-swatch,
+.beehive-bar-mark {
+  display: inline-block;
+  block-size: 0.75rem;
+  border-radius: var(--radius-pill);
+}
+.beehive-swatch {
+  inline-size: 0.75rem;
+}
+.beehive-swatch[data-series="1"],
+.beehive-bar-mark[data-series="1"] {
+  background: var(--chart-series-1);
+}
+.beehive-swatch[data-series="2"],
+.beehive-bar-mark[data-series="2"] {
+  background: var(--chart-series-2);
+}
+.beehive-weeks {
+  inline-size: 100%;
+  border-collapse: collapse;
+}
+.beehive-weeks th,
+.beehive-weeks td {
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  text-align: start;
+  font-weight: inherit;
+  vertical-align: middle;
+}
+.beehive-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.beehive-bar-mark {
+  /* A week with no count keeps no sliver, so the number alone says zero. */
+  min-inline-size: 0;
+  flex: 0 1 auto;
+  max-inline-size: calc(100% - 2rem);
 }

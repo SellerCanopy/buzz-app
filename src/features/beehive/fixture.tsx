@@ -31,6 +31,8 @@ type Fixture = {
   externalCreate(title: string, workflow?: string): Promise<unknown>;
   /** The agent of the card's first stage reports passed; the next stage is held. */
   externalPass(cardId: string): Promise<unknown>;
+  /** A stage opens an approval and the card waits for a person. */
+  externalGate(title: string): Promise<{ id: string; itemId: string }>;
 };
 const fixture: Fixture = Object.assign(
   {
@@ -40,6 +42,7 @@ const fixture: Fixture = Object.assign(
     externalCreate: (title: string, workflow = "") =>
       handle("CreateCard", { title, workflow }),
     externalPass: (cardId: string) => handle("StageDone", { cardId }),
+    externalGate: (title: string) => openGate(title),
   },
   (window as unknown as { beehiveFixture?: Partial<Fixture> }).beehiveFixture,
 );
@@ -103,6 +106,33 @@ const saved = new Map<string, Record<string, unknown>[]>();
 const log: FakeEvent[] = [];
 const waiters = new Set<() => void>();
 
+type FakeItem = {
+  id: string;
+  kind: string;
+  cardId: string;
+  cardTitle: string;
+  state: string;
+  title: string;
+  stage: string;
+  visit: number;
+  choices: string[];
+  detailJson: string;
+};
+type FakeActivity = {
+  seq: string;
+  key: string;
+  cardId: string;
+  type: string;
+  summary: string;
+  detail: string;
+  at: string;
+  author: { kind: string; id?: string };
+};
+const inbox: FakeItem[] = [];
+const activity: FakeActivity[] = [];
+// A person in the fixture is this key; the agent and the engine have their own labels.
+const PERSON = "b".repeat(64);
+
 function publish(type: string, card: FakeCard) {
   log.push({
     seq: String(log.length + 1),
@@ -115,6 +145,54 @@ function publish(type: string, card: FakeCard) {
     }),
   });
   for (const wake of [...waiters]) wake();
+}
+function publishItem(type: string, item: FakeItem) {
+  log.push({
+    seq: String(log.length + 1),
+    type,
+    cardId: item.cardId,
+    payloadJson: JSON.stringify({ item: item.id, kind: item.kind }),
+  });
+  for (const wake of [...waiters]) wake();
+}
+function note(cardId: string, type: string, summary: string, detail = "") {
+  activity.push({
+    seq: String(activity.length + 1),
+    key: `a${activity.length + 1}`,
+    cardId,
+    type,
+    summary,
+    detail,
+    at: new Date(Date.UTC(2026, 10, 15, 9, activity.length)).toISOString(),
+    author:
+      type === "answer" ? { kind: "person", id: PERSON } : { kind: "kiln" },
+  });
+}
+/** A card whose approval stage waits: what a person sees after an agent drafts a plan. */
+async function openGate(title: string) {
+  const card = (await handle("CreateCard", {
+    title,
+    workflow: "demo",
+  })) as FakeCard;
+  const real = find(card.id);
+  real.state = "waiting";
+  publish("card.state", real);
+  const item: FakeItem = {
+    id: crypto.randomUUID(),
+    kind: "approval",
+    cardId: real.id,
+    cardTitle: title,
+    state: "open",
+    title: "Approve the plan",
+    stage: "approve",
+    visit: 1,
+    choices: ["approve", "reject"],
+    detailJson: JSON.stringify({ artifacts: ["plan"] }),
+  };
+  inbox.push(item);
+  note(real.id, "note", "Waiting for approval of the plan");
+  publishItem("inbox.opened", item);
+  return { id: real.id, itemId: item.id };
 }
 const wire = (card: FakeCard, withBody = false) => ({
   ...card,
@@ -383,6 +461,82 @@ async function handle(
       publish("card.restored", card);
       return wire(card);
     }
+    case "ListInbox":
+      return {
+        items: inbox.filter((item) => item.state === "open"),
+        seq: lastSeq(),
+      };
+    case "AnswerInbox": {
+      const item = inbox.find((i) => i.id === body.itemId);
+      if (!item)
+        throw new EngineError("not_found", "inbox item does not exist", 404);
+      if (item.state !== "open")
+        throw new EngineError(
+          "failed_precondition",
+          "this item was already answered",
+          409,
+        );
+      const choice = String(body.choice ?? "");
+      const text = String(body.text ?? "").trim();
+      if (!item.choices.includes(choice))
+        throw new EngineError(
+          "invalid_argument",
+          `${choice || "(empty)"} is not an answer this item takes`,
+          400,
+        );
+      if (choice === "reject" && !text)
+        throw new EngineError(
+          "invalid_argument",
+          "a reason is required to reject",
+          400,
+        );
+      item.state = "resolved";
+      const card = find(item.cardId);
+      card.state = choice === "approve" ? "done" : "running";
+      note(
+        card.id,
+        "answer",
+        choice === "approve" ? "Approved the plan" : "Rejected the plan",
+        text,
+      );
+      publishItem("inbox.resolved", item);
+      publish("card.state", card);
+      return {};
+    }
+    case "ListActivity":
+      return {
+        entries: activity.filter((e) => e.cardId === body.cardId),
+        seq: lastSeq(),
+      };
+    case "GetUsage":
+      return {
+        runs: 7,
+        endedRuns: 5,
+        averageRunSeconds: "75",
+        longestRunSeconds: "3700",
+        weeks: [
+          {
+            starts: "2026-10-19",
+            cardsCreatedByAgents: 0,
+            runsStartedByAgents: 0,
+          },
+          {
+            starts: "2026-10-26",
+            cardsCreatedByAgents: 2,
+            runsStartedByAgents: 1,
+          },
+          {
+            starts: "2026-11-02",
+            cardsCreatedByAgents: 3,
+            runsStartedByAgents: 1,
+          },
+          {
+            starts: "2026-11-09",
+            cardsCreatedByAgents: 1,
+            runsStartedByAgents: 4,
+          },
+        ],
+      };
     case "PollEvents": {
       const after = Number(body.afterSeq ?? 0);
       // Park until a card changes, like the engine does; give up when abandoned.
