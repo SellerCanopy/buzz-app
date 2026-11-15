@@ -139,6 +139,77 @@ test("a person who can only read sees the board without a way to add cards", asy
   await expect(pane.getByRole("button", { name: "New card" })).toHaveCount(0);
 });
 
+test("a person who can only read has no Start run, no approvals and no Access list", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.addInitScript(() => {
+    window.beehiveFixture = { role: "read" };
+  });
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await page.evaluate(() =>
+    window.beehiveFixture.externalCreate("Ship the board", "demo"),
+  );
+  await pane
+    .getByRole("region", { name: "To do" })
+    .getByRole("button", { name: /Ship the board/ })
+    .click();
+  await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
+  await expect(pane.getByRole("button", { name: "Start run" })).toHaveCount(0);
+  await expect(pane.getByRole("switch", { name: "Auto mode" })).toHaveCount(0);
+  await pane.getByRole("button", { name: "Close card" }).click();
+
+  await pane.getByRole("tab", { name: "Settings" }).click();
+  await expect(
+    pane.getByRole("combobox", { name: "Update channel" }),
+  ).toBeDisabled();
+  await expect(pane.getByText("Access", { exact: true })).toHaveCount(0);
+  const calls = await page.evaluate(() => window.beehiveFixture.calls);
+  expect(calls.some((c) => c.includes("/ListAccess"))).toBe(false);
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("an admin sees who has which level in Settings, and a change saves from the row", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.addInitScript(() => {
+    window.beehiveFixture = { role: "admin" };
+  });
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await pane.getByRole("tab", { name: "Settings" }).click();
+  await expect(pane.getByText("Access", { exact: true })).toBeVisible();
+  const ben = pane.getByRole("combobox", { name: "Level for Ben" });
+  await expect(ben).toHaveText("Read");
+  // The signed-in admin cannot lower themselves, and an agent cannot pass its owner.
+  await pane.getByRole("combobox", { name: "Level for Ada" }).click();
+  await expect(page.getByRole("option", { name: /Read/ })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+  await pane.getByRole("combobox", { name: "Level for builder" }).click();
+  await expect(page.getByRole("option", { name: /Admin/ })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+
+  await ben.click();
+  await page.getByRole("option", { name: /Run/ }).click();
+  await expect(ben).toHaveText("Run");
+  // Ben is at Run now, so his agent may be raised to Run.
+  await pane.getByRole("combobox", { name: "Level for builder" }).click();
+  await expect(page.getByRole("option", { name: /Run/ })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("a card another person adds shows up on the open board without a new read", async ({
   page,
 }) => {

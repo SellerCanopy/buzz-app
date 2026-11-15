@@ -228,6 +228,7 @@ function views(initial: InboxItem[], options: { failFirst?: string } = {}) {
       relay={fakeRelay([])}
       canRun
       isAdmin={false}
+      me=""
       onOpen={vi.fn()}
       onNew={vi.fn()}
     />,

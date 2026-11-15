@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { HexagonIcon, PlusIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -12,8 +18,8 @@ import type { Navigation } from "../navigation/controller";
 import type { PageProps } from "../pages/service";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
-import { errorMessage } from "./engine/transport";
 import { BeehiveViews } from "./BeehiveViews";
+import { atLeast, createLevelStore, type LevelStore } from "./level";
 import { CardPage } from "./CardPage";
 import { NewCardDialog } from "./NewCardDialog";
 import {
@@ -26,45 +32,27 @@ import {
 } from "./routes";
 import "./beehive.css";
 
-type Access =
-  | { status: "loading" }
-  | { status: "ready"; canRun: boolean; isAdmin: boolean }
-  | { status: "error"; message: string };
-
 /**
  * What the signed-in person may do. Only the engine's own answer grants or
  * withholds a control: until it arrives, and when it cannot be read, the person
- * gets nothing, and a failure says so with a way to ask again.
+ * gets nothing, and a failure says so with a way to ask again. The host's own
+ * store follows the level while no page is open; a page rendered without one
+ * keeps a store for as long as it is mounted.
  */
-function useAccess(client: Client) {
-  const [access, setAccess] = useState<Access>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
-  const retry = useCallback(() => setAttempt((n) => n + 1), []);
-  useEffect(() => {
-    // `attempt` asks again after a failure; it is not otherwise used.
-    void attempt;
-    const abort = new AbortController();
-    client
-      .whoAmI(abort.signal)
-      .then((me) => {
-        if (abort.signal.aborted) return;
-        setAccess({
-          status: "ready",
-          canRun: me.role === "run" || me.role === "admin",
-          isAdmin: me.role === "admin",
-        });
-      })
-      .catch((error: unknown) => {
-        if (abort.signal.aborted) return;
-        setAccess({ status: "error", message: errorMessage(error) });
-      });
-    return () => abort.abort();
-  }, [client, attempt]);
+function useAccess(client: Client, shared: LevelStore | undefined) {
+  const own = useMemo(
+    () => shared ?? createLevelStore(client),
+    [shared, client],
+  );
+  useEffect(() => (shared ? undefined : own.start()), [shared, own]);
+  const state = useSyncExternalStore(own.subscribe, own.get);
+  const ready = state.status === "ready" ? state : undefined;
   return {
-    canRun: access.status === "ready" && access.canRun,
-    isAdmin: access.status === "ready" && access.isAdmin,
-    problem: access.status === "error" ? access.message : undefined,
-    retry,
+    canRun: !!ready && atLeast(ready.level, "run"),
+    isAdmin: ready?.level === "admin",
+    me: ready?.pubkey ?? "",
+    problem: state.status === "error" ? state.message : undefined,
+    retry: own.refresh,
   };
 }
 
@@ -78,13 +66,16 @@ export function BeehivePage({
   navigation,
   navigator,
   Thread,
+  level,
 }: {
   client: Client;
   relay: RelayData;
+  /** The host's store of the person's level, when it keeps one. */
+  level?: LevelStore | undefined;
   /** The host's embedded thread, as Channels shows it. */
   Thread: (props: EmbeddedThreadProps) => ReactNode;
 } & Pick<PageProps, "navigation"> & { navigator?: Navigation | undefined }) {
-  const { canRun, isAdmin, problem, retry } = useAccess(client);
+  const { canRun, isAdmin, me, problem, retry } = useAccess(client, level);
   const [adding, setAdding] = useState(false);
   const target = navigation?.target;
   const open = target ? visitedCard(target) : undefined;
@@ -143,6 +134,7 @@ export function BeehivePage({
               relay={relay}
               canRun={canRun}
               isAdmin={isAdmin}
+              me={me}
               onOpen={openCard}
               onNew={() => setAdding(true)}
             />

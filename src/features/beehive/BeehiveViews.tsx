@@ -29,6 +29,7 @@ export function BeehiveViews({
   relay,
   canRun,
   isAdmin,
+  me,
   onOpen,
   onNew,
 }: {
@@ -36,6 +37,8 @@ export function BeehiveViews({
   relay: RelayData;
   canRun: boolean;
   isAdmin: boolean;
+  /** The signed-in person's pubkey. */
+  me: string;
   onOpen(card: string): void;
   onNew(): void;
 }) {
@@ -86,7 +89,7 @@ export function BeehiveViews({
       {view === "workflows" && <WorkflowsPage client={client} />}
       {view === "usage" && <UsagePage client={client} />}
       {view === "settings" && (
-        <SettingsPage client={client} relay={relay} isAdmin={isAdmin} />
+        <SettingsPage client={client} relay={relay} isAdmin={isAdmin} me={me} />
       )}
       {(view === "board" || view === "archive") && (
         <CardList

@@ -48,6 +48,37 @@ const fixture: Fixture = Object.assign(
 );
 Object.assign(window, { beehiveFixture: fixture });
 
+/** Who the access list shows. The first is the signed-in person. */
+const PEOPLE: {
+  pubkey: string;
+  name: string;
+  kind: string;
+  ownerPubkey: string;
+  level: string;
+}[] = [
+  {
+    pubkey: "a".repeat(64),
+    name: "Ada",
+    kind: "person",
+    ownerPubkey: "",
+    level: "admin",
+  },
+  {
+    pubkey: "b".repeat(64),
+    name: "Ben",
+    kind: "person",
+    ownerPubkey: "",
+    level: "read",
+  },
+  {
+    pubkey: "c".repeat(64),
+    name: "builder",
+    kind: "agent",
+    ownerPubkey: "b".repeat(64),
+    level: "read",
+  },
+];
+
 type FakeCard = {
   id: string;
   title: string;
@@ -283,7 +314,15 @@ async function handle(
         seq: lastSeq(),
       };
     case "WhoAmI":
-      return { role: fixture.role };
+      return { role: fixture.role, me: { userId: PEOPLE[0]?.pubkey } };
+    case "ListAccess":
+      return { entries: PEOPLE };
+    case "SetAccessLevel": {
+      const entry = PEOPLE.find((e) => e.pubkey === body.pubkey);
+      if (!entry) throw new EngineError("not_found", "no such person", 404);
+      entry.level = String(body.level);
+      return entry;
+    }
     case "ListWorkflows":
       return { workflows: WORKFLOWS };
     case "CheckWorkflow":

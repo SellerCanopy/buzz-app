@@ -6,6 +6,7 @@ import {
   type MessageShape,
 } from "@bufbuild/protobuf";
 import {
+  AccessEntrySchema,
   AddNoteRequestSchema,
   AddNoteResponseSchema,
   ArtifactVersionSchema,
@@ -25,6 +26,8 @@ import {
   GetStatusResponseSchema,
   GetUsageRequestSchema,
   GetUsageResponseSchema,
+  ListAccessRequestSchema,
+  ListAccessResponseSchema,
   ListActivityRequestSchema,
   ListActivityResponseSchema,
   ListArtifactsRequestSchema,
@@ -46,6 +49,7 @@ import {
   RestoreCardRequestSchema,
   RetryRunRequestSchema,
   RunSchema,
+  SetAccessLevelRequestSchema,
   SetAutoModeRequestSchema,
   SetSettingRequestSchema,
   SettingSchema,
@@ -326,6 +330,24 @@ export function createClient(session: Session) {
         GetUsageRequestSchema,
         GetUsageResponseSchema,
         create(GetUsageRequestSchema),
+        signal,
+      ),
+    /** Everyone in the community with the level each acts at, people first and then agents. */
+    listAccess: (signal?: AbortSignal) =>
+      unary(
+        "ListAccess",
+        ListAccessRequestSchema,
+        ListAccessResponseSchema,
+        create(ListAccessRequestSchema),
+        signal,
+      ),
+    /** Set one person's or agent's level. The reply is its entry as it now stands. */
+    setAccessLevel: (pubkey: string, level: string, signal?: AbortSignal) =>
+      unary(
+        "SetAccessLevel",
+        SetAccessLevelRequestSchema,
+        AccessEntrySchema,
+        create(SetAccessLevelRequestSchema, { pubkey, level }),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

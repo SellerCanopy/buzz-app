@@ -12,11 +12,13 @@ import { fakeRelay } from "./fake-relay";
 import type { Client } from "./engine/client";
 import { EngineError } from "./engine/transport";
 import {
+  AccessEntrySchema,
   ArtifactInfoSchema,
   ArtifactVersionSchema,
   CardSchema,
   EventSchema,
   CheckWorkflowResponseSchema,
+  ListAccessResponseSchema,
   ListArtifactsResponseSchema,
   ListArtifactVersionsResponseSchema,
   ListCardsResponseSchema,
@@ -30,6 +32,7 @@ import {
   StageThreadSchema,
   PollEventsResponseSchema,
   WhoAmIResponseSchema,
+  type AccessEntry,
   type ArtifactVersion,
   type Card,
   type Run,
@@ -57,6 +60,8 @@ function engine(
     seq?: bigint;
     /** The channel id the update_channel setting holds, or none. */
     updateChannel?: string;
+    /** Who the access list shows, each with the level they act at. */
+    access?: AccessEntry[];
     /** What the card's stages saved, every version of each, oldest first. */
     saved?: ArtifactVersion[];
   } = {},
@@ -138,6 +143,14 @@ function engine(
         ],
       }),
     ),
+    listAccess: vi.fn(async () =>
+      create(ListAccessResponseSchema, { entries: options.access ?? [] }),
+    ),
+    setAccessLevel: vi.fn(async (pubkey: string, level: string) => {
+      const entry = (options.access ?? []).find((e) => e.pubkey === pubkey);
+      if (entry) entry.level = level;
+      return create(AccessEntrySchema, { pubkey, level });
+    }),
     setCommunitySetting: vi.fn(async (key: string, valueJson: string) =>
       create(SettingSchema, { key, valueJson }),
     ),
@@ -1210,6 +1223,104 @@ it("shows the update channel to a person who is not an admin without a way to ch
   });
   await vi.waitFor(() => expect(select).toHaveTextContent("# updates"));
   expect(select).toBeDisabled();
+});
+
+const ADA = "a".repeat(64);
+const BEN = "b".repeat(64);
+const BOT = "c".repeat(64);
+const access = () => [
+  create(AccessEntrySchema, {
+    pubkey: ADA,
+    name: "Ada",
+    kind: "person",
+    level: "admin",
+  }),
+  create(AccessEntrySchema, {
+    pubkey: BEN,
+    name: "Ben",
+    kind: "person",
+    level: "read",
+  }),
+  create(AccessEntrySchema, {
+    pubkey: BOT,
+    name: "builder",
+    kind: "agent",
+    ownerPubkey: BEN,
+    level: "read",
+  }),
+];
+
+it("lists everyone's level for an admin and saves a change from the row", async () => {
+  const e = engine({ role: "admin", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  const ben = await screen.findByRole("combobox", { name: "Level for Ben" });
+  expect(ben).toHaveTextContent("Read");
+  expect(
+    screen.getByRole("combobox", { name: "Level for Ada" }),
+  ).toHaveTextContent("Admin");
+  expect(
+    screen.getByRole("combobox", { name: "Level for builder" }),
+  ).toHaveTextContent("Read");
+  await userEvent.click(ben);
+  await userEvent.click(await screen.findByRole("option", { name: /Run/ }));
+  await vi.waitFor(() =>
+    expect(e.calls.setAccessLevel).toHaveBeenCalledWith(BEN, "run"),
+  );
+  // The list is read again, so the row shows what the engine now holds.
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Level for Ben" }),
+    ).toHaveTextContent("Run"),
+  );
+  expect(e.calls.listAccess.mock.calls.length).toBeGreaterThanOrEqual(2);
+});
+
+it("does not offer an agent a level above its owner's", async () => {
+  const e = engine({ role: "admin", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("combobox", { name: "Level for builder" }),
+  );
+  expect(await screen.findByRole("option", { name: /Run/ })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(screen.getByRole("option", { name: /Admin/ })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(screen.getByRole("option", { name: /None/ })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+});
+
+it("shows the engine's answer beside the row when a change is refused", async () => {
+  const e = engine({ role: "admin", access: access() });
+  e.calls.setAccessLevel.mockRejectedValueOnce(
+    new Error("agent builder is capped at read by its owner Ben"),
+  );
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("combobox", { name: "Level for Ben" }),
+  );
+  await userEvent.click(await screen.findByRole("option", { name: /Run/ }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("capped at read");
+  expect(
+    screen.getByRole("combobox", { name: "Level for Ben" }),
+  ).toHaveTextContent("Read");
+});
+
+it("gives a person who is not an admin no access list", async () => {
+  const e = engine({ role: "run", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await screen.findByRole("combobox", { name: "Update channel" });
+  expect(screen.queryByRole("combobox", { name: "Level for Ben" })).toBeNull();
+  expect(e.calls.listAccess).not.toHaveBeenCalled();
 });
 
 it("says so when the settings cannot be read and Retry reads them again", async () => {
