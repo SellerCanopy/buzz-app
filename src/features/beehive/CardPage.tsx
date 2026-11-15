@@ -304,13 +304,48 @@ function canRetry(card: Card, run: Run): boolean {
   );
 }
 
-function Details({ card }: { card: Card }) {
+/** A pull request address is shown as a link only when it is a web address. */
+function isWebUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
+export function Details({ card }: { card: Card }) {
+  const pull = card.pullRequest;
   return (
     <dl className="beehive-details">
       <div>
         <dt className="text-label text-subtle">State</dt>
         <dd>{card.archived ? "Archived" : stateLabel(card)}</dd>
       </div>
+      {card.branch && (
+        <div>
+          <dt className="text-label text-subtle">Branch</dt>
+          <dd>
+            <code>{card.branch}</code>
+          </dd>
+        </div>
+      )}
+      {pull && (
+        <div>
+          <dt className="text-label text-subtle">Pull request</dt>
+          <dd>
+            {isWebUrl(pull.url) ? (
+              <Button
+                variant="link"
+                size="text"
+                role="link"
+                nativeButton={false}
+                render={<a href={pull.url} target="_blank" rel="noreferrer" />}
+              >
+                {`#${pull.number}`}
+              </Button>
+            ) : (
+              `#${pull.number}`
+            )}
+            {` ${pullState(pull.state, pull.draft)}`}
+          </dd>
+        </div>
+      )}
       {card.workflow && (
         <div>
           <dt className="text-label text-subtle">Workflow</dt>
@@ -331,6 +366,11 @@ function Details({ card }: { card: Card }) {
       </div>
     </dl>
   );
+}
+
+/** Where a pull request stands: a draft that is still open says so. */
+function pullState(state: string, draft: boolean): string {
+  return draft && state === "open" ? "draft" : state;
 }
 
 /** The stages the run entered, oldest first, each with where it stands. */

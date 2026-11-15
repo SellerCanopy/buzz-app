@@ -148,7 +148,9 @@ it("switches a rule off with the rest of the rule kept", async () => {
   const user = userEvent.setup();
   const e = engine();
   render(<IntakePage client={e.client} canRun />);
-  await user.click(await screen.findByRole("switch", { name: /Rule on: Bugs/ }));
+  await user.click(
+    await screen.findByRole("switch", { name: /Rule on: Bugs/ }),
+  );
   expect(e.calls.saveIntakeRule.mock.calls[0]?.[0]).toMatchObject({
     id: "r1",
     enabled: false,
