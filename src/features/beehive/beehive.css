@@ -1,0 +1,188 @@
+.beehive-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--text-standard);
+}
+.beehive-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-panel-inset) var(--space-8);
+}
+.beehive-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+.beehive-error p {
+  margin: 0;
+}
+.beehive-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+.beehive-columns {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(14rem, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.beehive-column {
+  min-width: 0;
+}
+.beehive-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.beehive-card-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+/* A long title keeps a readable width and the actions wrap below it. */
+.beehive-card-page .buzz-content-header {
+  flex-wrap: wrap;
+}
+.beehive-card-page .buzz-content-header-copy {
+  flex: 1 1 12rem;
+}
+.beehive-card-page .buzz-content-header-title {
+  overflow-wrap: anywhere;
+}
+.beehive-card-page .buzz-content-header-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-inline-size: 100%;
+}
+.beehive-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: var(--space-4) 0 0;
+}
+.beehive-details dd {
+  margin: 0;
+}
+.beehive-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.beehive-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.beehive-workflows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.beehive-workflow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.beehive-workflow p {
+  margin: 0;
+}
+.beehive-stages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 0 var(--space-6);
+}
+.beehive-stages li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  overflow-wrap: anywhere;
+}
+.beehive-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  padding: 0 0 0 var(--space-6);
+}
+.beehive-steps li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  overflow-wrap: anywhere;
+}
+.beehive-step-summary {
+  flex-basis: 100%;
+  white-space: pre-wrap;
+}
+.beehive-findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+.beehive-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 48rem;
+}
+.beehive-settings p {
+  margin: 0;
+}
+.beehive-files,
+.beehive-file {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  overflow-wrap: anywhere;
+}
+.beehive-file {
+  align-items: flex-start;
+  margin-top: 0;
+}
+.beehive-file-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
+.beehive-live {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  min-width: 0;
+}
+.beehive-live-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.beehive-live-thread {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 24rem;
+  block-size: 60vh;
+}

@@ -19,7 +19,9 @@
     "format:check": "biome format .",
     "tauri": "tauri",
     "lint": "biome lint --error-on-warnings . && node scripts/design-system/check-icons.mjs",
-    "check": "biome check --error-on-warnings . && pnpm typecheck && pnpm design:typecheck && pnpm design:check",
+    "beehive:gen": "node scripts/gen-beehive.mjs",
+    "beehive:gen:check": "node scripts/gen-beehive.mjs --check",
+    "check": "biome check --error-on-warnings . && pnpm beehive:gen:check && pnpm typecheck && pnpm design:typecheck && pnpm design:check",
     "buzzodz": "cargo run --quiet --manifest-path crates/plugin-manager/Cargo.toml --bin buzzodz --",
     "test": "node --test tests/integration/*.test.mjs && vitest run && cargo test -p buzzodz-plugins && pnpm test:browser",
     "test:browser": "playwright test --config tests/browser/playwright.config.mjs",
@@ -39,6 +41,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",
+    "@bufbuild/protobuf": "2.17.0",
     "@deepseek-ai/cordis": "4.0.2",
     "@dnd-kit/core": "6.3.1",
     "@emoji-mart/data": "1.2.1",
@@ -91,6 +94,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "@bufbuild/buf": "1.75.0",
+    "@bufbuild/protoc-gen-es": "2.17.0",
     "@hypothesi/tauri-mcp-server": "0.13.1",
     "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "4.3.3",

@@ -11,6 +11,9 @@ const approved = new Set(["@tabler/icons-react", "@tabler/icons"]);
 const nonIconDependencies = new Set([
   "@base-ui/react",
   "@biomejs/biome",
+  "@bufbuild/buf", // Beehive: generates its protobuf types, not an icon catalog.
+  "@bufbuild/protobuf", // Beehive: protobuf JSON runtime for generated types.
+  "@bufbuild/protoc-gen-es", // Beehive: the generator plugin.
   "@buzz/author",
   "@deepseek-ai/cordis",
   "@dnd-kit/core", // Pointer drag and drop for sidebar channel moves.

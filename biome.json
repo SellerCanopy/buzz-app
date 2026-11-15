@@ -18,6 +18,7 @@
       "!!.profiles",
       "!!src-tauri/target",
       "!!src-tauri/gen",
+      "!!src/features/beehive/gen",
       "!!target",
       "!!test-results",
       "!!tests/fixtures/design-system/flake-selection-*",

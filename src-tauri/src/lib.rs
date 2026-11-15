@@ -92,6 +92,7 @@ use legacy_communities::legacy_communities;
 use local_skills::local_skills_list;
 use os_idle::get_os_idle_seconds;
 use repositories_folder::{repositories_folder_list, repositories_folder_validate};
+mod beehive;
 mod relaunch;
 mod relay;
 mod relay_admin;
@@ -756,6 +757,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::socket::relay_socket_send,
         federated_identity::socket::relay_socket_close,
         draft_diagnostics::draft_diagnostics_save,
+        beehive::beehive_authorization,
+        beehive::beehive_request,
         relay_sign,
         relay_decode_read_state,
         relay_sign_read_state,

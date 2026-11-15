@@ -5,6 +5,7 @@ import {
   ChatsCircleIcon,
   NoteIcon,
   GearIcon,
+  HexagonIcon,
   LightningIcon,
   RobotIcon,
   SendIcon,
@@ -30,6 +31,7 @@ const bundledOrder = [
 const dockOrder = [
   "buzz.bestie/bestie",
   "buzz.channels/channels",
+  "buzz.beehive/beehive",
   "buzz.reminders/reminders",
 ];
 export function orderPages(
@@ -54,6 +56,7 @@ export function orderPages(
 
 const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.inbox/inbox", BellIcon],
+  ["buzz.beehive/beehive", HexagonIcon],
   ["buzz.drafts-and-sent/drafts-sent", SendIcon],
   ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.agents/agents", RobotIcon],
@@ -72,6 +75,7 @@ export function pagePlacement(page: RegisteredPage) {
     case "buzz.reminders/reminders":
     case "buzz.agents/agents":
     case "buzz.workflows/workflows":
+    case "buzz.beehive/beehive":
       return "dock";
     default:
       // `topbar` and `toolbar` predate the dock; both mean it.
