@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   render,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -12,6 +14,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { BeehiveViews } from "./BeehiveViews";
 import type { Client } from "./engine/client";
+import { useInbox } from "./engine/useInbox";
+import { EngineError } from "./engine/transport";
 import { GateCard } from "./GateCard";
 import { artifactsOf } from "./labels";
 import {
@@ -183,6 +187,7 @@ function views(initial: InboxItem[], options: { failFirst?: string } = {}) {
     after: bigint;
     signal: AbortSignal | undefined;
     answer(types: [string, ...string[]]): void;
+    fail(error: unknown): void;
   }[] = [];
   const calls = {
     listCards: vi.fn(async () =>
@@ -197,13 +202,14 @@ function views(initial: InboxItem[], options: { failFirst?: string } = {}) {
     }),
     pollEvents: vi.fn(
       (after: bigint, _wait?: number, signal?: AbortSignal) =>
-        new Promise((resolve) =>
+        new Promise((resolve, reject) =>
           // The board's poll is parked for good; only the inbox's can be answered.
           after < 900_000n
             ? undefined
             : polls.push({
                 after,
                 signal,
+                fail: reject,
                 answer: (types) =>
                   resolve(
                     create(PollEventsResponseSchema, {
@@ -322,4 +328,203 @@ it("shows the failure beside the list and reads again on Retry", async () => {
   await user.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("Nothing needs you")).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+/** A promise the test settles by hand. */
+function gate() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
+it("shows the engine's refusal of an answer without a dialog and lets the person try again", async () => {
+  const user = userEvent.setup();
+  const { onAnswer } = card({
+    onAnswer: async () => {
+      throw new Error("someone else already answered this item");
+    },
+  });
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "someone else already answered",
+  );
+  expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(2));
+});
+
+it("keeps the Stop run question open with the engine's refusal in it", async () => {
+  const user = userEvent.setup();
+  card({
+    item: item({ kind: "route", detailJson: "{}", choices: ["skip", "stop"] }),
+    onAnswer: async () => {
+      throw new Error("the run already ended");
+    },
+  });
+  await user.click(screen.getByRole("button", { name: "Stop run" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Stop run" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "the run already ended",
+  );
+  expect(screen.getByRole("alertdialog")).toBeVisible();
+});
+
+it("ignores a second press while an answer is on its way", async () => {
+  const user = userEvent.setup();
+  const held = gate();
+  const { onAnswer } = card({ onAnswer: () => held.promise });
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  expect(onAnswer).toHaveBeenCalledTimes(1);
+  held.release();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled(),
+  );
+});
+
+it("clears the words and the refusal when the reason is cancelled", async () => {
+  const user = userEvent.setup();
+  card({
+    onAnswer: async () => {
+      throw new Error("the item is out of date");
+    },
+  });
+  await user.click(screen.getByRole("button", { name: "Reject" }));
+  let dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByRole("textbox"), "Not yet.");
+  await user.click(within(dialog).getByRole("button", { name: "Reject" }));
+  await within(dialog).findByRole("alert");
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.queryByRole("alert")).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Reject" }));
+  dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("textbox")).toHaveValue("");
+  expect(within(dialog).queryByRole("alert")).toBeNull();
+});
+
+it("sends Retry and Dismiss for a failure with no words, and names a choice it does not know as the engine did", async () => {
+  const user = userEvent.setup();
+  const { onAnswer } = card({
+    item: item({
+      kind: "failure",
+      title: "The stage failed",
+      detailJson: "{}",
+      choices: ["retry", "dismiss", "escalate"],
+    }),
+  });
+  expect(
+    screen.getByRole("region", { name: "Failed: Write the docs" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(onAnswer).toHaveBeenLastCalledWith(expect.anything(), "retry", "");
+  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(onAnswer).toHaveBeenLastCalledWith(expect.anything(), "dismiss", "");
+  await user.click(screen.getByRole("button", { name: "escalate" }));
+  expect(onAnswer).toHaveBeenLastCalledWith(expect.anything(), "escalate", "");
+});
+
+it("words a kind it does not know", () => {
+  card({ item: item({ kind: "needs_review", choices: [] }) });
+  expect(
+    screen.getByRole("region", { name: "needs review: Write the docs" }),
+  ).toBeVisible();
+});
+
+it("says live updates paused when the poll is refused, and keeps the list", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const user = userEvent.setup();
+  const e = views([item()]);
+  await screen.findByRole("img", { name: "1 item needs you" });
+  await waitFor(() => expect(e.polls).toHaveLength(1));
+  e.polls[0]?.fail(
+    new EngineError("permission_denied", "your access changed", 403),
+  );
+  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Live updates paused: your access changed",
+  );
+  expect(screen.getByRole("list", { name: "Needs you" })).toBeVisible();
+  // The tab says the count may be out of date, beside the count.
+  expect(
+    screen.getByRole("img", { name: "What needs you could not be checked" }),
+  ).toBeVisible();
+  expect(screen.getByRole("img", { name: "1 item needs you" })).toBeVisible();
+  warn.mockRestore();
+});
+
+it("pauses after three failures in a row and clears the notice when a poll succeeds", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  const user = userEvent.setup();
+  const e = views([item()]);
+  await screen.findByRole("img", { name: "1 item needs you" });
+  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  for (let failure = 1; failure <= 3; failure += 1) {
+    await waitFor(() => expect(e.polls).toHaveLength(failure));
+    expect(screen.queryByRole("alert")).toBeNull();
+    e.polls[failure - 1]?.fail(new Error("Beehive is not reachable"));
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Live updates paused: Beehive is not reachable",
+  );
+  await waitFor(() => expect(e.polls).toHaveLength(4));
+  e.polls[3]?.answer(["card.state"]);
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  random.mockRestore();
+  warn.mockRestore();
+});
+
+it("keeps the list and says the read failed when reading it again fails", async () => {
+  const user = userEvent.setup();
+  const e = views([item()]);
+  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await screen.findByRole("list", { name: "Needs you" });
+  await waitFor(() => expect(e.polls).toHaveLength(1));
+  e.calls.listInbox.mockRejectedValueOnce(
+    new Error("Beehive is not reachable"),
+  );
+  e.polls[0]?.answer(["inbox.opened"]);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Beehive is not reachable",
+  );
+  expect(screen.getByRole("list", { name: "Needs you" })).toBeVisible();
+});
+
+it("marks the tab when the first read failed, so no count is not read as nothing waiting", async () => {
+  views([], { failFirst: "Beehive is not reachable" });
+  expect(
+    await screen.findByRole("img", {
+      name: "What needs you could not be checked",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByRole("img", { name: /items? needs? you/ })).toBeNull();
+});
+
+it("collapses reads asked for while one is out into one more", async () => {
+  const held = gate();
+  const listInbox = vi.fn(async () => {
+    if (listInbox.mock.calls.length === 1) await held.promise;
+    return create(ListInboxResponseSchema, { items: [], seq: 900_000n });
+  });
+  const client = {
+    listInbox,
+    pollEvents: vi.fn(() => new Promise(() => undefined)),
+  } as unknown as Client;
+  const { result } = renderHook(() => useInbox(client));
+  await waitFor(() => expect(listInbox).toHaveBeenCalledTimes(1));
+  act(() => {
+    result.current.refresh();
+    result.current.refresh();
+  });
+  expect(listInbox).toHaveBeenCalledTimes(1);
+  await act(async () => held.release());
+  await waitFor(() => expect(result.current.inbox.status).toBe("ready"));
+  expect(listInbox).toHaveBeenCalledTimes(2);
 });

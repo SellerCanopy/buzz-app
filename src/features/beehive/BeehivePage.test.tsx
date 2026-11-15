@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactElement } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi, type Mock } from "vitest";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
@@ -26,6 +26,7 @@ import {
   ListRunsResponseSchema,
   ListWorkflowsResponseSchema,
   GetSettingsResponseSchema,
+  GetStatusResponseSchema,
   RunSchema,
   RunStepSchema,
   SettingSchema,
@@ -37,6 +38,7 @@ import {
   type Card,
   type Run,
 } from "./gen/kiln/engine/v1/engine_pb";
+import { createLevelStore, type LevelStore } from "./level";
 import { PAGE_ID, PLUGIN_ID } from "./routes";
 
 afterEach(cleanup);
@@ -83,6 +85,10 @@ function engine(
     ),
     whoAmI: vi.fn(async () =>
       create(WhoAmIResponseSchema, { role: options.role ?? "run" }),
+    ),
+    // The level store follows the log from here, which is where the inbox follows from.
+    getStatus: vi.fn(async () =>
+      create(GetStatusResponseSchema, { headSeq: INBOX_SEQ }),
     ),
     listWorkflows: vi.fn(async () =>
       create(ListWorkflowsResponseSchema, {
@@ -188,6 +194,19 @@ function engine(
   return { client: client as unknown as Client, calls: client, polls };
 }
 
+/**
+ * Resolves once the engine's answer to WhoAmI has gone through the level store and into the
+ * page. Until then nothing is offered, so a control that is absent proves nothing. The store
+ * awaited the same promise first, so its continuation, which applies the level, runs before
+ * this one resumes.
+ */
+async function levelApplied(e: { calls: { whoAmI: Mock } }) {
+  await vi.waitFor(() => expect(e.calls.whoAmI).toHaveBeenCalled());
+  await act(async () => {
+    await Promise.all(e.calls.whoAmI.mock.results.map((r) => r.value));
+  });
+}
+
 const CHANNEL = "5f1c2d3e-0000-4000-8000-000000000001";
 const OTHER = "5f1c2d3e-0000-4000-8000-000000000002";
 const channels = fakeRelay([
@@ -232,7 +251,12 @@ const Thread = (props: { channelId: string; messageId: string }) => (
   </div>
 );
 
-function page(client: Client, target?: OpenTarget, relay = fakeRelay([])) {
+function page(
+  client: Client,
+  target?: OpenTarget,
+  relay = fakeRelay([]),
+  level?: LevelStore,
+) {
   const s = shell(target);
   render(
     <s.Host>
@@ -240,6 +264,7 @@ function page(client: Client, target?: OpenTarget, relay = fakeRelay([])) {
         <BeehivePage
           client={client}
           relay={relay}
+          level={level}
           Thread={Thread as never}
           {...props}
         />
@@ -352,6 +377,51 @@ it("says so when what the person may do cannot be read, and Retry asks again", a
   expect(e.calls.whoAmI).toHaveBeenCalledTimes(2);
 });
 
+it("reads what the person may do from the host's level store and starts no second one", async () => {
+  const e = engine({ role: "read" });
+  const level = createLevelStore(e.client);
+  const stop = level.start();
+  await vi.waitFor(() => expect(level.get().status).toBe("ready"));
+  page(e.client, undefined, fakeRelay([]), level);
+  await screen.findByText("No cards yet");
+  // The store's own read is the only one, and it already holds Read.
+  expect(e.calls.whoAmI).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button", { name: "New card" })).toBeNull();
+
+  // A level the store takes later reaches the page's controls.
+  e.calls.whoAmI.mockResolvedValue(
+    create(WhoAmIResponseSchema, { role: "run" }),
+  );
+  act(() => level.refresh());
+  expect(
+    (await screen.findAllByRole("button", { name: "New card" })).length,
+  ).toBeGreaterThan(0);
+  expect(e.calls.whoAmI).toHaveBeenCalledTimes(2);
+  stop();
+});
+
+it("shows the host's store failing to read the level, and Retry asks that store again", async () => {
+  const e = engine({ role: "run" });
+  e.calls.whoAmI.mockRejectedValueOnce(new Error("Beehive is not reachable"));
+  const level = createLevelStore(e.client);
+  const refresh = vi.spyOn(level, "refresh");
+  const stop = level.start();
+  await vi.waitFor(() => expect(level.get().status).toBe("error"));
+  page(e.client, undefined, fakeRelay([]), level);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not check what you can do. Beehive is not reachable",
+  );
+  expect(screen.queryByRole("button", { name: "New card" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(
+    (await screen.findAllByRole("button", { name: "New card" })).length,
+  ).toBeGreaterThan(0);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(e.calls.whoAmI).toHaveBeenCalledTimes(2);
+  stop();
+});
+
 it("keeps the cards and says live updates paused when the poll is refused, and Retry reads again", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const e = engine({ cards: [card()] });
@@ -418,7 +488,7 @@ it("offers New card only to someone who can run", async () => {
   const reader = engine({ role: "read" });
   page(reader.client);
   await screen.findByText("No cards yet");
-  await vi.waitFor(() => expect(reader.calls.whoAmI).toHaveBeenCalled());
+  await levelApplied(reader);
   expect(screen.queryByRole("button", { name: "New card" })).toBeNull();
   cleanup();
   page(engine({ role: "run" }).client);
@@ -622,6 +692,7 @@ it("offers Start run only to a person who can run, on a card that can start", as
   const backlog = engine();
   page(backlog.client, cardView);
   await screen.findByRole("tab", { name: "Details" });
+  await levelApplied(backlog);
   expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
   cleanup();
 
@@ -631,6 +702,7 @@ it("offers Start run only to a person who can run, on a card that can start", as
   );
   page(running.client, cardView);
   await screen.findByRole("tab", { name: "Details" });
+  await levelApplied(running);
   expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
   cleanup();
 
@@ -640,6 +712,7 @@ it("offers Start run only to a person who can run, on a card that can start", as
   );
   page(reader.client, cardView);
   await screen.findByRole("tab", { name: "Details" });
+  await levelApplied(reader);
   expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
 });
 
@@ -652,7 +725,7 @@ it("offers Archive and Restore only to a person who can run", async () => {
   const reader = engine({ role: "read" });
   page(reader.client, cardView);
   await screen.findByRole("tab", { name: "Details" });
-  await vi.waitFor(() => expect(reader.calls.whoAmI).toHaveBeenCalled());
+  await levelApplied(reader);
   expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
   cleanup();
 
@@ -660,7 +733,7 @@ it("offers Archive and Restore only to a person who can run", async () => {
   archived.calls.getCard.mockResolvedValue(card({ archived: true }));
   page(archived.client, cardView);
   await screen.findByRole("tab", { name: "Details" });
-  await vi.waitFor(() => expect(archived.calls.whoAmI).toHaveBeenCalled());
+  await levelApplied(archived);
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
 });
 
@@ -702,6 +775,7 @@ it("does not offer Start run on an archived card that has a workflow", async () 
   );
   page(e.client, cardView);
   expect(await screen.findByRole("button", { name: "Restore" })).toBeVisible();
+  await levelApplied(e);
   expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
 });
 
@@ -974,6 +1048,7 @@ it("offers Resume only to a person who can run, on a held card", async () => {
   );
   page(reader.client, cardView);
   await screen.findByRole("tab", { name: "Steps" });
+  await levelApplied(reader);
   expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
   cleanup();
 
@@ -985,6 +1060,7 @@ it("offers Resume only to a person who can run, on a held card", async () => {
   );
   page(running.client, cardView);
   await screen.findByRole("tab", { name: "Steps" });
+  await levelApplied(running);
   expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
 });
 
@@ -1095,6 +1171,7 @@ it("offers Stop run and Retry run only to a person who can run, when they apply"
   );
   page(reader.client, cardView);
   await screen.findByRole("tab", { name: "Steps" });
+  await levelApplied(reader);
   expect(screen.queryByRole("button", { name: "Retry run" })).toBeNull();
   cleanup();
 
@@ -1104,6 +1181,7 @@ it("offers Stop run and Retry run only to a person who can run, when they apply"
   );
   page(done.client, cardView);
   await screen.findByRole("tab", { name: "Steps" });
+  await levelApplied(done);
   expect(screen.queryByRole("button", { name: "Retry run" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
   cleanup();
@@ -1114,6 +1192,7 @@ it("offers Stop run and Retry run only to a person who can run, when they apply"
   );
   page(archived.client, cardView);
   await screen.findByRole("tab", { name: "Steps" });
+  await levelApplied(archived);
   expect(screen.queryByRole("button", { name: "Retry run" })).toBeNull();
   cleanup();
 
@@ -1126,6 +1205,7 @@ it("offers Stop run and Retry run only to a person who can run, when they apply"
   );
   page(running.client, cardView);
   await screen.findByRole("tab", { name: "Steps" });
+  await levelApplied(running);
   expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
 });
 
@@ -1265,7 +1345,11 @@ it("lists everyone's level for an admin and saves a change from the row", async 
   await userEvent.click(ben);
   await userEvent.click(await screen.findByRole("option", { name: /Run/ }));
   await vi.waitFor(() =>
-    expect(e.calls.setAccessLevel).toHaveBeenCalledWith(BEN, "run"),
+    expect(e.calls.setAccessLevel).toHaveBeenCalledWith(
+      BEN,
+      "run",
+      expect.anything(),
+    ),
   );
   // The list is read again, so the row shows what the engine now holds.
   await vi.waitFor(() =>
@@ -1274,6 +1358,32 @@ it("lists everyone's level for an admin and saves a change from the row", async 
     ).toHaveTextContent("Run"),
   );
   expect(e.calls.listAccess.mock.calls.length).toBeGreaterThanOrEqual(2);
+});
+
+it("says the level saved when only the list read afterwards failed, and Retry reads the list again", async () => {
+  const e = engine({ role: "admin", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("combobox", { name: "Level for Ben" }),
+  );
+  e.calls.listAccess.mockRejectedValueOnce(
+    new Error("Beehive is not reachable"),
+  );
+  await userEvent.click(await screen.findByRole("option", { name: /Run/ }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Saved, but the list could not be refreshed. Beehive is not reachable",
+  );
+  expect(alert).not.toHaveTextContent(/could not be saved/);
+  expect(e.calls.setAccessLevel).toHaveBeenCalledTimes(1);
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Level for Ben" }),
+    ).toHaveTextContent("Run"),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("does not offer an agent a level above its owner's", async () => {
@@ -1385,7 +1495,7 @@ it("hides the auto mode switch below Run and on an archived card, and still says
   reader.calls.getCard.mockResolvedValue(card({ autoMode: true }));
   page(reader.client, cardView);
   await screen.findByRole("tab", { name: "Details" });
-  await vi.waitFor(() => expect(reader.calls.whoAmI).toHaveBeenCalled());
+  await levelApplied(reader);
   expect(screen.queryByRole("switch", { name: "Auto mode" })).toBeNull();
   expect(await screen.findByText("Auto mode")).toBeVisible();
   expect(screen.getByText("On")).toBeVisible();
@@ -1395,5 +1505,6 @@ it("hides the auto mode switch below Run and on an archived card, and still says
   archived.calls.getCard.mockResolvedValue(card({ archived: true }));
   page(archived.client, cardView);
   await screen.findByRole("button", { name: "Restore" });
+  await levelApplied(archived);
   expect(screen.queryByRole("switch", { name: "Auto mode" })).toBeNull();
 });

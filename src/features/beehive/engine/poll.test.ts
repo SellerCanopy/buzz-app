@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import { EventSchema } from "../gen/kiln/engine/v1/engine_pb";
-import { startPoll } from "./poll";
+import { pollErrorHandler, startPoll } from "./poll";
 import { EngineError } from "./transport";
 
 const event = (seq: number) =>
@@ -227,4 +227,26 @@ describe("startPoll", () => {
     await Promise.resolve();
     expect(call).toHaveBeenCalledTimes(1);
   });
+});
+
+it("logs the first failure and every tenth, and pauses at the third or a refusal", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const pause = vi.fn();
+  const onError = pollErrorHandler("Updates failed", pause);
+  onError(new Error("blip"), 1, false);
+  onError(new Error("blip"), 2, false);
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(pause).not.toHaveBeenCalled();
+  onError(new Error("blip"), 3, false);
+  expect(pause).toHaveBeenLastCalledWith("Live updates paused: blip");
+  for (let failures = 4; failures <= 10; failures += 1)
+    onError(new Error("blip"), failures, false);
+  expect(warn).toHaveBeenCalledTimes(2);
+  onError(new EngineError("permission_denied", "refused", 403), 1, true);
+  expect(warn).toHaveBeenLastCalledWith(
+    "Updates failed",
+    expect.objectContaining({ code: "permission_denied", terminal: true }),
+  );
+  expect(pause).toHaveBeenLastCalledWith("Live updates paused: refused");
+  warn.mockRestore();
 });

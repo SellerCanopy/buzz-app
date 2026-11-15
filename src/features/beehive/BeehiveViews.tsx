@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { WarningCircleIcon } from "../../shared/design-system/icons";
 import { CountBadge } from "../../shared/design-system/ui/CountBadge";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { RelayData } from "../relay/service";
@@ -48,6 +49,10 @@ export function BeehiveViews({
     inbox.status === "ready"
       ? inbox.items.filter((item) => !item.resolvedAt).length
       : 0;
+  // A count of zero must mean nothing waits, never that the list could not be read.
+  const unsure =
+    inbox.status === "error" ||
+    (inbox.status === "ready" && !!(inbox.paused ?? inbox.stale));
   return (
     <>
       <div className="beehive-toolbar">
@@ -63,10 +68,20 @@ export function BeehiveViews({
               value: "needs-you",
               label: "Needs you",
               trailing: (
-                <CountBadge
-                  count={waiting}
-                  label={`${waiting} ${waiting === 1 ? "item needs" : "items need"} you`}
-                />
+                <>
+                  <CountBadge
+                    count={waiting}
+                    label={`${waiting} ${waiting === 1 ? "item needs" : "items need"} you`}
+                  />
+                  {unsure && (
+                    <span
+                      role="img"
+                      aria-label="What needs you could not be checked"
+                    >
+                      <WarningCircleIcon size="0.875rem" />
+                    </span>
+                  )}
+                </>
               ),
             },
             { value: "archive", label: "Archive" },

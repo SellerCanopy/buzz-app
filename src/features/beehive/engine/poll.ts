@@ -1,10 +1,14 @@
 import type { Event } from "../gen/kiln/engine/v1/engine_pb";
-import { EngineError } from "./transport";
+import { EngineError, errorMessage } from "./transport";
 
 /** One long poll takes at most this long on the engine, which clamps the wait to 25 s. */
 export const POLL_WAIT_SECONDS = 25;
 const BASE_MS = 500;
 const CAP_MS = 30_000;
+/** Tell the person after this many failures in a row, not at the first blip. */
+const PAUSE_AFTER = 3;
+/** Log the first failure and then every this many, so a long outage is one line per few minutes. */
+const LOG_EVERY = 10;
 
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -90,4 +94,26 @@ export function startPoll(opts: {
     }
   })();
   return { stop: () => controller.abort() };
+}
+
+/**
+ * The `onError` of a view that follows the log: it logs the first failure and then one in
+ * `LOG_EVERY`, and calls `onPause` with a sentence for the person once failures stop being a
+ * blip (`PAUSE_AFTER` in a row) or cannot be cured by retrying.
+ */
+export function pollErrorHandler(
+  label: string,
+  onPause: (message: string) => void,
+): (error: unknown, failures: number, terminal: boolean) => void {
+  return (error, failures, terminal) => {
+    if (failures === 1 || failures % LOG_EVERY === 0)
+      console.warn(label, {
+        code: error instanceof EngineError ? error.code : undefined,
+        status: error instanceof EngineError ? error.status : undefined,
+        failures,
+        terminal,
+      });
+    if (terminal || failures >= PAUSE_AFTER)
+      onPause(`Live updates paused: ${errorMessage(error)}`);
+  };
 }

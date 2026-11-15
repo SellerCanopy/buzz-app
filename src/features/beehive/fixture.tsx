@@ -500,6 +500,8 @@ async function handle(
       publish("card.restored", card);
       return wire(card);
     }
+    case "GetStatus":
+      return { headSeq: lastSeq() };
     case "ListInbox":
       return {
         items: inbox.filter((item) => item.state === "open"),

@@ -24,13 +24,39 @@ export function authorLabel(author: ActivityAuthor | undefined): string {
   return key ? `${who} ${key}` : who;
 }
 
+const stamp = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
 const when = (entry: ActivityEntry) =>
-  entry.at
-    ? new Date(Number(entry.at.seconds) * 1000).toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
-    : "";
+  entry.at ? stamp.format(new Date(Number(entry.at.seconds) * 1000)) : "";
+
+/** How many entries one read returns: the engine's default page. */
+const PAGE = 500;
+/** How many entries show at first, and how many each press of Show older adds. */
+const SHOWN = 100;
+
+/**
+ * Every entry of a card, oldest first. The engine answers one page at a time, oldest first, so
+ * the newest entries of a long card are on the last page and are read by paging on.
+ */
+async function readAll(
+  client: Client,
+  cardId: string,
+  signal: AbortSignal,
+): Promise<ActivityEntry[]> {
+  const entries: ActivityEntry[] = [];
+  for (let after = 0n; ; ) {
+    const reply = await client.listActivity(cardId, signal, after);
+    entries.push(...reply.entries);
+    const last = reply.entries[reply.entries.length - 1];
+    // A page that does not advance would loop for ever, so it ends the read.
+    if (!last || reply.entries.length < PAGE || last.seq <= after)
+      return entries;
+    after = last.seq;
+  }
+}
 
 /**
  * What happened on a card, newest first: notes, the answers people gave to approvals and
@@ -45,17 +71,18 @@ export function ActivityTab({
 }) {
   const [listing, setListing] = useState<Listing>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [shown, setShown] = useState(SHOWN);
 
   useEffect(() => {
     // `attempt` re-reads the list after a failure.
     void attempt;
     const abort = new AbortController();
     setListing({ status: "loading" });
-    client
-      .listActivity(cardId, abort.signal)
-      .then((reply) => {
+    setShown(SHOWN);
+    readAll(client, cardId, abort.signal)
+      .then((read) => {
         if (abort.signal.aborted) return;
-        setListing({ status: "ready", entries: [...reply.entries].reverse() });
+        setListing({ status: "ready", entries: read.reverse() });
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted)
@@ -89,7 +116,7 @@ export function ActivityTab({
       )}
       {entries.length > 0 && (
         <ol className="beehive-activity" aria-label="Activity">
-          {entries.map((entry) => (
+          {entries.slice(0, shown).map((entry) => (
             <li key={entry.key || String(entry.seq)}>
               <span>{entry.summary}</span>
               <span className="text-body-sm text-subtle">
@@ -105,6 +132,9 @@ export function ActivityTab({
             </li>
           ))}
         </ol>
+      )}
+      {entries.length > shown && (
+        <Button onClick={() => setShown((n) => n + SHOWN)}>Show older</Button>
       )}
     </LoadingRegion>
   );

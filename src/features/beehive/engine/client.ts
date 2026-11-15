@@ -314,13 +314,16 @@ export function createClient(session: Session) {
         create(AnswerInboxRequestSchema, { itemId, choice, text }),
         signal,
       ),
-    /** A card's activity, oldest first: notes, answers and what the stages logged. */
-    listActivity: (cardId: string, signal?: AbortSignal) =>
+    /**
+     * A card's activity, oldest first, one page of at most 500 entries: notes, answers and
+     * what the stages logged. `afterSeq` is the `seq` of the last entry already read.
+     */
+    listActivity: (cardId: string, signal?: AbortSignal, afterSeq = 0n) =>
       unary(
         "ListActivity",
         ListActivityRequestSchema,
         ListActivityResponseSchema,
-        create(ListActivityRequestSchema, { cardId }),
+        create(ListActivityRequestSchema, { cardId, afterSeq }),
         signal,
       ),
     /** What agents did: runs, how long they took, and the cards and runs agents started each week. */

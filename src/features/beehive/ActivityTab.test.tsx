@@ -50,7 +50,7 @@ it("shows an answer with who gave it and the reason, newest first", async () => 
   expect(rows[0]).toHaveTextContent(/Person npub…\w{3}/);
   expect(rows[1]).toHaveTextContent("Started");
   expect(rows[1]).toHaveTextContent("Beehive");
-  expect(listActivity).toHaveBeenCalledWith("c", expect.anything());
+  expect(listActivity).toHaveBeenCalledWith("c", expect.anything(), 0n);
 });
 
 it("shows an answer auto mode gave as Beehive's, with the reason", async () => {
@@ -98,4 +98,45 @@ it("shows the failure and reads again on Retry", async () => {
   );
   await user.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("No activity yet")).toBeVisible();
+});
+
+it("reads on past the first page so the newest entries show, and shows the oldest on request", async () => {
+  const user = userEvent.setup();
+  const all = Array.from({ length: 620 }, (_, index) =>
+    entry(BigInt(index + 1), { summary: `Entry ${index + 1}` }),
+  );
+  const listActivity = vi.fn(
+    async (_card: string, _signal?: AbortSignal, after = 0n) =>
+      create(ListActivityResponseSchema, {
+        entries: all.filter((e) => e.seq > after).slice(0, 500),
+        seq: 620n,
+      }),
+  );
+  render(
+    <ActivityTab client={{ listActivity } as unknown as Client} cardId="c" />,
+  );
+  const list = await screen.findByRole("list", { name: "Activity" });
+  expect(listActivity.mock.calls.map((call) => call[2])).toEqual([0n, 500n]);
+  const rows = within(list).getAllByRole("listitem");
+  expect(rows).toHaveLength(100);
+  expect(rows[0]).toHaveTextContent("Entry 620");
+  expect(rows[99]).toHaveTextContent("Entry 521");
+
+  await user.click(screen.getByRole("button", { name: "Show older" }));
+  expect(within(list).getAllByRole("listitem")).toHaveLength(200);
+  expect(screen.getByRole("button", { name: "Show older" })).toBeVisible();
+});
+
+it("stops paging when the engine returns a page that does not advance", async () => {
+  const page = Array.from({ length: 500 }, (_, index) =>
+    entry(BigInt(index + 1), { summary: `Entry ${index + 1}` }),
+  );
+  const listActivity = vi.fn(async () =>
+    create(ListActivityResponseSchema, { entries: page, seq: 9n }),
+  );
+  render(
+    <ActivityTab client={{ listActivity } as unknown as Client} cardId="c" />,
+  );
+  await screen.findByRole("list", { name: "Activity" });
+  expect(listActivity).toHaveBeenCalledTimes(2);
 });

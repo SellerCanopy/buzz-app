@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
@@ -8,20 +8,14 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
 import type { AccessEntry } from "./gen/kiln/engine/v1/engine_pb";
-import { LEVELS, atLeast, parseLevel, type Level } from "./level";
-
-const LABELS: Record<Level, string> = {
-  none: "None",
-  read: "Read",
-  run: "Run",
-  admin: "Admin",
-};
-const MEANING: Record<Level, string> = {
-  none: "Cannot open Beehive",
-  read: "Can look, cannot change",
-  run: "Can add cards and run stages",
-  admin: "Can also set levels and settings",
-};
+import {
+  LABELS,
+  LEVELS,
+  MEANING,
+  assignable,
+  parseLevel,
+  type Level,
+} from "./level";
 
 type Loaded =
   | { status: "loading" }
@@ -49,8 +43,22 @@ export function AccessSettings({
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [saving, setSaving] = useState<string>();
-  const [failure, setFailure] = useState<{ pubkey: string; message: string }>();
-  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  const [failure, setFailure] = useState<{
+    pubkey: string;
+    message: string;
+    /** The level saved and only the list could not be read again. */
+    saved?: true;
+  }>();
+  const retry = useCallback(() => {
+    setFailure(undefined);
+    setAttempt((n) => n + 1);
+  }, []);
+  /** Ends with the component, so a save or read that is still out does not touch it after. */
+  const lifetime = useRef<AbortController>(new AbortController());
+  useEffect(() => {
+    lifetime.current = new AbortController();
+    return () => lifetime.current.abort();
+  }, []);
 
   useEffect(() => {
     // `attempt` restarts the read; it is not otherwise used.
@@ -72,18 +80,34 @@ export function AccessSettings({
 
   const change = async (entry: AccessEntry, level: string) => {
     if (saving) return;
+    const { signal } = lifetime.current;
     setSaving(entry.pubkey);
     setFailure(undefined);
     try {
-      await client.setAccessLevel(entry.pubkey, level);
-      // Read the list again: an owner's level also moves its agents.
-      const reply = await client.listAccess();
-      setLoaded({ status: "ready", entries: reply.entries });
-    } catch (error) {
-      // The saved level stands: the select shows it again.
-      setFailure({ pubkey: entry.pubkey, message: errorMessage(error) });
+      try {
+        await client.setAccessLevel(entry.pubkey, level, signal);
+      } catch (error) {
+        // Nothing was saved: the select shows the level it had.
+        if (!signal.aborted)
+          setFailure({ pubkey: entry.pubkey, message: errorMessage(error) });
+        return;
+      }
+      try {
+        // Read the list again: an owner's level also moves its agents.
+        const reply = await client.listAccess(signal);
+        if (!signal.aborted)
+          setLoaded({ status: "ready", entries: reply.entries });
+      } catch (error) {
+        // The level saved, so say so rather than call it a failed save.
+        if (!signal.aborted)
+          setFailure({
+            pubkey: entry.pubkey,
+            message: `Saved, but the list could not be refreshed. ${errorMessage(error)}`,
+            saved: true,
+          });
+      }
     } finally {
-      setSaving(undefined);
+      if (!signal.aborted) setSaving(undefined);
     }
   };
 
@@ -97,22 +121,21 @@ export function AccessSettings({
     const level = parseLevel(entry.level);
     const ownerLevel = entry.ownerPubkey ? levelOf(entry.ownerPubkey) : "admin";
     const owner = entries.find((e) => e.pubkey === entry.ownerPubkey);
-    const mine = entry.pubkey === me;
     const options = LEVELS.map((choice) => {
-      const aboveOwner = entry.kind === "agent" && !atLeast(ownerLevel, choice);
-      const lowersMe = mine && choice !== "admin";
+      const { allowed, reason } = assignable(
+        { pubkey: entry.pubkey, kind: entry.kind, level, ownerLevel },
+        me,
+        choice,
+      );
       return {
         value: choice,
         label: LABELS[choice],
-        description: aboveOwner
-          ? `Above its owner's level (${LABELS[ownerLevel]})`
-          : lowersMe
-            ? "You cannot lower your own level"
-            : MEANING[choice],
-        disabled: (aboveOwner || lowersMe) && choice !== level,
+        description: reason ?? MEANING[choice],
+        disabled: !allowed,
       };
     });
-    const problem = failure?.pubkey === entry.pubkey ? failure.message : "";
+    const mine = failure?.pubkey === entry.pubkey ? failure : undefined;
+    const problem = mine?.message ?? "";
     return (
       <PreferenceRow
         key={entry.pubkey}
@@ -127,6 +150,11 @@ export function AccessSettings({
                 {" "}
                 {problem}
               </span>
+            )}
+            {mine?.saved && (
+              <Button size="inline" variant="link" onClick={retry}>
+                Retry
+              </Button>
             )}
           </>
         }

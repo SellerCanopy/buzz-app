@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Event, InboxItem } from "../gen/kiln/engine/v1/engine_pb";
 import type { Client } from "./client";
-import { POLL_WAIT_SECONDS, startPoll } from "./poll";
-import { EngineError, errorMessage } from "./transport";
+import { feedOf } from "./feed";
+import { pollErrorHandler } from "./poll";
+import { errorMessage } from "./transport";
 
 export type Inbox =
   | { status: "loading" }
@@ -12,11 +13,6 @@ export type Inbox =
    */
   | { status: "ready"; items: InboxItem[]; paused?: string; stale?: string }
   | { status: "error"; message: string };
-
-/** Tell the person after this many failures in a row, not at the first blip. */
-const PAUSE_AFTER = 3;
-/** Log the first failure and then every this many, so a long outage is one line per few minutes. */
-const LOG_EVERY = 10;
 
 /** Whether an event changes what waits for a person. */
 export function touchesInbox(events: Event[]): boolean {
@@ -41,7 +37,7 @@ export function useInbox(client: Client) {
     // `attempt` restarts the read; it is not otherwise used.
     void attempt;
     const abort = new AbortController();
-    let poll: { stop(): void } | undefined;
+    let unfollow: (() => void) | undefined;
     let reading = false;
     let again = false;
     setInbox({ status: "loading" });
@@ -65,7 +61,7 @@ export function useInbox(client: Client) {
               ? { paused: current.paused }
               : {}),
           }));
-          if (first && !poll) poll = follow(reply.seq);
+          if (first && !unfollow) unfollow = follow(reply.seq);
         } while (again);
       } catch (error) {
         if (abort.signal.aborted) return;
@@ -82,37 +78,16 @@ export function useInbox(client: Client) {
     reader.current = () => void read(false);
 
     const follow = (after: bigint) =>
-      startPoll({
+      feedOf(client).follow({
         after,
-        call: async (cursor, signal) => {
-          const next = await client.pollEvents(
-            cursor,
-            POLL_WAIT_SECONDS,
-            signal,
-          );
-          return { events: next.events, nextSeq: next.nextSeq };
-        },
         onEvents: (events) => {
           if (touchesInbox(events)) void read(false);
         },
-        onError: (error, failures, terminal) => {
-          if (failures === 1 || failures % LOG_EVERY === 0)
-            console.warn("Beehive inbox updates failed", {
-              code: error instanceof EngineError ? error.code : undefined,
-              status: error instanceof EngineError ? error.status : undefined,
-              failures,
-              terminal,
-            });
-          if (terminal || failures >= PAUSE_AFTER)
-            setInbox((current) =>
-              current.status === "ready"
-                ? {
-                    ...current,
-                    paused: `Live updates paused: ${errorMessage(error)}`,
-                  }
-                : current,
-            );
-        },
+        onError: pollErrorHandler("Beehive inbox updates failed", (paused) =>
+          setInbox((current) =>
+            current.status === "ready" ? { ...current, paused } : current,
+          ),
+        ),
         onRecover: () =>
           setInbox((current) =>
             current.status === "ready" && current.paused
@@ -128,7 +103,7 @@ export function useInbox(client: Client) {
     void read(true);
     return () => {
       abort.abort();
-      poll?.stop();
+      unfollow?.();
       reader.current = () => undefined;
     };
   }, [client, attempt]);

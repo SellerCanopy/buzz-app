@@ -10,6 +10,7 @@ import {
   WhoAmIResponseSchema,
 } from "./gen/kiln/engine/v1/engine_pb";
 import {
+  assignable,
   atLeast,
   BACKSTOP_MS,
   changesLevelOf,
@@ -222,4 +223,217 @@ it("reports an unreadable level, keeps a known one through a failed re-read, and
   const calls = e.client.whoAmI.mock.calls.length;
   await vi.advanceTimersByTimeAsync(BACKSTOP_MS * 3);
   expect(e.client.whoAmI.mock.calls.length).toBe(calls);
+});
+
+/** A promise the test settles by hand. */
+function gate<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+it("reads the level once when the poll is refused and does not follow again at the same level", async () => {
+  const e = fake("run");
+  const store = createLevelStore(e.client, () => 1);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.polls).toHaveLength(1);
+
+  // The engine keeps refusing the poll while WhoAmI still says Run.
+  e.polls[0]?.fail(new EngineError("failed_precondition", "refused", 400));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(2);
+  expect(e.polls).toHaveLength(1);
+  expect(e.client.getStatus).toHaveBeenCalledTimes(1);
+
+  // Nothing loops: no further request until the backstop.
+  await vi.advanceTimersByTimeAsync(BACKSTOP_MS * 0.5);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(2);
+  expect(e.polls).toHaveLength(1);
+
+  // The backstop tries the poll again.
+  await vi.advanceTimersByTimeAsync(BACKSTOP_MS);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(3);
+  expect(e.polls).toHaveLength(2);
+  stop();
+});
+
+it("follows again after a refused poll when the level changed", async () => {
+  const e = fake("read");
+  const store = createLevelStore(e.client);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  e.state.role = "admin";
+  e.polls[0]?.fail(new EngineError("permission_denied", "refused", 403));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(store.get()).toMatchObject({ level: "admin" });
+  expect(e.polls).toHaveLength(2);
+  stop();
+});
+
+it("a person asking again follows a poll the engine refused", async () => {
+  const e = fake("run");
+  const store = createLevelStore(e.client);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  e.polls[0]?.fail(new EngineError("invalid_argument", "refused", 400));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.polls).toHaveLength(1);
+  store.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.polls).toHaveLength(2);
+  stop();
+});
+
+it("takes the event cursor before it reads the level, so a change in between is replayed", async () => {
+  const e = fake("read");
+  e.client.getStatus
+    .mockResolvedValueOnce(create(GetStatusResponseSchema, { headSeq: 7n }))
+    .mockResolvedValue(create(GetStatusResponseSchema, { headSeq: 99n }));
+  const store = createLevelStore(e.client);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.polls[0]?.after).toBe(7n);
+  expect(e.client.getStatus).toHaveBeenCalledTimes(1);
+  const first = e.client.getStatus.mock.invocationCallOrder[0] ?? 0;
+  const second = e.client.whoAmI.mock.invocationCallOrder[0] ?? 0;
+  expect(first).toBeLessThan(second);
+  stop();
+});
+
+it("takes the cursor after the level for a person who was at None, who could not read it before", async () => {
+  const e = fake("none");
+  const store = createLevelStore(e.client);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  e.state.role = "read";
+  store.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.polls).toHaveLength(1);
+  expect(e.polls[0]?.after).toBe(7n);
+  stop();
+});
+
+it("collapses reads asked for while one is out into one more", async () => {
+  const e = fake("none");
+  const held = gate<ReturnType<typeof answer>>();
+  e.client.whoAmI.mockImplementationOnce(() => held.promise);
+  const store = createLevelStore(e.client);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(1);
+  store.refresh();
+  store.refresh();
+  store.refresh();
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(1);
+  held.resolve(answer("none"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(2);
+  stop();
+});
+
+it("keeps the level and starts following on a later read when the status cannot be read", async () => {
+  const e = fake("read");
+  // Once before the level and once after it: both fail.
+  e.client.getStatus
+    .mockRejectedValueOnce(new Error("down"))
+    .mockRejectedValueOnce(new Error("down"));
+  const store = createLevelStore(e.client, () => 1);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(store.get()).toMatchObject({ status: "ready", level: "read" });
+  expect(e.polls).toHaveLength(0);
+
+  // It is tried again soon, not on the backstop.
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(e.polls).toHaveLength(1);
+  stop();
+});
+
+it("does not read the level for a poll failure that retrying can cure", async () => {
+  const e = fake("run");
+  const store = createLevelStore(e.client);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  e.polls[0]?.fail(new EngineError("unavailable", "down", 503));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(1);
+  expect(store.get()).toMatchObject({ level: "run" });
+  stop();
+});
+
+it("takes the level to None when a re-read is refused outright", async () => {
+  const e = fake("admin");
+  const store = createLevelStore(e.client);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  e.state.role = new EngineError("permission_denied", "not a member", 403);
+  store.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(store.get()).toEqual({ status: "ready", level: "none", pubkey: ME });
+  expect(e.polls[0]?.signal.aborted).toBe(true);
+  stop();
+});
+
+it("says the level cannot be read when the very first read is refused", async () => {
+  const e = fake("run");
+  e.state.role = new EngineError("unauthenticated", "sign in again", 401);
+  const store = createLevelStore(e.client);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(store.get()).toEqual({ status: "error", message: "sign in again" });
+  stop();
+});
+
+it("tries a failed read again on a capped, growing backoff, not on the backstop", async () => {
+  const e = fake("run");
+  e.state.role = new Error("Beehive is not reachable");
+  const store = createLevelStore(e.client, () => 1);
+  const stop = store.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(4);
+  // The wait stops growing at the cap: about one read every two minutes from here on.
+  await vi.advanceTimersByTimeAsync(40_000 + 80_000);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(6);
+  await vi.advanceTimersByTimeAsync(120_000 * 5);
+  expect(e.client.whoAmI).toHaveBeenCalledTimes(11);
+
+  e.state.role = "run";
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(store.get()).toMatchObject({ status: "ready", level: "run" });
+  stop();
+});
+
+it("lets an entry keep its level and refuses what the engine would", () => {
+  const person = {
+    pubkey: ME,
+    kind: "person",
+    level: "admin",
+    ownerLevel: "admin",
+  } as const;
+  expect(assignable(person, ME, "admin")).toEqual({ allowed: true });
+  expect(assignable(person, ME, "read")).toMatchObject({ allowed: false });
+  expect(assignable(person, OTHER, "read")).toEqual({ allowed: true });
+
+  const agent = {
+    pubkey: OTHER,
+    kind: "agent",
+    level: "read",
+    ownerLevel: "read",
+  } as const;
+  expect(assignable(agent, ME, "none")).toEqual({ allowed: true });
+  expect(assignable(agent, ME, "read")).toEqual({ allowed: true });
+  expect(assignable(agent, ME, "run")).toMatchObject({
+    allowed: false,
+    reason: "Above its owner's level (Read)",
+  });
+  expect(assignable(agent, ME, "admin")).toMatchObject({ allowed: false });
 });
