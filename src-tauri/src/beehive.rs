@@ -71,6 +71,17 @@ fn allowed_path(path: &str) -> bool {
             .is_some_and(|name| !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
+/// The URL the signed sign-in event names. The server compares it with the
+/// request URL exactly, so it is the origin and `/auth/token`: no slash after
+/// the origin, no default port, no other path.
+fn token_url(base: &Url) -> Result<Url> {
+    Url::parse(&format!(
+        "{}{TOKEN_PATH}",
+        base.origin().ascii_serialization()
+    ))
+    .map_err(|_| Failure::unavailable("The Beehive address is invalid"))
+}
+
 /// The NIP-98 event that proves who is asking for a token.
 fn authorization_template(url: &Url, created_at: u64, nonce: String) -> EventTemplate {
     EventTemplate {
@@ -89,11 +100,7 @@ fn authorization_template(url: &Url, created_at: u64, nonce: String) -> EventTem
 /// signed event; the page adds the `Nostr ` scheme.
 #[tauri::command]
 pub(crate) async fn beehive_authorization(host: tauri::State<'_, IdentityHost>) -> Result<String> {
-    // The server compares against `<origin>/auth/token`, with no trailing slash
-    // after the origin and no extra path.
-    let origin = base()?.origin().ascii_serialization();
-    let url = Url::parse(&format!("{origin}{TOKEN_PATH}"))
-        .map_err(|_| Failure::unavailable("The Beehive address is invalid"))?;
+    let url = token_url(&base()?)?;
     let created_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| Failure::unavailable("System clock is unavailable"))?
@@ -163,9 +170,12 @@ fn failure(status: u16, text: &str) -> Failure {
             .map(str::to_owned)
     };
     match field("code") {
+        // An empty message would show the person a blank error, so say the code.
         Some(code) => Failure {
+            message: field("message")
+                .filter(|message| !message.is_empty())
+                .unwrap_or_else(|| code.clone()),
             code,
-            message: field("message").unwrap_or_default(),
             status,
         },
         None => Failure {
@@ -296,6 +306,29 @@ mod tests {
     }
 
     #[test]
+    fn the_token_url_is_the_origin_and_the_token_path_with_nothing_else() {
+        let url = |value: &str| token_url(&Url::parse(value).unwrap()).unwrap();
+        assert_eq!(
+            url("https://hive.example.org").as_str(),
+            "https://hive.example.org/auth/token"
+        );
+        // A port that is not the default stays; the default one never shows.
+        assert_eq!(
+            url("http://localhost:3100").as_str(),
+            "http://localhost:3100/auth/token"
+        );
+        assert_eq!(
+            url("https://hive.example.org:443").as_str(),
+            "https://hive.example.org/auth/token"
+        );
+        // The base's own trailing slash is not doubled.
+        assert_eq!(
+            url("https://hive.example.org/").as_str(),
+            "https://hive.example.org/auth/token"
+        );
+    }
+
+    #[test]
     fn the_header_matches_the_path() {
         let token = "/auth/token";
         let method = "/kiln.engine.v1.EngineService/ListCards";
@@ -327,5 +360,16 @@ mod tests {
         );
         let proxy = failure(502, "<html>Bad Gateway</html>");
         assert_eq!((proxy.code.as_str(), proxy.status), ("unavailable", 502));
+    }
+
+    #[test]
+    fn a_failed_reply_with_a_code_and_no_message_still_says_something() {
+        for text in [
+            r#"{"code":"permission_denied"}"#,
+            r#"{"code":"permission_denied","message":""}"#,
+        ] {
+            let failed = failure(403, text);
+            assert_eq!(failed.message, "permission_denied", "{text}");
+        }
     }
 }

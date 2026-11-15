@@ -12,7 +12,12 @@ import { fakeRelay } from "./fake-relay";
 import { PAGE_ID, PLUGIN_ID } from "./routes";
 import { createClient } from "./engine/client";
 import { createSession } from "./engine/session";
-import { EngineError, type Carrier, webCarrier } from "./engine/transport";
+import {
+  EngineError,
+  TOKEN_PATH,
+  type Carrier,
+  webCarrier,
+} from "./engine/transport";
 import { provideWebSigner, webAuthorization } from "./engine/web-signer";
 
 // An offline Beehive that keeps its cards and event log in memory.
@@ -409,7 +414,7 @@ const carrier: Carrier = {
     fixture.calls.push(
       `${path} ${opts.bearer ? `bearer ${opts.bearer}` : (opts.authorization ?? "")}`.trim(),
     );
-    if (path === "/auth/token")
+    if (path === TOKEN_PATH)
       return { token: "fixture-token", expires_at: Date.now() / 1000 + 900 };
     return handle(
       path.slice(path.lastIndexOf("/") + 1),

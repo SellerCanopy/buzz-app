@@ -10,6 +10,7 @@ import type { OpenTarget } from "../navigation/targets";
 import { BeehivePage } from "./BeehivePage";
 import { fakeRelay } from "./fake-relay";
 import type { Client } from "./engine/client";
+import { EngineError } from "./engine/transport";
 import {
   ArtifactInfoSchema,
   ArtifactVersionSchema,
@@ -54,8 +55,11 @@ function engine(
     saved?: ArtifactVersion[];
   } = {},
 ) {
-  const polls: { after: bigint; answer(events: Card[], type: string): void }[] =
-    [];
+  const polls: {
+    after: bigint;
+    signal: AbortSignal | undefined;
+    answer(events: Card[], type: string): void;
+  }[] = [];
   const client = {
     listCards: vi.fn(async (archived = false) =>
       create(ListCardsResponseSchema, {
@@ -125,10 +129,11 @@ function engine(
     archiveCards: vi.fn(async () => ({})),
     restoreCard: vi.fn(async () => card()),
     pollEvents: vi.fn(
-      (after: bigint) =>
+      (after: bigint, _wait?: number, signal?: AbortSignal) =>
         new Promise((resolve) =>
           polls.push({
             after,
+            signal,
             answer: (cards, type) =>
               resolve(
                 create(PollEventsResponseSchema, {
@@ -253,6 +258,91 @@ it("shows the failure beside the board and retries on request", async () => {
   expect(e.calls.listCards).toHaveBeenCalledTimes(2);
 });
 
+it("places a card in the column its state names", async () => {
+  page(
+    engine({
+      cards: [
+        // No workflow means Backlog whatever the state says.
+        card({ id: "a", title: "Loose", state: "running" }),
+        card({ id: "b", title: "Ready", workflow: "w", state: "idle" }),
+        card({ id: "c", title: "Going", workflow: "w", state: "running" }),
+        card({ id: "d", title: "Held", workflow: "w", state: "waiting" }),
+        card({ id: "e", title: "Broke", workflow: "w", state: "failed" }),
+        card({ id: "f", title: "Halted", workflow: "w", state: "stopped" }),
+        card({ id: "g", title: "Shipped", workflow: "w", state: "done" }),
+        card({ id: "h", title: "Odd", workflow: "w", state: "unheard-of" }),
+      ],
+    }).client,
+  );
+  await screen.findByText("Loose");
+  const expected: [string, string[]][] = [
+    ["Backlog", ["Loose"]],
+    ["To do", ["Ready", "Odd"]],
+    ["Running", ["Going"]],
+    ["Waiting", ["Held"]],
+    ["Needs attention", ["Broke", "Halted"]],
+    ["Done", ["Shipped"]],
+  ];
+  for (const [name, titles] of expected) {
+    const region = screen.getByRole("region", { name });
+    expect(
+      within(region)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(titles.map((title) => expect.stringContaining(title)));
+  }
+});
+
+it("says nothing is archived and offers no way to add a card there", async () => {
+  page(engine().client);
+  await screen.findByText("No cards yet");
+  // The header's button and the empty state's own.
+  expect(screen.getAllByRole("button", { name: "New card" })).toHaveLength(2);
+  await userEvent.click(screen.getByRole("tab", { name: "Archive" }));
+  expect(await screen.findByText("Nothing archived")).toBeVisible();
+  expect(
+    screen.getByText("Cards you archive are kept here and can be restored."),
+  ).toBeVisible();
+  expect(screen.getAllByRole("button", { name: "New card" })).toHaveLength(1);
+});
+
+it("says so when what the person may do cannot be read, and Retry asks again", async () => {
+  const e = engine({ role: "run" });
+  e.calls.whoAmI.mockRejectedValueOnce(new Error("Beehive is not reachable"));
+  page(e.client);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not check what you can do. Beehive is not reachable",
+  );
+  // Not knowing is not the same as being allowed: no controls until it answers.
+  expect(screen.queryByRole("button", { name: "New card" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(
+    (await screen.findAllByRole("button", { name: "New card" })).length,
+  ).toBeGreaterThan(0);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(e.calls.whoAmI).toHaveBeenCalledTimes(2);
+});
+
+it("keeps the cards and says live updates paused when the poll is refused, and Retry reads again", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const e = engine({ cards: [card()] });
+  e.calls.pollEvents.mockRejectedValue(
+    new EngineError("permission_denied", "your access changed", 403),
+  );
+  page(e.client);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Live updates paused: your access changed",
+  );
+  expect(screen.getByText("Fix the build")).toBeVisible();
+  expect(warn).toHaveBeenCalledWith(
+    "Beehive live updates failed",
+    expect.objectContaining({ code: "permission_denied", terminal: true }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await vi.waitFor(() => expect(e.calls.listCards).toHaveBeenCalledTimes(2));
+  warn.mockRestore();
+});
+
 it("follows the event log from the sequence number the list returned", async () => {
   const e = engine({ seq: 12n });
   page(e.client);
@@ -284,10 +374,15 @@ it("lists the workflows from the Workflows view and returns to the board", async
   await userEvent.click(screen.getByRole("tab", { name: "Workflows" }));
   expect(await screen.findByRole("region", { name: "demo" })).toBeVisible();
   expect(screen.queryByText("Fix the build")).toBeNull();
+  // Workflows keeps no poll open for a board nobody is looking at.
+  await vi.waitFor(() => expect(e.polls).toHaveLength(1));
+  expect(e.polls[0]?.signal?.aborted).toBe(true);
   await userEvent.click(screen.getByRole("tab", { name: "Board" }));
   expect(await screen.findByText("Fix the build")).toBeVisible();
-  // The board kept its read: switching views did not read the cards again.
-  expect(e.calls.listCards).toHaveBeenCalledTimes(1);
+  // The board reads again on return and follows the log from the new read.
+  expect(e.calls.listCards).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(e.polls).toHaveLength(2));
+  expect(e.polls[1]?.signal?.aborted).toBe(false);
 });
 
 it("offers New card only to someone who can run", async () => {
@@ -519,6 +614,115 @@ it("offers Start run only to a person who can run, on a card that can start", as
   expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
 });
 
+it("offers Archive and Restore only to a person who can run", async () => {
+  const runner = engine();
+  page(runner.client, cardView);
+  expect(await screen.findByRole("button", { name: "Archive" })).toBeVisible();
+  cleanup();
+
+  const reader = engine({ role: "read" });
+  page(reader.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  await vi.waitFor(() => expect(reader.calls.whoAmI).toHaveBeenCalled());
+  expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+  cleanup();
+
+  const archived = engine({ role: "read" });
+  archived.calls.getCard.mockResolvedValue(card({ archived: true }));
+  page(archived.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  await vi.waitFor(() => expect(archived.calls.whoAmI).toHaveBeenCalled());
+  expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+});
+
+it("shows the engine's refusal to archive and lets the person try again", async () => {
+  const e = engine();
+  e.calls.archiveCards.mockRejectedValueOnce(new Error("the card is running"));
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("button", { name: "Archive" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "the card is running",
+  );
+  const again = screen.getByRole("button", { name: "Archive" });
+  expect(again).toBeEnabled();
+  await userEvent.click(again);
+  await vi.waitFor(() => expect(e.calls.archiveCards).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+it("ignores a second click while an action is running", async () => {
+  const e = engine();
+  let finish: () => void = () => {};
+  e.calls.archiveCards.mockImplementationOnce(
+    () => new Promise((resolve) => (finish = () => resolve({}))),
+  );
+  page(e.client, cardView);
+  const archive = await screen.findByRole("button", { name: "Archive" });
+  await userEvent.click(archive);
+  await vi.waitFor(() => expect(archive).toBeDisabled());
+  await userEvent.click(archive);
+  expect(e.calls.archiveCards).toHaveBeenCalledTimes(1);
+  finish();
+  await vi.waitFor(() => expect(e.calls.getCard).toHaveBeenCalledTimes(2));
+});
+
+it("does not offer Start run on an archived card that has a workflow", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "idle", archived: true }),
+  );
+  page(e.client, cardView);
+  expect(await screen.findByRole("button", { name: "Restore" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
+});
+
+it("reads the card again when Retry is pressed after a failed read", async () => {
+  const e = engine();
+  e.calls.getCard.mockRejectedValueOnce(new Error("Beehive is not reachable"));
+  page(e.client, cardView);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Beehive is not reachable",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText(/Line one/)).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(e.calls.getCard).toHaveBeenCalledTimes(2);
+});
+
+it("opens Details when the visit names a tab the card does not have", async () => {
+  page(engine().client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "live" } },
+  } as OpenTarget);
+  expect(await screen.findByRole("tab", { name: "Details" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByRole("tab", { name: "Live" })).toBeNull();
+});
+
+it("says the card may be out of date when reading it again fails after an action", async () => {
+  const e = engine();
+  e.calls.getCard
+    .mockResolvedValueOnce(card({ workflow: "demo", state: "idle" }))
+    .mockRejectedValueOnce(new Error("Beehive is not reachable"));
+  page(e.client, cardView);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Start run" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The card may be out of date. Beehive is not reachable",
+  );
+  // The card stays on screen, and Retry reads it again.
+  expect(screen.getByRole("tab", { name: "Details" })).toBeVisible();
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await vi.waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
+});
+
 const step = (fields: MessageInitShape<typeof RunStepSchema>) =>
   create(RunStepSchema, { visit: 1, round: 1, ...fields });
 const run = (fields: MessageInitShape<typeof RunSchema> = {}) =>
@@ -678,6 +882,40 @@ it("has no Files tab for a card that never ran", async () => {
   page(engine().client, cardView);
   await screen.findByRole("tab", { name: "Details" });
   expect(screen.queryByRole("tab", { name: "Files" })).toBeNull();
+});
+
+it("keeps the version a person chose when reading it again after a failure", async () => {
+  const e = withFiles([
+    saved({ name: "plan", version: 1, content: "First draft" }),
+    saved({ name: "plan", version: 2, content: "Second draft" }),
+    saved({ name: "plan", version: 3, content: "Third draft" }),
+  ]);
+  const read = e.calls.readArtifact.getMockImplementation() as (
+    card: string,
+    name: string,
+    version?: number,
+  ) => Promise<ArtifactVersion>;
+  let failFirst = true;
+  e.calls.readArtifact.mockImplementation(async (c, n, v) => {
+    if (v === 1 && failFirst) {
+      failFirst = false;
+      throw new Error("Beehive is not reachable");
+    }
+    return read(c, n, v);
+  });
+  await userEvent.click(await screen.findByRole("tab", { name: "Files" }));
+  expect(await screen.findByLabelText("plan")).toHaveTextContent("Third draft");
+  await userEvent.click(screen.getByRole("combobox", { name: /Version/ }));
+  await userEvent.click(await screen.findByRole("option", { name: "1" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Beehive is not reachable",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByLabelText("plan")).toHaveTextContent("First draft");
+  expect(screen.getByRole("combobox", { name: /Version/ })).toHaveTextContent(
+    "1",
+  );
+  expect(screen.queryByText("Third draft")).toBeNull();
 });
 
 it("resumes a held card and reads it again", async () => {

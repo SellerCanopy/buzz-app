@@ -32,6 +32,12 @@ export function routeCard(value: JsonValue | undefined): string | undefined {
     : undefined;
 }
 
+/** The page's route contract: the one validator the page registers and the tests use. */
+export const PAGE_ROUTE = {
+  version: 1,
+  validate: (params: JsonValue) => !!routeCard(params),
+} as const;
+
 /** The tab a route names, or undefined when it names none or an unknown one. */
 export function routeTab(value: JsonValue | undefined): CardTab | undefined {
   const tab = routeObject(value)?.tab;

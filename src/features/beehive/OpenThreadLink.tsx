@@ -1,25 +1,22 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import type { Navigation } from "../navigation/controller";
-import type { RelayData } from "../relay/service";
+import type { NavigationScope } from "../navigation/targets";
 import type { StageThread } from "./gen/kiln/engine/v1/engine_pb";
-import { useReadableChannel } from "./useReadableChannel";
 
 /**
- * Opens a stage's thread in its channel. It renders nothing for a person who
- * cannot read the channel, so a card never offers a link that would be refused.
+ * Opens a stage's thread in its channel. The caller has already found that the
+ * person can read the channel, and passes the scope that read used.
  */
 export function OpenThreadLink({
-  relay,
   navigator,
+  scope,
   thread,
 }: {
-  relay: RelayData;
   navigator: Navigation | undefined;
+  scope: NavigationScope;
   thread: StageThread;
 }) {
-  const readable = useReadableChannel(relay, thread.channelId);
-  if (readable.status !== "readable" || !navigator) return null;
-  const { scope } = readable;
+  if (!navigator) return null;
   return (
     <Button
       variant="link"

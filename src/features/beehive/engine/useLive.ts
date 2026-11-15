@@ -7,11 +7,18 @@ import {
 } from "../gen/kiln/engine/v1/engine_pb";
 import type { Client } from "./client";
 import { POLL_WAIT_SECONDS, startPoll } from "./poll";
+import { EngineError, errorMessage } from "./transport";
 
 export type Live =
   | { status: "loading" }
-  | { status: "ready"; cards: Card[] }
+  /** `paused` says why the cards stopped following the event log; the cards shown may be stale. */
+  | { status: "ready"; cards: Card[]; paused?: string }
   | { status: "error"; message: string };
+
+/** Tell the person after this many failures in a row, not at the first blip. */
+const PAUSE_AFTER = 3;
+/** Log the first failure and then every this many, so a long outage is one line per few minutes. */
+const LOG_EVERY = 10;
 
 type Payload = { title?: unknown; workflow?: unknown; state?: unknown };
 
@@ -97,7 +104,7 @@ export function applyEvents(
 /**
  * The cards of the board or the archive, kept current. It reads the list once,
  * then follows the event log from the sequence number that read returned.
- * `retry` runs the read again after a failure.
+ * `retry` runs the read again after a failure, or when updates have paused.
  */
 export function useLive(client: Client, archived: boolean) {
   const [live, setLive] = useState<Live>({ status: "loading" });
@@ -129,20 +136,40 @@ export function useLive(client: Client, archived: boolean) {
             setLive((current) =>
               current.status === "ready"
                 ? {
-                    status: "ready",
+                    ...current,
                     cards: applyEvents(current.cards, events, archived),
                   }
+                : current,
+            ),
+          onError: (error, failures, terminal) => {
+            if (failures === 1 || failures % LOG_EVERY === 0)
+              console.warn("Beehive live updates failed", {
+                code: error instanceof EngineError ? error.code : undefined,
+                status: error instanceof EngineError ? error.status : undefined,
+                failures,
+                terminal,
+              });
+            if (terminal || failures >= PAUSE_AFTER)
+              setLive((current) =>
+                current.status === "ready"
+                  ? {
+                      ...current,
+                      paused: `Live updates paused: ${errorMessage(error)}`,
+                    }
+                  : current,
+              );
+          },
+          onRecover: () =>
+            setLive((current) =>
+              current.status === "ready" && current.paused
+                ? { status: "ready", cards: current.cards }
                 : current,
             ),
         });
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
-        setLive({
-          status: "error",
-          message:
-            error instanceof Error ? error.message : "Beehive did not answer",
-        });
+        setLive({ status: "error", message: errorMessage(error) });
       });
     return () => {
       abort.abort();

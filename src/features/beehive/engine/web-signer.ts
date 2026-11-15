@@ -1,4 +1,4 @@
-import { EngineError } from "./transport";
+import { EngineError, TOKEN_PATH } from "./transport";
 
 /** An event the host asks the person's key to sign. */
 export type EventTemplate = {
@@ -21,7 +21,7 @@ export function provideWebSigner(next: WebSigner | undefined) {
   signer = next;
 }
 
-/** The `Nostr <base64>` header for `POST {origin}/auth/token`, signed by the web signer. */
+/** The `Nostr <base64>` header for `POST {origin}` + `TOKEN_PATH`, signed by the web signer. */
 export async function webAuthorization(
   origin: string,
   now: () => number = Date.now,
@@ -37,7 +37,7 @@ export async function webAuthorization(
     kind: 27235,
     created_at: Math.floor(now() / 1000),
     tags: [
-      ["u", `${origin}/auth/token`],
+      ["u", `${origin}${TOKEN_PATH}`],
       ["method", "POST"],
       ["nonce", crypto.randomUUID()],
     ],

@@ -1,4 +1,4 @@
-import { EngineError, type Carrier } from "./transport";
+import { EngineError, TOKEN_PATH, type Carrier } from "./transport";
 
 /** Renew a token with at least this long left, so a call never starts on a dying token. */
 const RENEW_MS = 60_000;
@@ -19,7 +19,7 @@ export function createSession(
   async function mint(): Promise<string> {
     const authorization = await carrier.authorize();
     const reply = (await carrier.post(
-      "/auth/token",
+      TOKEN_PATH,
       {},
       { authorization },
     )) as TokenReply;
@@ -29,8 +29,8 @@ export function createSession(
     return reply.token;
   }
 
-  function token(force = false): Promise<string> {
-    if (!force && fresh() && current) return Promise.resolve(current.token);
+  function token(): Promise<string> {
+    if (fresh() && current) return Promise.resolve(current.token);
     // One in-flight mint serves every concurrent caller.
     pending ??= mint().finally(() => {
       pending = null;
@@ -45,17 +45,17 @@ export function createSession(
       body: unknown,
       signal?: AbortSignal,
     ): Promise<unknown> {
+      // A failed sign-in is not an expired token: only the engine call may earn a retry.
+      const sent = await token();
       try {
-        return await carrier.post(
-          path,
-          body,
-          { bearer: await token() },
-          signal,
-        );
+        return await carrier.post(path, body, { bearer: sent }, signal);
       } catch (error) {
         if (!(error instanceof EngineError) || error.code !== "unauthenticated")
           throw error;
-        return carrier.post(path, body, { bearer: await token(true) }, signal);
+        // A sibling call may already have replaced the token the engine refused,
+        // and that one is fine: only drop the one this call sent.
+        if (current?.token === sent) current = null;
+        return carrier.post(path, body, { bearer: await token() }, signal);
       }
     },
   };

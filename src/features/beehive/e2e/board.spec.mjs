@@ -6,7 +6,7 @@
 import { expect, test } from "../../../../tests/browser/playwright-test.mjs";
 import { createClient } from "../engine/client.ts";
 import { createSession } from "../engine/session.ts";
-import { webCarrier } from "../engine/transport.ts";
+import { TOKEN_PATH, webCarrier } from "../engine/transport.ts";
 import { provideWebSigner, webAuthorization } from "../engine/web-signer.ts";
 import { hiveUnavailable } from "./engine.mjs";
 import { testPubkey, testSigner } from "./signer.ts";
@@ -63,9 +63,9 @@ test("a signed event can be used for one token only", async () => {
   provideWebSigner(testSigner);
   const authorization = await webAuthorization(hive.url);
   const carrier = webCarrier(hive.url, async () => authorization);
-  await carrier.post("/auth/token", {}, { authorization });
+  await carrier.post(TOKEN_PATH, {}, { authorization });
   await expect(
-    carrier.post("/auth/token", {}, { authorization }),
+    carrier.post(TOKEN_PATH, {}, { authorization }),
   ).rejects.toMatchObject({ code: "unauthenticated" });
 });
 

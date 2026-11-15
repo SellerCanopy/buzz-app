@@ -4,6 +4,7 @@ import { linkedPage, linkedPageTarget } from "../pages/plugin-link";
 import type { RegisteredPage } from "../pages/service";
 import {
   PAGE_ID,
+  PAGE_ROUTE,
   PLUGIN_ID,
   boardTarget,
   cardTarget,
@@ -66,10 +67,8 @@ const page = {
   pluginId: PLUGIN_ID,
   id: PAGE_ID,
   primary: true,
-  route: {
-    version: 1,
-    validate: (params: unknown) => !!routeCard(params as never),
-  },
+  // The contract the module registers, not a copy of it.
+  route: PAGE_ROUTE,
 } as unknown as RegisteredPage;
 
 it("opens the card the engine's link names", () => {

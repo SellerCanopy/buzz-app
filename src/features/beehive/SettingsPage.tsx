@@ -8,6 +8,7 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import type { RelayData } from "../relay/service";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Client } from "./engine/client";
+import { errorMessage } from "./engine/transport";
 
 const UPDATE_CHANNEL = "update_channel";
 
@@ -26,9 +27,6 @@ export function channelOf(valueJson: string | undefined): string {
     return "";
   }
 }
-
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : "Beehive did not answer";
 
 /**
  * Where Beehive posts a run's status and its stage tasks. Everyone reads it;
@@ -65,7 +63,7 @@ export function SettingsPage({
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted)
-          setLoaded({ status: "error", message: message(error) });
+          setLoaded({ status: "error", message: errorMessage(error) });
       });
     return () => abort.abort();
   }, [client, attempt]);
@@ -82,7 +80,7 @@ export function SettingsPage({
       setLoaded({ status: "ready", channel });
     } catch (error) {
       // The saved value stands: the select shows it again.
-      setSaveError(message(error));
+      setSaveError(errorMessage(error));
     } finally {
       setPending(false);
     }

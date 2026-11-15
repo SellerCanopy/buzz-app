@@ -10,6 +10,7 @@ import type { EmbeddedThreadProps } from "../conversation/EmbeddedThread";
 import type { Navigation } from "../navigation/controller";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
+import { errorMessage } from "./engine/transport";
 import { FilesTab } from "./FilesTab";
 import { stateLabel, stepStatus } from "./labels";
 import { LiveTab } from "./LiveTab";
@@ -17,7 +18,8 @@ import type { CardTab } from "./routes";
 
 type Loaded =
   | { status: "loading" }
-  | { status: "ready"; card: Card; run: Run | undefined }
+  /** `stale` says the last read after an action failed, so what shows may be out of date. */
+  | { status: "ready"; card: Card; run: Run | undefined; stale?: string }
   | { status: "error"; message: string };
 
 /**
@@ -61,21 +63,18 @@ export function CardPage({
       client.listRuns(id, abort.signal),
     ])
       // The newest run is first.
-      .then(([card, runs]) =>
-        setLoaded({ status: "ready", card, run: runs.runs[0] }),
-      )
+      .then(([card, runs]) => {
+        if (abort.signal.aborted) return;
+        setLoaded({ status: "ready", card, run: runs.runs[0] });
+      })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
+        const message = errorMessage(error);
+        // A card already on screen stays, with the failure said beside it.
         setLoaded((current) =>
           current.status === "ready"
-            ? current
-            : {
-                status: "error",
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Beehive did not answer",
-              },
+            ? { ...current, stale: message }
+            : { status: "error", message },
         );
       });
     return () => abort.abort();
@@ -90,9 +89,7 @@ export function CardPage({
       await action();
       setAttempt((n) => n + 1);
     } catch (error) {
-      setActionError(
-        error instanceof Error ? error.message : "Beehive did not answer",
-      );
+      setActionError(errorMessage(error));
     } finally {
       setPending(false);
     }
@@ -162,6 +159,14 @@ export function CardPage({
         <p role="alert" className="text-danger">
           {actionError}
         </p>
+      )}
+      {loaded.status === "ready" && loaded.stale && (
+        <div className="beehive-error">
+          <p role="alert" className="text-danger">
+            {`The card may be out of date. ${loaded.stale}`}
+          </p>
+          <Button onClick={() => setAttempt((n) => n + 1)}>Retry</Button>
+        </div>
       )}
       <LoadingRegion
         pending={loaded.status === "loading"}

@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { HexagonIcon, PlusIcon } from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import {
@@ -11,7 +12,8 @@ import type { Navigation } from "../navigation/controller";
 import type { PageProps } from "../pages/service";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
-import { BoardPage } from "./BoardPage";
+import { errorMessage } from "./engine/transport";
+import { BeehiveViews } from "./BeehiveViews";
 import { CardPage } from "./CardPage";
 import { NewCardDialog } from "./NewCardDialog";
 import {
@@ -24,23 +26,46 @@ import {
 } from "./routes";
 import "./beehive.css";
 
-/** What the signed-in person may do. Unknown counts as nothing. */
+type Access =
+  | { status: "loading" }
+  | { status: "ready"; canRun: boolean; isAdmin: boolean }
+  | { status: "error"; message: string };
+
+/**
+ * What the signed-in person may do. Only the engine's own answer grants or
+ * withholds a control: until it arrives, and when it cannot be read, the person
+ * gets nothing, and a failure says so with a way to ask again.
+ */
 function useAccess(client: Client) {
-  const [access, setAccess] = useState({ canRun: false, isAdmin: false });
+  const [access, setAccess] = useState<Access>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
   useEffect(() => {
+    // `attempt` asks again after a failure; it is not otherwise used.
+    void attempt;
     const abort = new AbortController();
     client
       .whoAmI(abort.signal)
-      .then((me) =>
+      .then((me) => {
+        if (abort.signal.aborted) return;
         setAccess({
+          status: "ready",
           canRun: me.role === "run" || me.role === "admin",
           isAdmin: me.role === "admin",
-        }),
-      )
-      .catch(() => setAccess({ canRun: false, isAdmin: false }));
+        });
+      })
+      .catch((error: unknown) => {
+        if (abort.signal.aborted) return;
+        setAccess({ status: "error", message: errorMessage(error) });
+      });
     return () => abort.abort();
-  }, [client]);
-  return access;
+  }, [client, attempt]);
+  return {
+    canRun: access.status === "ready" && access.canRun,
+    isAdmin: access.status === "ready" && access.isAdmin,
+    problem: access.status === "error" ? access.message : undefined,
+    retry,
+  };
 }
 
 /**
@@ -59,7 +84,7 @@ export function BeehivePage({
   /** The host's embedded thread, as Channels shows it. */
   Thread: (props: EmbeddedThreadProps) => ReactNode;
 } & Pick<PageProps, "navigation"> & { navigator?: Navigation | undefined }) {
-  const { canRun, isAdmin } = useAccess(client);
+  const { canRun, isAdmin, problem, retry } = useAccess(client);
   const [adding, setAdding] = useState(false);
   const target = navigation?.target;
   const open = target ? visitedCard(target) : undefined;
@@ -104,8 +129,16 @@ export function BeehivePage({
           }
         />
         <div className="beehive-body">
+          {problem && (
+            <div className="beehive-error">
+              <p role="alert" className="text-danger">
+                {`Could not check what you can do. ${problem}`}
+              </p>
+              <Button onClick={retry}>Retry</Button>
+            </div>
+          )}
           <div hidden={open !== undefined}>
-            <BoardPage
+            <BeehiveViews
               client={client}
               relay={relay}
               canRun={canRun}

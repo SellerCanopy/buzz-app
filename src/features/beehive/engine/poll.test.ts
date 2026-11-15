@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import { EventSchema } from "../gen/kiln/engine/v1/engine_pb";
 import { startPoll } from "./poll";
+import { EngineError } from "./transport";
 
 const event = (seq: number) =>
   create(EventSchema, { seq: BigInt(seq), type: "card.created" });
@@ -101,17 +102,108 @@ describe("startPoll", () => {
     poll.stop();
   });
 
-  it("stops without another call or a callback after stop()", async () => {
-    const { call, next } = script();
+  it("stops without another call or a callback after stop(), even if the call ignores the abort", async () => {
+    // A call that does not listen to the signal still resolves after stop().
+    const late: { resolve(): void }[] = [];
+    const call = vi.fn(
+      () =>
+        new Promise<{ events: ReturnType<typeof event>[]; nextSeq: bigint }>(
+          (resolve) =>
+            late.push({
+              resolve: () => resolve({ events: [event(1)], nextSeq: 1n }),
+            }),
+        ),
+    );
     const onEvents = vi.fn();
-    const poll = startPoll({ after: 0n, call, onEvents });
-    const first = await next();
+    const onRecover = vi.fn();
+    const poll = startPoll({ after: 0n, call, onEvents, onRecover });
+    await vi.waitFor(() => expect(late).toHaveLength(1));
     poll.stop();
-    first.resolve({ events: [event(1)], nextSeq: 1n });
-    await Promise.resolve();
-    await Promise.resolve();
+    late[0]?.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(call).toHaveBeenCalledTimes(1);
     expect(onEvents).not.toHaveBeenCalled();
+  });
+
+  it("reports each failure with its count and keeps going when retrying can help", async () => {
+    const { call, next } = script();
+    const onError = vi.fn();
+    const poll = startPoll({
+      after: 0n,
+      call,
+      onEvents: () => {},
+      onError,
+      sleep: async () => {},
+    });
+    const down = new EngineError("unavailable", "down", 503);
+    (await next()).reject(down);
+    (await next()).reject(down);
+    await next();
+    expect(onError).toHaveBeenNthCalledWith(1, down, 1, false);
+    expect(onError).toHaveBeenNthCalledWith(2, down, 2, false);
+    poll.stop();
+  });
+
+  it("stops and says terminal for a failure retrying cannot cure", async () => {
+    for (const code of [
+      "unauthenticated",
+      "permission_denied",
+      "invalid_argument",
+      "failed_precondition",
+      "out_of_range",
+    ]) {
+      const { call, next } = script();
+      const onError = vi.fn();
+      const sleep = vi.fn(async () => {});
+      startPoll({ after: 0n, call, onEvents: () => {}, onError, sleep });
+      const refused = new EngineError(code, "no", 400);
+      (await next()).reject(refused);
+      await vi.waitFor(() =>
+        expect(onError).toHaveBeenCalledWith(refused, 1, true),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(call).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+    }
+  });
+
+  it("calls onRecover on the first success after failures and not before", async () => {
+    const { call, next } = script();
+    const onRecover = vi.fn();
+    const poll = startPoll({
+      after: 0n,
+      call,
+      onEvents: () => {},
+      onRecover,
+      sleep: async () => {},
+    });
+    (await next()).resolve({ events: [], nextSeq: 0n });
+    (await next()).reject(new Error("down"));
+    (await next()).reject(new Error("down"));
+    expect(onRecover).not.toHaveBeenCalled();
+    (await next()).resolve({ events: [], nextSeq: 0n });
+    // The call after the success is up, so the success has been handled.
+    const following = await next();
+    expect(onRecover).toHaveBeenCalledTimes(1);
+    following.resolve({ events: [], nextSeq: 0n });
+    await next();
+    expect(onRecover).toHaveBeenCalledTimes(1);
+    poll.stop();
+  });
+
+  it("does not fetch the same events again when onEvents throws, and reports it as terminal", async () => {
+    const { call, next } = script();
+    const boom = new Error("cannot apply");
+    const onEvents = vi.fn(() => {
+      throw boom;
+    });
+    const onError = vi.fn();
+    startPoll({ after: 0n, call, onEvents, onError, sleep: async () => {} });
+    (await next()).resolve({ events: [event(1)], nextSeq: 1n });
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(boom, 1, true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(onEvents).toHaveBeenCalledTimes(1);
   });
 
   it("wakes from a back-off sleep when stopped", async () => {

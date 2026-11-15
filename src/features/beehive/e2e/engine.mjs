@@ -157,16 +157,25 @@ export async function startHive({
         ...(workflowsDir ? { BUZZ_HIVE_WORKFLOWS_DIR: workflowsDir } : {}),
       },
     });
-  let child = launch();
-  await ready(url, child);
+  /** Launch the engine and wait for it; one that never becomes ready is stopped, not left running. */
+  const launched = async () => {
+    const started = launch();
+    try {
+      await ready(url, started);
+    } catch (error) {
+      await stopChild(started);
+      throw error;
+    }
+    return started;
+  };
+  let child = await launched();
   return {
     url,
     stop: () => stopChild(child),
     /** Stop and start again on the same port and database. */
     async restart() {
       await stopChild(child);
-      child = launch();
-      await ready(url, child);
+      child = await launched();
     },
   };
 }

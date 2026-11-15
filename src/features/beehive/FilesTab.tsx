@@ -8,6 +8,7 @@ import { formatFileSize } from "../messages/FileAttachment";
 import { useRelayConnection } from "../relay/react";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
+import { errorMessage } from "./engine/transport";
 import type {
   ArtifactInfo,
   ArtifactVersion,
@@ -22,9 +23,6 @@ type Shown =
   | { status: "loading" }
   | { status: "ready"; version: ArtifactVersion }
   | { status: "error"; message: string };
-
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : "Beehive did not answer";
 
 /**
  * The documents and files a card's stages saved. Pick one by name, then a version (the newest
@@ -61,7 +59,7 @@ export function FilesTab({
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted)
-          setListing({ status: "error", message: message(error) });
+          setListing({ status: "error", message: errorMessage(error) });
       });
     return () => abort.abort();
   }, [client, cardId, attempt]);
@@ -146,11 +144,16 @@ function Artifact({
         if (abort.signal.aborted) return;
         const found = reply.versions.map((v) => v.version);
         setVersions(found);
-        setPicked(found[found.length - 1]);
+        // Reading again after a failure must not move a person off the version they chose.
+        setPicked((current) =>
+          current !== undefined && found.includes(current)
+            ? current
+            : found[found.length - 1],
+        );
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted)
-          setShown({ status: "error", message: message(error) });
+          setShown({ status: "error", message: errorMessage(error) });
       });
     return () => abort.abort();
   }, [client, cardId, name, attempt]);
@@ -168,7 +171,7 @@ function Artifact({
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted)
-          setShown({ status: "error", message: message(error) });
+          setShown({ status: "error", message: errorMessage(error) });
       });
     return () => abort.abort();
   }, [client, cardId, name, picked, attempt]);

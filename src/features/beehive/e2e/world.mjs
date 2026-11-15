@@ -25,12 +25,19 @@ export async function startWorld({ role = "member", workflowsDir } = {}) {
   });
   await vite.listen();
   const origin = `http://127.0.0.1:${vite.httpServer.address().port}`;
-  const hive = await startHive({
-    allowedOrigins: [origin],
-    member: testPubkey,
-    role,
-    workflowsDir,
-  });
+  let hive;
+  try {
+    hive = await startHive({
+      allowedOrigins: [origin],
+      member: testPubkey,
+      role,
+      workflowsDir,
+    });
+  } catch (error) {
+    // A spec's `world` is still unset, so nothing else would close the server.
+    await vite.close();
+    throw error;
+  }
   return {
     hive,
     /** The page, signed in against this engine. */

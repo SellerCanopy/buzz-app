@@ -29,17 +29,11 @@ import {
   ListCardsResponseSchema,
   ListRunsRequestSchema,
   ListRunsResponseSchema,
-  ListStageTemplatesRequestSchema,
-  ListStageTemplatesResponseSchema,
-  ListTemplateVariablesRequestSchema,
-  ListTemplateVariablesResponseSchema,
   ListWorkflowsRequestSchema,
   ListWorkflowsResponseSchema,
   PollEventsRequestSchema,
   PollEventsResponseSchema,
   ReadArtifactRequestSchema,
-  RemoveCardRequestSchema,
-  RemoveCardResponseSchema,
   ResumeCardRequestSchema,
   RestoreCardRequestSchema,
   RunSchema,
@@ -123,14 +117,6 @@ export function createClient(session: Session) {
         RestoreCardRequestSchema,
         CardSchema,
         create(RestoreCardRequestSchema, { cardId }),
-        signal,
-      ),
-    removeCard: (cardId: string, signal?: AbortSignal) =>
-      unary(
-        "RemoveCard",
-        RemoveCardRequestSchema,
-        RemoveCardResponseSchema,
-        create(RemoveCardRequestSchema, { cardId }),
         signal,
       ),
     addNote: (
@@ -254,29 +240,13 @@ export function createClient(session: Session) {
         create(ListWorkflowsRequestSchema),
         signal,
       ),
-    /** Check one package by name, or every package and folder when `name` is empty. */
-    checkWorkflow: (name = "", signal?: AbortSignal) =>
+    /** Check every package and folder the engine loaded. */
+    checkWorkflow: (signal?: AbortSignal) =>
       unary(
         "CheckWorkflow",
         CheckWorkflowRequestSchema,
         CheckWorkflowResponseSchema,
-        create(CheckWorkflowRequestSchema, { name }),
-        signal,
-      ),
-    listTemplateVariables: (signal?: AbortSignal) =>
-      unary(
-        "ListTemplateVariables",
-        ListTemplateVariablesRequestSchema,
-        ListTemplateVariablesResponseSchema,
-        create(ListTemplateVariablesRequestSchema),
-        signal,
-      ),
-    listStageTemplates: (signal?: AbortSignal) =>
-      unary(
-        "ListStageTemplates",
-        ListStageTemplatesRequestSchema,
-        ListStageTemplatesResponseSchema,
-        create(ListStageTemplatesRequestSchema),
+        create(CheckWorkflowRequestSchema),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

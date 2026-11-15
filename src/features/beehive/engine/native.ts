@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { EngineError, type Carrier } from "./transport";
+import { decodeReply, EngineError, NO_ANSWER, type Carrier } from "./transport";
 
 type NativeFailure = { code?: unknown; message?: unknown; status?: unknown };
 
@@ -7,13 +7,13 @@ type NativeFailure = { code?: unknown; message?: unknown; status?: unknown };
 function toEngineError(error: unknown): EngineError {
   if (error instanceof EngineError) return error;
   if (typeof error === "string")
-    return new EngineError("unavailable", error, 0);
+    return new EngineError("unavailable", error || NO_ANSWER, 0);
   const failure = (error ?? {}) as NativeFailure;
   return new EngineError(
     typeof failure.code === "string" ? failure.code : "unavailable",
-    typeof failure.message === "string"
+    typeof failure.message === "string" && failure.message
       ? failure.message
-      : "Beehive did not answer",
+      : NO_ANSWER,
     typeof failure.status === "number" ? failure.status : 0,
   );
 }
@@ -45,7 +45,9 @@ export function nativeCarrier(): Carrier {
         throw toEngineError(error);
       }
       signal?.throwIfAborted();
-      return text ? JSON.parse(text) : {};
+      // The same reading as the web carrier, so a reply that is not a JSON
+      // object is an `EngineError` on both.
+      return decodeReply(200, "", text);
     },
   };
 }

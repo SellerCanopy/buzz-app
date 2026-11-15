@@ -79,7 +79,11 @@ export function LiveTab({
             groups={[{ label: "Stages", options }]}
           />
         )}
-        <OpenThreadLink relay={relay} navigator={navigator} thread={thread} />
+        <OpenThreadLink
+          navigator={navigator}
+          scope={readable.scope}
+          thread={thread}
+        />
       </div>
       <div className="beehive-live-thread">
         <Thread

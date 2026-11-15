@@ -4,7 +4,7 @@ import { createClient } from "./engine/client";
 import { chooseCarrier } from "./engine/carrier";
 import { beehiveOrigin } from "./engine/origin";
 import { createSession } from "./engine/session";
-import { routeCard } from "./routes";
+import { PAGE_ID, PAGE_ROUTE } from "./routes";
 
 export const inject = ["pages", "navigation", "relay", "conversation"];
 
@@ -14,12 +14,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!origin) return;
   const client = createClient(createSession(chooseCarrier(origin)));
   ctx.pages.register({
-    id: "beehive",
+    id: PAGE_ID,
     title: "Beehive",
     layout: "workspace",
     primary: true,
     placement: "dock",
-    route: { version: 1, validate: (params) => !!routeCard(params) },
+    route: PAGE_ROUTE,
     component: (props) => (
       <BeehivePage
         client={client}

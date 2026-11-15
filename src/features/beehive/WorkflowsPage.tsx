@@ -5,6 +5,7 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import type { Client } from "./engine/client";
+import { errorMessage } from "./engine/transport";
 import type {
   Finding,
   PackageCheck,
@@ -29,7 +30,7 @@ function useWorkflows(client: Client) {
     setLoaded({ status: "loading" });
     Promise.all([
       client.listWorkflows(abort.signal),
-      client.checkWorkflow("", abort.signal),
+      client.checkWorkflow(abort.signal),
     ])
       .then(([list, check]) => {
         if (abort.signal.aborted) return;
@@ -41,11 +42,7 @@ function useWorkflows(client: Client) {
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
-        setLoaded({
-          status: "error",
-          message:
-            error instanceof Error ? error.message : "Beehive did not answer",
-        });
+        setLoaded({ status: "error", message: errorMessage(error) });
       });
     return () => abort.abort();
   }, [client, attempt]);
