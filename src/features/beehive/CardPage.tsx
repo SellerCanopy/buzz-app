@@ -1,9 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { XIcon } from "../../shared/design-system/icons";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs, type TabItem } from "../../shared/design-system/ui/Tabs";
 import type { Card, Run } from "./gen/kiln/engine/v1/engine_pb";
 import type { EmbeddedThreadProps } from "../conversation/EmbeddedThread";
@@ -11,6 +13,7 @@ import type { Navigation } from "../navigation/controller";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
+import { ActivityTab } from "./ActivityTab";
 import { FilesTab } from "./FilesTab";
 import { stateLabel, stepStatus } from "./labels";
 import { LiveTab } from "./LiveTab";
@@ -24,7 +27,9 @@ type Loaded =
 
 /**
  * One card: the current stage's thread, the stages its latest run went through, the files they
- * saved and its details, and Start run, Resume, Archive and Restore for a person who can run.
+ * saved, what happened on it and its details, and Start run, Resume, Stop run, Retry run, Archive and Restore for a
+ * person who can run. A person who can run also turns auto mode on and off: while it is on the
+ * engine answers the card's approval gates, failed runs and silent stages by rule.
  * The tab is part of the page's route, so Back returns to the tab a person left.
  */
 export function CardPage({
@@ -53,6 +58,9 @@ export function CardPage({
   const [attempt, setAttempt] = useState(0);
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string>();
+  // Stopping asks first. The confirmation is a transient surface, so it has no history visit.
+  const [confirmStop, setConfirmStop] = useState(false);
+  const cancelStop = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     // `attempt` re-reads the card after a failure or an action.
@@ -102,6 +110,10 @@ export function CardPage({
     );
   const startRun = (card: Card) => act(() => client.startRun(card.id));
   const resume = (card: Card) => act(() => client.resumeCard(card.id));
+  const stop = (current: Run) => act(() => client.stopRun(current.id));
+  const retry = (current: Run) => act(() => client.retryRun(current.id));
+  const setAutoMode = (current: Card, enabled: boolean) =>
+    act(() => client.setAutoMode(current.id, enabled));
 
   const card = loaded.status === "ready" ? loaded.card : undefined;
   const run = loaded.status === "ready" ? loaded.run : undefined;
@@ -111,6 +123,7 @@ export function CardPage({
   if (run) sections.push({ value: "live", label: "Live" });
   if (hasSteps) sections.push({ value: "steps", label: "Steps" });
   if (run) sections.push({ value: "files", label: "Files" });
+  sections.push({ value: "activity", label: "Activity" });
   sections.push({ value: "details", label: "Details" });
   const fallback: CardTab = card?.stages.length ? "live" : "details";
   const section = tab && sections.some((s) => s.value === tab) ? tab : fallback;
@@ -138,6 +151,32 @@ export function CardPage({
                 Resume
               </Button>
             )}
+            {card && run && canRun && canStop(run) && (
+              <Button
+                variant="destructive"
+                disabled={pending}
+                onClick={() => setConfirmStop(true)}
+              >
+                Stop run
+              </Button>
+            )}
+            {card && run && canRun && canRetry(card, run) && (
+              <Button
+                variant="prominent"
+                disabled={pending}
+                onClick={() => void retry(run)}
+              >
+                Retry run
+              </Button>
+            )}
+            {card && canRun && !card.archived && (
+              <Switch
+                label="Auto mode"
+                checked={card.autoMode}
+                disabled={pending}
+                onCheckedChange={(enabled) => void setAutoMode(card, enabled)}
+              />
+            )}
             {card && canRun && (
               <Button
                 loading={pending}
@@ -155,6 +194,33 @@ export function CardPage({
           </>
         }
       />
+      {confirmStop && run && (
+        <AlertDialog
+          title="Stop this run?"
+          description="The run ends and the card moves to Stopped. What its stages already saved stays, and you can retry the run afterwards."
+          pending={pending}
+          initialFocus={cancelStop}
+          onClose={() => setConfirmStop(false)}
+          actions={
+            <>
+              <Button
+                ref={cancelStop}
+                disabled={pending}
+                onClick={() => setConfirmStop(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                loading={pending}
+                onClick={() => void stop(run).then(() => setConfirmStop(false))}
+              >
+                Stop run
+              </Button>
+            </>
+          }
+        />
+      )}
       {actionError && (
         <p role="alert" className="text-danger">
           {actionError}
@@ -201,6 +267,8 @@ export function CardPage({
                 <Steps run={run} />
               ) : value === "files" && run ? (
                 <FilesTab client={client} relay={relay} cardId={card.id} />
+              ) : value === "activity" ? (
+                <ActivityTab client={client} cardId={card.id} />
               ) : (
                 <Details card={card} />
               )
@@ -217,6 +285,20 @@ function canStart(card: Card): boolean {
   return !card.archived && !!card.workflow && card.state === "idle";
 }
 
+/** A run that has not ended can be stopped. */
+function canStop(run: Run): boolean {
+  return run.state !== "ended";
+}
+
+/** A card whose run failed or was stopped can start again from the stage it reached. */
+function canRetry(card: Card, run: Run): boolean {
+  return (
+    !card.archived &&
+    run.state === "ended" &&
+    (card.state === "failed" || card.state === "stopped")
+  );
+}
+
 function Details({ card }: { card: Card }) {
   return (
     <dl className="beehive-details">
@@ -228,6 +310,12 @@ function Details({ card }: { card: Card }) {
         <div>
           <dt className="text-label text-subtle">Workflow</dt>
           <dd>{card.workflow}</dd>
+        </div>
+      )}
+      {card.autoMode && (
+        <div>
+          <dt className="text-label text-subtle">Auto mode</dt>
+          <dd>On</dd>
         </div>
       )}
       <div>
@@ -250,6 +338,11 @@ function Steps({ run }: { run: Run }) {
           <span className="text-body-sm text-subtle">
             {stepStatus(step, run, index === run.steps.length - 1)}
           </span>
+          {step.failure && (
+            <span className="beehive-step-summary text-body-sm text-danger">
+              {step.failure}
+            </span>
+          )}
           {step.summary && (
             <span className="beehive-step-summary text-body-sm">
               {step.summary}

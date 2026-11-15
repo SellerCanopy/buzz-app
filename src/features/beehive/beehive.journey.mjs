@@ -139,6 +139,77 @@ test("a person who can only read sees the board without a way to add cards", asy
   await expect(pane.getByRole("button", { name: "New card" })).toHaveCount(0);
 });
 
+test("a person who can only read has no Start run, no approvals and no Access list", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.addInitScript(() => {
+    window.beehiveFixture = { role: "read" };
+  });
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await page.evaluate(() =>
+    window.beehiveFixture.externalCreate("Ship the board", "demo"),
+  );
+  await pane
+    .getByRole("region", { name: "To do" })
+    .getByRole("button", { name: /Ship the board/ })
+    .click();
+  await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
+  await expect(pane.getByRole("button", { name: "Start run" })).toHaveCount(0);
+  await expect(pane.getByRole("switch", { name: "Auto mode" })).toHaveCount(0);
+  await pane.getByRole("button", { name: "Close card" }).click();
+
+  await pane.getByRole("tab", { name: "Settings" }).click();
+  await expect(
+    pane.getByRole("combobox", { name: "Update channel" }),
+  ).toBeDisabled();
+  await expect(pane.getByText("Access", { exact: true })).toHaveCount(0);
+  const calls = await page.evaluate(() => window.beehiveFixture.calls);
+  expect(calls.some((c) => c.includes("/ListAccess"))).toBe(false);
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("an admin sees who has which level in Settings, and a change saves from the row", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.addInitScript(() => {
+    window.beehiveFixture = { role: "admin" };
+  });
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await pane.getByRole("tab", { name: "Settings" }).click();
+  await expect(pane.getByText("Access", { exact: true })).toBeVisible();
+  const ben = pane.getByRole("combobox", { name: "Level for Ben" });
+  await expect(ben).toHaveText("Read");
+  // The signed-in admin cannot lower themselves, and an agent cannot pass its owner.
+  await pane.getByRole("combobox", { name: "Level for Ada" }).click();
+  await expect(page.getByRole("option", { name: /Read/ })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+  await pane.getByRole("combobox", { name: "Level for builder" }).click();
+  await expect(page.getByRole("option", { name: /Admin/ })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+
+  await ben.click();
+  await page.getByRole("option", { name: /Run/ }).click();
+  await expect(ben).toHaveText("Run");
+  // Ben is at Run now, so his agent may be raised to Run.
+  await pane.getByRole("combobox", { name: "Level for builder" }).click();
+  await expect(page.getByRole("option", { name: /Run/ })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("a card another person adds shows up on the open board without a new read", async ({
   page,
 }) => {
@@ -427,7 +498,13 @@ test("the Live tab shows the current stage's thread and the picker reaches the e
   const errors = watchPageErrors(page);
   const pane = await cardWithTwoThreads(page);
   const tabs = pane.getByRole("tab");
-  await expect(tabs).toHaveText(["Live", "Steps", "Files", "Details"]);
+  await expect(tabs).toHaveText([
+    "Live",
+    "Steps",
+    "Files",
+    "Activity",
+    "Details",
+  ]);
   const thread = pane.getByRole("region", { name: "Stage thread" });
   await expect(thread).toContainText("Thread in #updates");
   const current = await thread.getAttribute("data-root");
@@ -501,4 +578,158 @@ test("the Live tab stays inside a narrow window in dark appearance with large te
   expect(overlaps).toBe(false);
   await inside(pane.getByRole("combobox", { name: "Stage" }));
   await inside(pane.getByRole("region", { name: "Stage thread" }));
+});
+
+async function openNeedsYou(page, role) {
+  if (role)
+    await page.addInitScript((r) => {
+      window.beehiveFixture = { role: r };
+    }, role);
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await expect(pane.getByText("No cards yet")).toBeVisible();
+  return pane;
+}
+
+test("an approval that opens shows on the Needs you tab without a new read, and Reject sends the reason", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  const pane = await openNeedsYou(page);
+  const tab = pane.getByRole("tab", { name: /Needs you/ });
+  await expect(tab).not.toContainText("1");
+
+  await page.evaluate(() =>
+    window.beehiveFixture.externalGate("Ship the board"),
+  );
+  // The badge follows the event log; nothing re-read the board to learn of it.
+  await expect(tab).toContainText("1");
+  await tab.click();
+  const gates = pane.getByRole("list", { name: "Needs you" });
+  const gate = gates.getByRole("region", { name: /Approval: Ship the board/ });
+  await expect(gate).toContainText("Approve the plan");
+  await expect(gate).toContainText("To approve: plan");
+
+  // Reject asks for words first, and its button stays off until there are some.
+  await gate.getByRole("button", { name: "Reject" }).click();
+  const dialog = page.getByRole("dialog", { name: "Reject" });
+  const submit = dialog.getByRole("button", { name: "Reject" });
+  await expect(submit).toBeDisabled();
+  const reason = dialog.getByLabel("Reason");
+  await expect(reason).toBeFocused();
+  await reason.fill("Add a rollback step.");
+  await submit.click();
+  await expect(dialog).toHaveCount(0);
+
+  await expect(pane.getByText("Nothing needs you")).toBeVisible();
+  await expect(tab).not.toContainText("1");
+
+  // The answer is on the card's Activity tab with who gave it and why.
+  await pane.getByRole("tab", { name: "Board" }).click();
+  await pane.getByRole("button", { name: /Ship the board/ }).click();
+  await pane.getByRole("tab", { name: "Activity" }).click();
+  const entry = pane
+    .getByRole("list", { name: "Activity" })
+    .getByRole("listitem")
+    .first();
+  await expect(entry).toContainText("Rejected the plan");
+  await expect(entry).toContainText("Add a rollback step.");
+  await expect(entry).toContainText("Person npub");
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("Approve answers at once, and Reject is not a history entry", async ({
+  page,
+}) => {
+  const pane = await openNeedsYou(page);
+  await page.evaluate(() =>
+    window.beehiveFixture.externalGate("Cut the release"),
+  );
+  await pane.getByRole("tab", { name: /Needs you/ }).click();
+  const gate = pane.getByRole("region", { name: /Approval: Cut the release/ });
+
+  // Opening and cancelling the dialog leaves the history where it was.
+  await gate.getByRole("button", { name: "Reject" }).click();
+  await page
+    .getByRole("dialog", { name: "Reject" })
+    .getByRole("button", { name: "Cancel" })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Back" })).toBeDisabled();
+
+  await gate.getByRole("button", { name: "Approve" }).click();
+  await expect(pane.getByText("Nothing needs you")).toBeVisible();
+});
+
+test("a person who can only read sees what needs people but cannot answer", async ({
+  page,
+}) => {
+  const pane = await openNeedsYou(page, "read");
+  await page.evaluate(() => window.beehiveFixture.externalGate("Read only"));
+  await pane.getByRole("tab", { name: /Needs you/ }).click();
+  const gate = pane.getByRole("region", { name: /Approval: Read only/ });
+  await expect(gate.getByRole("button", { name: "Open card" })).toBeVisible();
+  await expect(gate.getByRole("button", { name: "Approve" })).toHaveCount(0);
+  await expect(gate.getByRole("button", { name: "Reject" })).toHaveCount(0);
+});
+
+test("Needs you shows its empty state before anything waits", async ({
+  page,
+}) => {
+  const pane = await openNeedsYou(page);
+  await pane.getByRole("tab", { name: /Needs you/ }).click();
+  await expect(pane.getByText("Nothing needs you")).toBeVisible();
+});
+
+test("the Usage view shows runs and what agents started, with no token or cost figure", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  const pane = await openNeedsYou(page);
+  await pane.getByRole("tab", { name: "Usage" }).click();
+  const runs = pane.getByRole("region", { name: "Runs" });
+  await expect(runs).toContainText("1m 15s");
+  await expect(runs).toContainText("1h 1m");
+  const table = pane.getByRole("table");
+  await expect(table.getByRole("row")).toHaveCount(5);
+  await expect(table.getByRole("row").last()).toContainText("Nov 9");
+  const text = (await pane.innerText()).toLowerCase();
+  expect(text).not.toMatch(/token|cost|dollar|price|\$/);
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("Needs you and Usage stay inside a narrow window in dark appearance with large text", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 420, height: 800 });
+  const pane = await openNeedsYou(page);
+  await page.evaluate(() =>
+    window.beehiveFixture.externalGate(
+      "Rework the whole intake pipeline so every attachment is scanned before it reaches review",
+    ),
+  );
+  await page.getByRole("button", { name: "Toggle appearance" }).click();
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "24px";
+  });
+  const inside = async (locator) => {
+    const box = await locator.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(420);
+  };
+  await pane.getByRole("tab", { name: /Needs you/ }).click();
+  const gate = pane.getByRole("region", { name: /Approval:/ });
+  await inside(gate);
+  await inside(gate.getByRole("button", { name: "Approve" }));
+  await inside(gate.getByRole("button", { name: "Reject" }));
+  await gate.getByRole("button", { name: "Reject" }).click();
+  await inside(page.getByRole("dialog", { name: "Reject" }));
+  await page
+    .getByRole("dialog", { name: "Reject" })
+    .getByRole("button", { name: "Cancel" })
+    .click();
+
+  await pane.getByRole("tab", { name: "Usage" }).click();
+  await inside(pane.getByRole("table"));
+  await inside(pane.getByRole("region", { name: "Runs" }));
 });

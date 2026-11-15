@@ -12,10 +12,14 @@ import { startHive } from "./engine.mjs";
 import { testPubkey, testSigner } from "./signer.ts";
 
 /**
- * @param {{ role?: "owner"|"admin"|"member", workflowsDir?: string }} [options]
- *   the test key's relay role, and a folder of extra workflow packages
+ * @param {{ role?: "owner"|"admin"|"member", others?: { pubkey: string, role?: string }[], workflowsDir?: string }} [options]
+ *   the test key's relay role, more relay members to seed, and a folder of extra workflow packages
  */
-export async function startWorld({ role = "member", workflowsDir } = {}) {
+export async function startWorld({
+  role = "member",
+  others,
+  workflowsDir,
+} = {}) {
   const vite = await createServer({
     root: fileURLToPath(new URL("../../../../", import.meta.url)),
     configFile: false,
@@ -31,6 +35,7 @@ export async function startWorld({ role = "member", workflowsDir } = {}) {
       allowedOrigins: [origin],
       member: testPubkey,
       role,
+      others,
       workflowsDir,
     });
   } catch (error) {
@@ -48,6 +53,18 @@ export async function startWorld({ role = "member", workflowsDir } = {}) {
       return createClient(
         createSession(webCarrier(hive.url, () => webAuthorization(hive.url))),
       );
+    },
+    /** A client for another signer, such as a second person, against the same engine. */
+    clientFor(signer) {
+      const carrier = webCarrier(hive.url, async () => {
+        provideWebSigner(signer);
+        try {
+          return await webAuthorization(hive.url);
+        } finally {
+          provideWebSigner(testSigner);
+        }
+      });
+      return createClient(createSession(carrier));
     },
     async stop() {
       await hive.stop();

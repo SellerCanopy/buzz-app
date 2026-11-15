@@ -7,6 +7,7 @@ import { Select } from "../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import type { RelayData } from "../relay/service";
 import { useChannelList, useRelayConnection } from "../relay/react";
+import { AccessSettings } from "./AccessSettings";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
 
@@ -30,17 +31,20 @@ export function channelOf(valueJson: string | undefined): string {
 
 /**
  * Where Beehive posts a run's status and its stage tasks. Everyone reads it;
- * only an admin changes it. The engine checks the channel on save, and its
+ * only an admin changes it. An admin also sets what each person and agent may do. The engine checks the channel on save, and its
  * answer is shown beside the setting as it gives it.
  */
 export function SettingsPage({
   client,
   relay,
   isAdmin,
+  me,
 }: {
   client: Client;
   relay: RelayData;
   isAdmin: boolean;
+  /** The signed-in person's pubkey. */
+  me: string;
 }) {
   const connection = useRelayConnection(relay);
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
@@ -123,6 +127,7 @@ export function SettingsPage({
           </>
         )}
       </LoadingRegion>
+      {isAdmin && <AccessSettings client={client} me={me} />}
     </div>
   );
 }

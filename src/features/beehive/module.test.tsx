@@ -1,4 +1,5 @@
 import { Context } from "@deepseek-ai/cordis";
+import { create } from "@bufbuild/protobuf";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { conversationFeatures } from "../../app/conversation-features";
 import {
@@ -12,7 +13,28 @@ import type { PluginStorage } from "../../plugins/storage";
 import { provideNavigation } from "../navigation/service";
 import { PagesService } from "../pages/service";
 import { fakeRelay } from "./fake-relay";
+import { WhoAmIResponseSchema } from "./gen/kiln/engine/v1/engine_pb";
+import { BACKSTOP_MS } from "./level";
 import { PAGE_ID, PLUGIN_ID } from "./routes";
+
+/** The engine as the module sees it: the level it answers is set by each test. */
+const engine = vi.hoisted(() => ({
+  role: "run" as string | Error,
+  whoAmI: undefined as unknown as ReturnType<typeof vi.fn>,
+}));
+vi.mock("./engine/client", () => ({
+  createClient: () => ({
+    whoAmI: engine.whoAmI,
+    getStatus: vi.fn(async () => ({ headSeq: 0n })),
+    // A parked poll that only ends when the module stops it.
+    pollEvents: vi.fn(
+      (_after: bigint, _wait?: number, signal?: AbortSignal) =>
+        new Promise((_resolve, reject) =>
+          signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+        ),
+    ),
+  }),
+}));
 
 const beehive = conversationFeatures.filter(
   ({ manifest }) => manifest.id === PLUGIN_ID,
@@ -30,7 +52,14 @@ const storage: PluginStorage = {
 };
 
 const roots: Context[] = [];
-beforeEach(() => vi.useFakeTimers());
+beforeEach(() => {
+  vi.useFakeTimers();
+  engine.role = "run";
+  engine.whoAmI = vi.fn(async () => {
+    if (engine.role instanceof Error) throw engine.role;
+    return create(WhoAmIResponseSchema, { role: engine.role });
+  });
+});
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => root.fiber.dispose()));
   vi.unstubAllEnvs();
@@ -107,4 +136,39 @@ it("registers no page for an address that is not https or local", async () => {
   expect((await start()).snapshot()).toEqual([]);
   expect(warn).toHaveBeenCalled();
   warn.mockRestore();
+});
+
+it("registers no dock entry for a person at None, and never while the level is unknown", async () => {
+  vi.stubEnv("VITE_BUZZ_BEEHIVE_URL", "http://localhost:3100");
+  engine.role = "none";
+  const pages = await start();
+  expect(pages.snapshot()).toEqual([]);
+});
+
+it("registers the dock entry for a person at Read", async () => {
+  vi.stubEnv("VITE_BUZZ_BEEHIVE_URL", "http://localhost:3100");
+  engine.role = "read";
+  const [page] = (await start()).snapshot();
+  expect(page?.key).toBe(`${PLUGIN_ID}/${PAGE_ID}`);
+});
+
+it("keeps the dock entry when the level cannot be read, so the page can say so", async () => {
+  vi.stubEnv("VITE_BUZZ_BEEHIVE_URL", "http://localhost:3100");
+  engine.role = new Error("Beehive is not reachable");
+  expect((await start()).snapshot()).toHaveLength(1);
+});
+
+it("takes the entry out of the dock when the level drops to None and puts it back when it rises", async () => {
+  vi.stubEnv("VITE_BUZZ_BEEHIVE_URL", "http://localhost:3100");
+  engine.role = "run";
+  const pages = await start();
+  expect(pages.snapshot()).toHaveLength(1);
+
+  engine.role = "none";
+  await vi.advanceTimersByTimeAsync(BACKSTOP_MS * 1.3);
+  expect(pages.snapshot()).toEqual([]);
+
+  engine.role = "read";
+  await vi.advanceTimersByTimeAsync(BACKSTOP_MS * 1.3);
+  expect(pages.snapshot()).toHaveLength(1);
 });

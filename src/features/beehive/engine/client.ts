@@ -6,12 +6,15 @@ import {
   type MessageShape,
 } from "@bufbuild/protobuf";
 import {
+  AccessEntrySchema,
   AddNoteRequestSchema,
   AddNoteResponseSchema,
   ArtifactVersionSchema,
   ArchiveCardsRequestSchema,
   ArchiveCardsResponseSchema,
+  AnswerInboxRequestSchema,
   CardSchema,
+  InboxItemSchema,
   CheckWorkflowRequestSchema,
   CheckWorkflowResponseSchema,
   CreateCardRequestSchema,
@@ -21,12 +24,20 @@ import {
   GetSettingsResponseSchema,
   GetStatusRequestSchema,
   GetStatusResponseSchema,
+  GetUsageRequestSchema,
+  GetUsageResponseSchema,
+  ListAccessRequestSchema,
+  ListAccessResponseSchema,
+  ListActivityRequestSchema,
+  ListActivityResponseSchema,
   ListArtifactsRequestSchema,
   ListArtifactsResponseSchema,
   ListArtifactVersionsRequestSchema,
   ListArtifactVersionsResponseSchema,
   ListCardsRequestSchema,
   ListCardsResponseSchema,
+  ListInboxRequestSchema,
+  ListInboxResponseSchema,
   ListRunsRequestSchema,
   ListRunsResponseSchema,
   ListWorkflowsRequestSchema,
@@ -36,10 +47,14 @@ import {
   ReadArtifactRequestSchema,
   ResumeCardRequestSchema,
   RestoreCardRequestSchema,
+  RetryRunRequestSchema,
   RunSchema,
+  SetAccessLevelRequestSchema,
+  SetAutoModeRequestSchema,
   SetSettingRequestSchema,
   SettingSchema,
   StartStageRequestSchema,
+  StopRunRequestSchema,
   WhoAmIRequestSchema,
   WhoAmIResponseSchema,
 } from "../gen/kiln/engine/v1/engine_pb";
@@ -119,6 +134,15 @@ export function createClient(session: Session) {
         create(RestoreCardRequestSchema, { cardId }),
         signal,
       ),
+    /** Turn auto mode on or off for a card. The reply is the card as `getCard` reads it. */
+    setAutoMode: (cardId: string, enabled: boolean, signal?: AbortSignal) =>
+      unary(
+        "SetAutoMode",
+        SetAutoModeRequestSchema,
+        CardSchema,
+        create(SetAutoModeRequestSchema, { cardId, enabled }),
+        signal,
+      ),
     addNote: (
       input: { cardId: string; summary: string; detail?: string },
       signal?: AbortSignal,
@@ -146,6 +170,24 @@ export function createClient(session: Session) {
         StartStageRequestSchema,
         RunSchema,
         create(StartStageRequestSchema, { cardId }),
+        signal,
+      ),
+    /** End a run that has not ended: the card moves to Stopped. */
+    stopRun: (runId: string, signal?: AbortSignal) =>
+      unary(
+        "StopRun",
+        StopRunRequestSchema,
+        RunSchema,
+        create(StopRunRequestSchema, { runId }),
+        signal,
+      ),
+    /** Start a new run from the stage a failed or stopped run reached, with the same settings. */
+    retryRun: (runId: string, signal?: AbortSignal) =>
+      unary(
+        "RetryRun",
+        RetryRunRequestSchema,
+        RunSchema,
+        create(RetryRunRequestSchema, { runId }),
         signal,
       ),
     /** A card's runs, newest first. */
@@ -247,6 +289,68 @@ export function createClient(session: Session) {
         CheckWorkflowRequestSchema,
         CheckWorkflowResponseSchema,
         create(CheckWorkflowRequestSchema),
+        signal,
+      ),
+    /** What waits for a person: the open items, with the sequence number to follow events from. */
+    listInbox: (signal?: AbortSignal) =>
+      unary(
+        "ListInbox",
+        ListInboxRequestSchema,
+        ListInboxResponseSchema,
+        create(ListInboxRequestSchema, { includeResolved: false }),
+        signal,
+      ),
+    /** Answer an item with one of its choices. `text` is the reason or the reply. */
+    answerInbox: (
+      itemId: string,
+      choice: string,
+      text = "",
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "AnswerInbox",
+        AnswerInboxRequestSchema,
+        InboxItemSchema,
+        create(AnswerInboxRequestSchema, { itemId, choice, text }),
+        signal,
+      ),
+    /**
+     * A card's activity, oldest first, one page of at most 500 entries: notes, answers and
+     * what the stages logged. `afterSeq` is the `seq` of the last entry already read.
+     */
+    listActivity: (cardId: string, signal?: AbortSignal, afterSeq = 0n) =>
+      unary(
+        "ListActivity",
+        ListActivityRequestSchema,
+        ListActivityResponseSchema,
+        create(ListActivityRequestSchema, { cardId, afterSeq }),
+        signal,
+      ),
+    /** What agents did: runs, how long they took, and the cards and runs agents started each week. */
+    getUsage: (signal?: AbortSignal) =>
+      unary(
+        "GetUsage",
+        GetUsageRequestSchema,
+        GetUsageResponseSchema,
+        create(GetUsageRequestSchema),
+        signal,
+      ),
+    /** Everyone in the community with the level each acts at, people first and then agents. */
+    listAccess: (signal?: AbortSignal) =>
+      unary(
+        "ListAccess",
+        ListAccessRequestSchema,
+        ListAccessResponseSchema,
+        create(ListAccessRequestSchema),
+        signal,
+      ),
+    /** Set one person's or agent's level. The reply is its entry as it now stands. */
+    setAccessLevel: (pubkey: string, level: string, signal?: AbortSignal) =>
+      unary(
+        "SetAccessLevel",
+        SetAccessLevelRequestSchema,
+        AccessEntrySchema,
+        create(SetAccessLevelRequestSchema, { pubkey, level }),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

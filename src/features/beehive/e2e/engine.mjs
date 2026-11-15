@@ -116,6 +116,7 @@ function stopChild(child) {
  * @param {string[]} [options.allowedOrigins] browser origins the engine allows
  * @param {string} [options.member] a public key (hex) to seed as a relay member
  * @param {"owner"|"admin"|"member"} [options.role] that member's relay role
+ * @param {{ pubkey: string, role?: "owner"|"admin"|"member" }[]} [options.others] more relay members to seed
  * @param {string} [options.workflowsDir] a folder of extra workflow packages to load
  * @returns {Promise<{ url: string, stop(): Promise<void>, restart(): Promise<void> }>}
  */
@@ -123,6 +124,7 @@ export async function startHive({
   allowedOrigins = [],
   member,
   role = "member",
+  others = [],
   workflowsDir,
 } = {}) {
   const missing = hiveUnavailable();
@@ -131,11 +133,14 @@ export async function startHive({
   const host = process.env.BUZZ_HIVE_E2E_COMMUNITY_HOST ?? "localhost";
   if (!/^[a-z0-9.:-]+$/i.test(host)) throw new Error("bad community host");
   await sql("DROP SCHEMA IF EXISTS hive CASCADE;\n");
-  if (member) {
-    if (!/^[0-9a-f]{64}$/.test(member)) throw new Error("bad member key");
+  const members = [...(member ? [{ pubkey: member, role }] : []), ...others];
+  for (const { pubkey, role: memberRole = "member" } of members) {
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) throw new Error("bad member key");
+    if (!/^(owner|admin|member)$/.test(memberRole))
+      throw new Error("bad member role");
     await sql(
       `INSERT INTO public.relay_members (community_id, pubkey, role)
-       SELECT id, '${member}', '${role}' FROM public.communities WHERE host = '${host}'
+       SELECT id, '${pubkey}', '${memberRole}' FROM public.communities WHERE host = '${host}'
        ON CONFLICT (community_id, pubkey) DO UPDATE SET role = EXCLUDED.role;\n`,
     );
   }
