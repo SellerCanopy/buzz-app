@@ -1136,12 +1136,24 @@ available rather than silently discarding it.
   Builderlab permissions are re-read at most once a minute while the app uses
   them, so a newly granted or removed permission applies without signing in
   again; a failed check keeps the previous permissions.
-  Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there, once for every local Claude agent. With the Claude plugin enabled,
-  **Settings → Claude** starts with a masked, read-only saved key. The
-  field opens its **Replace / Remove** menu when focused or clicked;
-  the chevron also opens it. **Replace** opens a blank, masked field with small
-  **Cancel / Save** buttons inside it. **Save** stores a non-empty replacement
+  Claude runs one of two ways, set once for every Claude agent there: with an
+  Anthropic API key pasted under **Anthropic API key**, or with a Claude
+  account (Pro, Max, Team or Enterprise subscription) through **Sign in**,
+  which uses the sign-in Claude Code already has or runs `claude auth login`.
+  Saving a key switches Claude to the key; **Use Claude account** and **Use
+  your API key** switch back and forth. Until one is chosen, Claude uses a
+  saved key, or else the account Claude Code is signed in to. With the Claude
+  plugin enabled, **Settings → Claude** shows which way Claude signs in, with
+  the same switch. **Settings → Claude → Set** opens **Connect Claude** to add a key. Back hides
+  setup and Forward restores its draft while the Claude page remains open.
+  The input keeps focus but is read-only while secure storage is checked. If the
+  check fails, the dialog keeps its draft and offers **Retry**; saving waits for
+  a successful check. Closing the dialog discards its draft; saving returns to
+  the masked, read-only saved key. The field opens its **Replace / Remove** menu
+  when focused or clicked; the chevron also opens it. **Replace** opens a blank,
+  masked field with small **Cancel / Save** buttons inside it. When adding or replacing a key, **Save**
+  stays visible inside the field and is disabled until you enter a key.
+  **Save** stores a non-empty replacement
   and returns to the masked view; **Cancel** discards the draft. Settings cannot
   reveal or copy the saved key. The small inline **Save** stays visible and is
   disabled until you enter a key; **Cancel** stays available during replacement.
@@ -1149,22 +1161,23 @@ available rather than silently discarding it.
   **Remove** deletes the saved key from this device’s secure storage after
   confirmation. Key actions are unavailable while replacing the key.
   You can also add or remove a key
-  if the Claude integration needs installation or an update. New local Claude sessions and security
-  reviews need a key again; a turn already running can finish.
-  When creating a Claude agent or editing
-  one that runs on this computer, click **Add key** beside **Harness** to open
-  **Set up Claude**. Builds with interactive authentication show **Sign in**
-  instead. Selecting Claude does not open setup automatically; closing setup
-  keeps Claude selected. An interactive sign-in continues if you navigate Back;
-  returning to creation restores its pending controls with **Cancel**, without
-  starting another sign-in. Explicitly closing setup cancels a pending sign-in.
-  **Model**, **Thinking**, and agent creation wait until credentials are saved.
-  Agents on execution targets use that target's credentials, not a key on this
-  computer. Buzz keeps the API key in the system's secure credential store
-  (Keychain on macOS) and
-  gives it to every Claude process, security reviews included. Commands a
-  Claude agent runs inherit it, so they can read the key. Until a key is
-  saved, Claude agents don't answer and Claude reviews fail closed.
+  if the Claude integration needs installation or an update. New local Claude
+  sessions on the key, and security reviews, need a key again; a turn already
+  running can finish. When creating a Claude agent or editing one that runs on
+  this computer without either, click **Sign in** beside **Harness** to open
+  **Set up Claude**, which offers both. Selecting Claude does not open setup
+  automatically; closing setup keeps Claude selected. A sign-in continues if
+  you navigate Back; returning to creation restores its pending controls with
+  **Cancel**, without starting another sign-in. Explicitly closing setup
+  cancels a pending sign-in, and the key form waits while one runs. **Model**,
+  **Thinking**, and agent creation wait until Claude is set up. Agents on
+  execution targets use that target's credentials, not this computer's. Buzz
+  keeps the key in the system's secure credential store (Keychain on macOS)
+  and gives it to Claude processes when Claude runs with the key. Commands a
+  Claude agent runs inherit it, so they can read the key. Claude security
+  reviews always need the key, even when agents run on the account. Until
+  Claude can sign in, Claude agents don't answer and Claude reviews fail
+  closed.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed
@@ -1346,7 +1359,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   sidebar currently shows are linked. Back from one returns to those details.
 - When Builderlab and TypeSafe are available in **Settings → Decisions API**,
   the **Decision provider** dropdown chooses Builderlab or TypeSafe. Each choice
-  uses that provider for requests. Choosing TypeSafe without a key opens a setup dialog.
+  uses that provider for requests. Choosing TypeSafe without a key opens
+  **Connect TypeSafe**, with a link to create a key in the TypeSafe console.
   Saving the key completes the switch; closing setup keeps the current provider.
   If a selected Builderlab account lacks Decisions API access, the pane explains
   that you can use your own TypeSafe key or contact your account administrator.
