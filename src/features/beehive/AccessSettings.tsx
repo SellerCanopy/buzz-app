@@ -135,7 +135,7 @@ export function AccessSettings({
             label={`Level for ${nameOf(entry)}`}
             variant="preference"
             value={level}
-            disabled={saving !== undefined}
+            disabled={saving !== undefined && saving !== entry.pubkey}
             onValueChange={(next) => void change(entry, next)}
             groups={[{ label: "Levels", options }]}
           />
