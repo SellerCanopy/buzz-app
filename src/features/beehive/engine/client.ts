@@ -46,6 +46,7 @@ import {
   RestoreCardRequestSchema,
   RetryRunRequestSchema,
   RunSchema,
+  SetAutoModeRequestSchema,
   SetSettingRequestSchema,
   SettingSchema,
   StartStageRequestSchema,
@@ -127,6 +128,15 @@ export function createClient(session: Session) {
         RestoreCardRequestSchema,
         CardSchema,
         create(RestoreCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Turn auto mode on or off for a card. The reply is the card as `getCard` reads it. */
+    setAutoMode: (cardId: string, enabled: boolean, signal?: AbortSignal) =>
+      unary(
+        "SetAutoMode",
+        SetAutoModeRequestSchema,
+        CardSchema,
+        create(SetAutoModeRequestSchema, { cardId, enabled }),
         signal,
       ),
     addNote: (

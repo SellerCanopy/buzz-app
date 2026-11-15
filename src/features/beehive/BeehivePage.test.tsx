@@ -143,6 +143,7 @@ function engine(
     ),
     archiveCards: vi.fn(async () => ({})),
     restoreCard: vi.fn(async () => card()),
+    setAutoMode: vi.fn(async () => card({ autoMode: true })),
     pollEvents: vi.fn(
       (after: bigint, _wait?: number, signal?: AbortSignal) =>
         new Promise((resolve) =>
@@ -1225,4 +1226,63 @@ it("says so when the settings cannot be read and Retry reads them again", async 
   expect(
     await screen.findByRole("combobox", { name: "Update channel" }),
   ).toBeVisible();
+});
+
+it("lets a person who can run turn auto mode on and off, and reads the card again", async () => {
+  const e = engine();
+  page(e.client, cardView);
+  const toggle = await screen.findByRole("switch", { name: "Auto mode" });
+  expect(toggle).not.toBeChecked();
+  e.calls.getCard.mockResolvedValue(card({ autoMode: true }));
+  await userEvent.click(toggle);
+  await vi.waitFor(() =>
+    expect(e.calls.setAutoMode).toHaveBeenCalledWith(ID, true),
+  );
+  await vi.waitFor(() =>
+    expect(screen.getByRole("switch", { name: "Auto mode" })).toBeChecked(),
+  );
+
+  e.calls.getCard.mockResolvedValue(card({ autoMode: false }));
+  await userEvent.click(screen.getByRole("switch", { name: "Auto mode" }));
+  await vi.waitFor(() =>
+    expect(e.calls.setAutoMode).toHaveBeenLastCalledWith(ID, false),
+  );
+  await vi.waitFor(() =>
+    expect(screen.getByRole("switch", { name: "Auto mode" })).not.toBeChecked(),
+  );
+});
+
+it("shows the engine's refusal to turn auto mode on", async () => {
+  const e = engine();
+  e.calls.setAutoMode.mockRejectedValue(
+    new Error(
+      "an agent may turn on auto mode only for a person at Run or above",
+    ),
+  );
+  page(e.client, cardView);
+  await userEvent.click(
+    await screen.findByRole("switch", { name: "Auto mode" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "only for a person at Run or above",
+  );
+  expect(screen.getByRole("switch", { name: "Auto mode" })).not.toBeChecked();
+});
+
+it("hides the auto mode switch below Run and on an archived card, and still says when it is on", async () => {
+  const reader = engine({ role: "read" });
+  reader.calls.getCard.mockResolvedValue(card({ autoMode: true }));
+  page(reader.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  await vi.waitFor(() => expect(reader.calls.whoAmI).toHaveBeenCalled());
+  expect(screen.queryByRole("switch", { name: "Auto mode" })).toBeNull();
+  expect(await screen.findByText("Auto mode")).toBeVisible();
+  expect(screen.getByText("On")).toBeVisible();
+  cleanup();
+
+  const archived = engine();
+  archived.calls.getCard.mockResolvedValue(card({ archived: true }));
+  page(archived.client, cardView);
+  await screen.findByRole("button", { name: "Restore" });
+  expect(screen.queryByRole("switch", { name: "Auto mode" })).toBeNull();
 });

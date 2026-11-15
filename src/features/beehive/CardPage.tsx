@@ -5,6 +5,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs, type TabItem } from "../../shared/design-system/ui/Tabs";
 import type { Card, Run } from "./gen/kiln/engine/v1/engine_pb";
 import type { EmbeddedThreadProps } from "../conversation/EmbeddedThread";
@@ -27,7 +28,8 @@ type Loaded =
 /**
  * One card: the current stage's thread, the stages its latest run went through, the files they
  * saved, what happened on it and its details, and Start run, Resume, Stop run, Retry run, Archive and Restore for a
- * person who can run.
+ * person who can run. A person who can run also turns auto mode on and off: while it is on the
+ * engine answers the card's approval gates, failed runs and silent stages by rule.
  * The tab is part of the page's route, so Back returns to the tab a person left.
  */
 export function CardPage({
@@ -110,6 +112,8 @@ export function CardPage({
   const resume = (card: Card) => act(() => client.resumeCard(card.id));
   const stop = (current: Run) => act(() => client.stopRun(current.id));
   const retry = (current: Run) => act(() => client.retryRun(current.id));
+  const setAutoMode = (current: Card, enabled: boolean) =>
+    act(() => client.setAutoMode(current.id, enabled));
 
   const card = loaded.status === "ready" ? loaded.card : undefined;
   const run = loaded.status === "ready" ? loaded.run : undefined;
@@ -164,6 +168,14 @@ export function CardPage({
               >
                 Retry run
               </Button>
+            )}
+            {card && canRun && !card.archived && (
+              <Switch
+                label="Auto mode"
+                checked={card.autoMode}
+                disabled={pending}
+                onCheckedChange={(enabled) => void setAutoMode(card, enabled)}
+              />
             )}
             {card && canRun && (
               <Button
@@ -298,6 +310,12 @@ function Details({ card }: { card: Card }) {
         <div>
           <dt className="text-label text-subtle">Workflow</dt>
           <dd>{card.workflow}</dd>
+        </div>
+      )}
+      {card.autoMode && (
+        <div>
+          <dt className="text-label text-subtle">Auto mode</dt>
+          <dd>On</dd>
         </div>
       )}
       <div>

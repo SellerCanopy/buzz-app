@@ -53,6 +53,22 @@ it("shows an answer with who gave it and the reason, newest first", async () => 
   expect(listActivity).toHaveBeenCalledWith("c", expect.anything());
 });
 
+it("shows an answer auto mode gave as Beehive's, with the reason", async () => {
+  tab([
+    entry(1n, {
+      type: "auto",
+      summary: "auto mode: Approved the approval",
+      detail: "approved plan v1",
+      author: create(ActivityAuthorSchema, { kind: "kiln", id: OWNER }),
+    }),
+  ]);
+  const row = await screen.findByRole("listitem");
+  expect(row).toHaveTextContent("auto mode: Approved the approval");
+  expect(row).toHaveTextContent("approved plan v1");
+  expect(row).toHaveTextContent("Beehive");
+  expect(row).not.toHaveTextContent("npub");
+});
+
 it("names an agent and never prints the raw key", () => {
   expect(
     authorLabel(create(ActivityAuthorSchema, { kind: "agent", id: OWNER })),
