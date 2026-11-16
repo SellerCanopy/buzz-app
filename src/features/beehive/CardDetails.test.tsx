@@ -58,6 +58,23 @@ it("names a merged pull request by its state, not as a draft", () => {
   expect(screen.queryByText(/draft/)).toBeNull();
 });
 
+it("shows how the pull request's checks stand", () => {
+  render(
+    <Details
+      card={card({
+        pullRequest: {
+          number: 12,
+          url: "https://github.example.org/example-org/api/pull/12",
+          state: "open",
+          draft: false,
+          checks: "failing",
+        },
+      })}
+    />,
+  );
+  expect(screen.getByText(/checks failing/)).toBeVisible();
+});
+
 it("shows an address that is not a web address as text, never as a link", () => {
   render(
     <Details

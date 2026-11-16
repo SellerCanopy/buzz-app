@@ -28,7 +28,7 @@ type Loaded =
 
 /**
  * One card: the current stage's thread, the stages its latest run went through, the files they
- * saved, what happened on it and its details, and Start run, Resume, Stop run, Retry run, Archive and Restore for a
+ * saved, what happened on it and its details, and Start run, Resume, Stop run, Retry run, Merge, Archive and Restore for a
  * person who can run. A person who can run also turns auto mode on and off: while it is on the
  * engine answers the card's approval gates, failed runs and silent stages by rule.
  * The tab is part of the page's route, so Back returns to the tab a person left.
@@ -113,6 +113,7 @@ export function CardPage({
   const resume = (card: Card) => act(() => client.resumeCard(card.id));
   const stop = (current: Run) => act(() => client.stopRun(current.id));
   const retry = (current: Run) => act(() => client.retryRun(current.id));
+  const merge = (card: Card) => act(() => client.mergeCard(card.id));
   const setAutoMode = (current: Card, enabled: boolean) =>
     act(() => client.setAutoMode(current.id, enabled));
 
@@ -170,6 +171,15 @@ export function CardPage({
                 onClick={() => void retry(run)}
               >
                 Retry run
+              </Button>
+            )}
+            {card && canRun && canMerge(card) && (
+              <Button
+                variant="prominent"
+                disabled={pending}
+                onClick={() => void merge(card)}
+              >
+                Merge
               </Button>
             )}
             {card && canRun && !card.archived && (
@@ -304,6 +314,23 @@ function canRetry(card: Card, run: Run): boolean {
   );
 }
 
+/**
+ * A card whose pull request is open, out of draft and not failing or waiting on checks can be
+ * merged. The engine reads the host again and refuses what it finds not ready, so this only
+ * keeps the button off a card that plainly cannot be merged.
+ */
+function canMerge(card: Card): boolean {
+  const pull = card.pullRequest;
+  return (
+    !card.archived &&
+    !!pull &&
+    pull.state === "open" &&
+    !pull.draft &&
+    pull.checks !== "failing" &&
+    pull.checks !== "pending"
+  );
+}
+
 /** A pull request address is shown as a link only when it is a web address. */
 function isWebUrl(url: string): boolean {
   return /^https?:\/\//i.test(url);
@@ -343,6 +370,7 @@ export function Details({ card }: { card: Card }) {
               `#${pull.number}`
             )}
             {` ${pullState(pull.state, pull.draft)}`}
+            {pull.checks && ` · checks ${pull.checks}`}
           </dd>
         </div>
       )}

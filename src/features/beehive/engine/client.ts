@@ -53,6 +53,7 @@ import {
   ListRunsResponseSchema,
   ListWorkflowsRequestSchema,
   ListWorkflowsResponseSchema,
+  MergeCardRequestSchema,
   PollEventsRequestSchema,
   PollEventsResponseSchema,
   ReadArtifactRequestSchema,
@@ -158,6 +159,19 @@ export function createClient(session: Session) {
         RestoreCardRequestSchema,
         CardSchema,
         create(RestoreCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /**
+     * Merge the card's pull request. Only a person can: the engine refuses an agent, a draft, a
+     * pull request with failing or unfinished checks and a card that has a stage working on it.
+     * The reply is the card as `getCard` reads it.
+     */
+    mergeCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "MergeCard",
+        MergeCardRequestSchema,
+        CardSchema,
+        create(MergeCardRequestSchema, { cardId }),
         signal,
       ),
     /** Turn auto mode on or off for a card. The reply is the card as `getCard` reads it. */

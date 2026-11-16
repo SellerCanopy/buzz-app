@@ -162,6 +162,7 @@ function engine(
     ),
     archiveCards: vi.fn(async () => ({})),
     restoreCard: vi.fn(async () => card()),
+    mergeCard: vi.fn(async () => card()),
     setAutoMode: vi.fn(async () => card({ autoMode: true })),
     pollEvents: vi.fn(
       (after: bigint, _wait?: number, signal?: AbortSignal) =>
@@ -735,6 +736,93 @@ it("offers Archive and Restore only to a person who can run", async () => {
   await screen.findByRole("tab", { name: "Details" });
   await levelApplied(archived);
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+});
+
+const openPull = (fields: Record<string, unknown> = {}) => ({
+  number: 12,
+  url: "https://github.example.org/example-org/api/pull/12",
+  state: "open",
+  draft: false,
+  checks: "passing",
+  ...fields,
+});
+
+it("merges the card's pull request and reads the card again", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ pullRequest: openPull() }));
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+  await vi.waitFor(() => expect(e.calls.mergeCard).toHaveBeenCalledWith(ID));
+  await vi.waitFor(() => expect(e.calls.getCard).toHaveBeenCalledTimes(2));
+});
+
+it("offers Merge only to a person who can run, for a pull request that can be merged", async () => {
+  const reader = engine({ role: "read" });
+  reader.calls.getCard.mockResolvedValue(card({ pullRequest: openPull() }));
+  page(reader.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  await levelApplied(reader);
+  expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+  cleanup();
+
+  for (const pull of [
+    openPull({ draft: true }),
+    openPull({ checks: "failing" }),
+    openPull({ checks: "pending" }),
+    openPull({ state: "merged" }),
+    openPull({ state: "closed" }),
+  ]) {
+    const e = engine();
+    e.calls.getCard.mockResolvedValue(card({ pullRequest: pull }));
+    page(e.client, cardView);
+    await screen.findByRole("tab", { name: "Details" });
+    await levelApplied(e);
+    await screen.findByRole("button", { name: "Archive" });
+    expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+    cleanup();
+  }
+
+  const none = engine();
+  page(none.client, cardView);
+  await screen.findByRole("button", { name: "Archive" });
+  expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+});
+
+it("shows the engine's refusal to merge", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ pullRequest: openPull() }));
+  e.calls.mergeCard.mockRejectedValueOnce(
+    new Error("the pull request has failing checks"),
+  );
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "the pull request has failing checks",
+  );
+});
+
+it("shows what a wait stage is waiting for on the Steps tab", async () => {
+  const e = engine({
+    runs: [
+      run({
+        state: "running",
+        steps: [
+          step({
+            stage: "validate",
+            summary: "waiting for the checks build, lint to pass",
+          }),
+        ],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(card({ workflow: "demo" }));
+  page(e.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "steps" } },
+  } as OpenTarget);
+  expect(
+    await screen.findByText("waiting for the checks build, lint to pass"),
+  ).toBeVisible();
 });
 
 it("shows the engine's refusal to archive and lets the person try again", async () => {
