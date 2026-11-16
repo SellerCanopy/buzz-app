@@ -19,8 +19,9 @@ export const MAX_SERVERS = 32;
 /** The engine's rule for a name: it becomes a key in the agent's `mcp.json`. */
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
-export const SECRET_MESSAGE =
-  "This looks like a secret. Secrets come in a later phase, so a tool server cannot hold one yet.";
+/** Where a secret goes instead, for the form's hint and its error to say alike. */
+export const SECRET_ADVICE = `Add it under Secrets in Settings and refer to it as \${NAME}.`;
+export const SECRET_MESSAGE = `This looks like a secret. ${SECRET_ADVICE}`;
 
 /** A word in a flag, a variable or a query key that says its value is a secret. */
 const SECRET_WORD = /token|secret|passw(or)?d|api[-_]?key|credential/i;

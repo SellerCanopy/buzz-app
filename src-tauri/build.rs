@@ -274,6 +274,8 @@ fn main() {
             "mesh_compute_prepare_inference",
             "mesh_compute_inference_current",
             "mesh_compute_chat",
+            "beehive_authorization",
+            "beehive_request",
         ])),
     )
     .expect("Could not build Tauri resources")

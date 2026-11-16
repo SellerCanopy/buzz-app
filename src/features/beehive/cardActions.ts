@@ -21,12 +21,12 @@ export function canStop(run: Run): boolean {
 }
 
 /** A run that is working can be held, and resumed afterwards. */
-export function canPause(card: Card, run: Run | undefined): run is Run {
+export function canPause(card: Card, run: Run | undefined): boolean {
   return !!run && !card.archived && run.state === "running";
 }
 
 /** A card whose run failed or was stopped can start again from the stage it reached. */
-export function canRetry(card: Card, run: Run | undefined): run is Run {
+export function canRetry(card: Card, run: Run | undefined): boolean {
   return (
     !!run &&
     !card.archived &&

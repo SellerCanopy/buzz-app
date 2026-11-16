@@ -254,6 +254,28 @@ it("says when the sign-in expired, drops the link, and starts again on Connect a
   expect(dialog().queryByRole("alert")).toBeNull();
 });
 
+it("ends the sign-in, shows no Connected chip, and starts again when the host accepted a paste that did not finish", async () => {
+  const user = userEvent.setup();
+  const client = show({ paste: false });
+  expect(await chip("Needs sign-in")).toBeVisible();
+  await connect(user);
+  await user.type(field(), ADDRESS);
+  await user.click(dialog().getByRole("button", { name: "Paste address" }));
+  expect(await dialog().findByRole("alert")).toHaveTextContent(
+    "The sign-in did not finish",
+  );
+  expect(dialog().queryByRole("link")).toBeNull();
+  expect(dialog().queryByLabelText("Address")).toBeNull();
+  expect(
+    screen.queryByText("Connected", { selector: ".beehive-chip" }),
+  ).toBeNull();
+  // Only the first read of the status happened: a paste that did not finish is not re-read.
+  expect(client.getAgentLoginStatus).toHaveBeenCalledTimes(1);
+  await user.click(dialog().getByRole("button", { name: "Connect again" }));
+  await dialog().findByRole("link", { name: "Open the sign-in link" });
+  expect(client.startAgentLogin).toHaveBeenCalledTimes(2);
+});
+
 it("offers Connect again after the host refused an address it had read", async () => {
   const user = userEvent.setup();
   const client = show();

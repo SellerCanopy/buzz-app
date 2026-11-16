@@ -235,7 +235,7 @@ function Tile({
               Answer
             </Button>
           )}
-          {canRun && canRetry(card, run) && (
+          {canRun && run && canRetry(card, run) && (
             <Button
               size="sm"
               disabled={busy}

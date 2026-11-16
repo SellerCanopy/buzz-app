@@ -15,6 +15,7 @@ import {
   check,
   formOf,
   keptNote,
+  SECRET_ADVICE,
   specFor,
   type Problems,
   type ToolServerForm,
@@ -206,8 +207,7 @@ export function ToolServerDialog({
         )}
         {note && <p className="text-body-sm text-subtle">{note}</p>}
         <p className="text-body-sm text-subtle">
-          Leave keys and tokens out. A tool server cannot hold a secret yet;
-          secrets come in a later phase.
+          {`Leave keys and tokens out. ${SECRET_ADVICE}`}
         </p>
         {error && (
           <p role="alert" className="text-body text-danger">

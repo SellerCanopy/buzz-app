@@ -7,7 +7,7 @@ import { createServer } from "../../../../tests/browser/vite-server.mjs";
 import { createClient } from "../engine/client.ts";
 import { createSession } from "../engine/session.ts";
 import { webCarrier } from "../engine/transport.ts";
-import { provideWebSigner, webAuthorization } from "../engine/web-signer.ts";
+import { signAuthorization } from "../engine/web-signer.ts";
 import { startHive } from "./engine.mjs";
 import { testPubkey, testSigner } from "./signer.ts";
 
@@ -43,29 +43,22 @@ export async function startWorld({
     await vite.close();
     throw error;
   }
+  const clientFor = (signer) =>
+    createClient(
+      createSession(
+        webCarrier(hive.url, () => signAuthorization(hive.url, signer)),
+      ),
+    );
   return {
     hive,
     /** The page, signed in against this engine. */
     pageUrl: `${origin}/src/features/beehive/fixture.html?hive=${encodeURIComponent(hive.url)}`,
     /** A client for the test key, to set up or change cards outside the page. */
     client() {
-      provideWebSigner(testSigner);
-      return createClient(
-        createSession(webCarrier(hive.url, () => webAuthorization(hive.url))),
-      );
+      return clientFor(testSigner);
     },
     /** A client for another signer, such as a second person, against the same engine. */
-    clientFor(signer) {
-      const carrier = webCarrier(hive.url, async () => {
-        provideWebSigner(signer);
-        try {
-          return await webAuthorization(hive.url);
-        } finally {
-          provideWebSigner(testSigner);
-        }
-      });
-      return createClient(createSession(carrier));
-    },
+    clientFor,
     async stop() {
       await hive.stop();
       await vite.close();

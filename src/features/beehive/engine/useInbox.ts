@@ -22,7 +22,8 @@ export function touchesInbox(events: Event[]): boolean {
 /**
  * The items that wait for a person, kept current. It reads the list once, follows the event
  * log from the sequence number that read returned, and reads the list again when an
- * `inbox.opened` or `inbox.resolved` event goes by. The list holds only the open items, so
+ * `inbox.opened` or `inbox.resolved` event goes by. A failure that ends the poll drops this
+ * follower, so the next read that succeeds follows again. The list holds only the open items, so
  * the read stays small however many were answered. `refresh` reads again at once, as after
  * an answer, and `retry` starts over after a failure.
  */
@@ -38,12 +39,13 @@ export function useInbox(client: Client) {
     void attempt;
     const abort = new AbortController();
     let unfollow: (() => void) | undefined;
+    let following = false;
     let reading = false;
     let again = false;
     setInbox({ status: "loading" });
 
     /** Reads the list. Reads asked for while one runs collapse into one more read after it. */
-    const read = async (first: boolean) => {
+    const read = async () => {
       if (reading) {
         again = true;
         return;
@@ -54,14 +56,16 @@ export function useInbox(client: Client) {
           again = false;
           const reply = await client.listInbox(abort.signal);
           if (abort.signal.aborted) return;
+          // A poll that ended is followed again from this read, which lifts the pause.
+          const refollow = !following;
           setInbox((current) => ({
             status: "ready",
             items: reply.items,
-            ...(current.status === "ready" && current.paused
+            ...(current.status === "ready" && current.paused && !refollow
               ? { paused: current.paused }
               : {}),
           }));
-          if (first && !unfollow) unfollow = follow(reply.seq);
+          if (refollow) unfollow = follow(reply.seq);
         } while (again);
       } catch (error) {
         if (abort.signal.aborted) return;
@@ -75,19 +79,27 @@ export function useInbox(client: Client) {
         reading = false;
       }
     };
-    reader.current = () => void read(false);
+    reader.current = () => void read();
 
-    const follow = (after: bigint) =>
-      feedOf(client).follow({
-        after,
-        onEvents: (events) => {
-          if (touchesInbox(events)) void read(false);
-        },
-        onError: pollErrorHandler("Beehive inbox updates failed", (paused) =>
+    const follow = (after: bigint) => {
+      following = true;
+      const onError = pollErrorHandler(
+        "Beehive inbox updates failed",
+        (paused) =>
           setInbox((current) =>
             current.status === "ready" ? { ...current, paused } : current,
           ),
-        ),
+      );
+      return feedOf(client).follow({
+        after,
+        onEvents: (events) => {
+          if (touchesInbox(events)) void read();
+        },
+        onError: (error, failures, terminal) => {
+          // The feed drops every follower on a terminal failure.
+          if (terminal) following = false;
+          onError(error, failures, terminal);
+        },
         onRecover: () =>
           setInbox((current) =>
             current.status === "ready" && current.paused
@@ -99,8 +111,9 @@ export function useInbox(client: Client) {
               : current,
           ),
       });
+    };
 
-    void read(true);
+    void read();
     return () => {
       abort.abort();
       unfollow?.();

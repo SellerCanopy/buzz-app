@@ -18,7 +18,7 @@ import {
   type Carrier,
   webCarrier,
 } from "./engine/transport";
-import { provideWebSigner, webAuthorization } from "./engine/web-signer";
+import { signAuthorization } from "./engine/web-signer";
 
 // An offline Beehive that keeps its cards and event log in memory.
 // `listCardsFailures` is how many ListCards calls fail before one succeeds, and
@@ -621,13 +621,12 @@ const carrier: Carrier = {
 // `?hive=<origin>` points the page at a real engine and signs with the fixed
 // test key, for e2e/board.spec.mjs. It is never reachable from the app.
 const hive = new URLSearchParams(location.search).get("hive");
-if (hive) {
-  const { testSigner } = await import("./e2e/signer");
-  provideWebSigner(testSigner);
-}
+const testSigner = hive ? (await import("./e2e/signer")).testSigner : undefined;
 const client = createClient(
   createSession(
-    hive ? webCarrier(hive, () => webAuthorization(hive)) : carrier,
+    hive && testSigner
+      ? webCarrier(hive, () => signAuthorization(hive, testSigner))
+      : carrier,
   ),
 );
 

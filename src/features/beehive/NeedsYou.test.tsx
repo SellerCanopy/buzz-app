@@ -17,7 +17,7 @@ import type { Client } from "./engine/client";
 import { useInbox } from "./engine/useInbox";
 import { EngineError } from "./engine/transport";
 import { GateCard } from "./GateCard";
-import { artifactsOf, waitedLabel } from "./labels";
+import { artifactsOf, subjectOf, waitedLabel } from "./labels";
 import {
   EventSchema,
   InboxItemSchema,
@@ -39,6 +39,18 @@ it("lists an approval's artifacts by name, with the version when it has one", ()
   ).toEqual(["plan v2"]);
   expect(artifactsOf("not json")).toEqual([]);
   expect(artifactsOf("{}")).toEqual([]);
+});
+
+it("names the one artifact an approval is about, whatever its name ends in", () => {
+  expect(
+    subjectOf(JSON.stringify({ artifacts: [{ name: "plan", version: 2 }] })),
+  ).toBe("plan");
+  // A name that ends like a version is a name, not a version to strip.
+  expect(subjectOf(JSON.stringify({ artifacts: ["notes v3"] }))).toBe(
+    "notes v3",
+  );
+  expect(subjectOf(JSON.stringify({ artifacts: ["a", "b"] }))).toBe("");
+  expect(subjectOf("{}")).toBe("");
 });
 
 const item = (fields: MessageInitShape<typeof InboxItemSchema> = {}) =>

@@ -1505,6 +1505,20 @@ it("says so when a card has saved nothing, and shows a failure with a retry", as
   expect(await screen.findByText("No files yet")).toBeVisible();
 });
 
+it("says a file has no versions instead of loading it for good, and Retry reads again", async () => {
+  const e = withFiles([saved({ name: "plan", version: 1, content: "Draft" })]);
+  e.calls.listArtifactVersions.mockResolvedValueOnce(
+    create(ListArtifactVersionsResponseSchema, { versions: [] }),
+  );
+  await userEvent.click(await screen.findByRole("tab", { name: "Files" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This file has no versions.",
+  );
+  expect(screen.queryByText("Loading plan…")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByLabelText("plan")).toHaveTextContent("Draft");
+});
+
 it("has no Files tab for a card that never ran", async () => {
   page(engine().client, cardView);
   await screen.findByRole("tab", { name: "Details" });

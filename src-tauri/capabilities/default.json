@@ -212,6 +212,8 @@
     "allow-mesh-compute-prepare-inference",
     "allow-mesh-compute-inference-current",
     "allow-mesh-compute-chat",
+    "allow-beehive-authorization",
+    "allow-beehive-request",
     "allow-browser-attach",
     "allow-browser-set-bounds",
     "allow-browser-set-media-suspended",

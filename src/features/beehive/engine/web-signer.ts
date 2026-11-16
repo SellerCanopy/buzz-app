@@ -1,4 +1,4 @@
-import { EngineError, TOKEN_PATH } from "./transport";
+import { TOKEN_PATH } from "./transport";
 
 /** An event the host asks the person's key to sign. */
 export type EventTemplate = {
@@ -11,29 +11,16 @@ export type EventTemplate = {
 /** Signs a template with the person's key and returns the full event. */
 export type WebSigner = (template: EventTemplate) => Promise<object>;
 
-let signer: WebSigner | undefined;
-
 /**
- * Give the web build a signer. The desktop app signs in Rust and never calls
- * this. Without a signer, the web build cannot sign in to Beehive.
+ * The `Nostr <base64>` header for `POST {origin}` + `TOKEN_PATH`, signed by `sign`. The desktop
+ * app signs in Rust and never calls this; it is for a build or harness that holds a signer.
  */
-export function provideWebSigner(next: WebSigner | undefined) {
-  signer = next;
-}
-
-/** The `Nostr <base64>` header for `POST {origin}` + `TOKEN_PATH`, signed by the web signer. */
-export async function webAuthorization(
+export async function signAuthorization(
   origin: string,
+  sign: WebSigner,
   now: () => number = Date.now,
 ): Promise<string> {
-  if (!signer) {
-    throw new EngineError(
-      "unauthenticated",
-      "Sign-in is not available here",
-      0,
-    );
-  }
-  const event = await signer({
+  const event = await sign({
     kind: 27235,
     created_at: Math.floor(now() / 1000),
     tags: [

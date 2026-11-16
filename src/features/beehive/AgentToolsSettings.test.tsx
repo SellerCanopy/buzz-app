@@ -6,6 +6,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentToolsSettings } from "./AgentToolsSettings";
 import type { Client } from "./engine/client";
+import { EngineError } from "./engine/transport";
+import { SECRET_ADVICE } from "./toolServer";
 import {
   AgentLoginStatusSchema,
   AgentToolsChangeSchema,
@@ -223,7 +225,7 @@ it("tells the person a save restarts the agent and its current work, before the 
     "a restarted agent restarts the work it is doing now",
   );
   expect(screen.getByRole("dialog")).toHaveTextContent(
-    "A tool server cannot hold a secret yet; secrets come in a later phase.",
+    `Leave keys and tokens out. ${SECRET_ADVICE}`,
   );
 });
 
@@ -352,7 +354,7 @@ it("refuses a command that holds a secret and says secrets come later", async ()
   );
   await user.click(dialog.getByRole("button", { name: "Save server" }));
   expect(
-    await dialog.findByText(/Secrets come in a later phase/, {
+    await dialog.findByText(/Add it under Secrets in Settings/, {
       selector: "[role=alert]",
     }),
   ).toBeVisible();
@@ -486,4 +488,43 @@ it("says so when the settings check fails, keeps the list, and checks again on r
   );
   await user.click(screen.getByRole("button", { name: "Check again" }));
   await vi.waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+});
+
+/** Two agents that each hold one hosted server, so the sign-in reads run twice. */
+const twoHosted = () => [
+  { agent: "builder", servers: [linear] },
+  { agent: "reviewer", servers: [{ ...linear, name: "notion" }] },
+];
+
+it("keeps reading the other servers' sign-ins after one read fails, and says what failed", async () => {
+  const client = show({ agents: twoHosted() });
+  client.getAgentLoginStatus.mockRejectedValueOnce(
+    new Error("the host is busy"),
+  );
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Could not check the tool server sign-ins. the host is busy",
+  );
+  // The second server's chip still renders beside the note.
+  expect(
+    await screen.findByText("Needs sign-in", { selector: ".beehive-chip" }),
+  ).toBeVisible();
+  expect(client.getAgentLoginStatus).toHaveBeenCalledTimes(2);
+  expect(client.getAgentLoginStatus).toHaveBeenLastCalledWith(
+    "reviewer",
+    "notion",
+    expect.any(AbortSignal),
+  );
+});
+
+it("stops reading sign-ins at the first failed_precondition, since no host would answer the rest", async () => {
+  const client = show({ agents: twoHosted() });
+  client.getAgentLoginStatus.mockRejectedValueOnce(
+    new EngineError("failed_precondition", "no supervisor is configured", 400),
+  );
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "no supervisor is configured",
+  );
+  await screen.findByRole("button", { name: "Check sign-ins again" });
+  expect(client.getAgentLoginStatus).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText("Needs sign-in")).toBeNull();
 });

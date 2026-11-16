@@ -143,6 +143,9 @@ function Artifact({
       .then((reply) => {
         if (abort.signal.aborted) return;
         const found = reply.versions.map((v) => v.version);
+        // Nothing to read would leave the loading state up for good.
+        if (found.length === 0)
+          setShown({ status: "error", message: "This file has no versions." });
         setVersions(found);
         // Reading again after a failure must not move a person off the version they chose.
         setPicked((current) =>

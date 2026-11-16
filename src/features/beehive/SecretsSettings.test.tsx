@@ -375,6 +375,66 @@ it("refuses a 65th secret for an agent, and says so before the grant", async () 
   );
 });
 
+/** An agent that holds `own` secrets of its own and is granted GH_TOKEN, with DOCS_TOKEN still free. */
+const holding = (own: number): Names => ({
+  team: [{ name: "GH_TOKEN" }, { name: "DOCS_TOKEN" }],
+  agents: Array.from({ length: own }, (_, at) => ({
+    agent: "builder",
+    secret: { name: `OWN_${at}` },
+  })),
+  grants: [{ agent: "builder", name: "GH_TOKEN" }],
+});
+
+it("refuses to give a team secret to an agent that holds 64, and sends nothing", async () => {
+  const client = show({ names: holding(63) });
+  await open("Give builder a team secret");
+  expect(
+    await inDialog().findByText("An agent may have at most 64 secrets."),
+  ).toBeVisible();
+  const give = inDialog().getByRole("button", { name: "Give secret" });
+  expect(give).toBeDisabled();
+  await userEvent.click(give);
+  expect(client.grantTeamSecret).not.toHaveBeenCalled();
+});
+
+it("gives a team secret to an agent that holds 63, which leaves room for exactly one", async () => {
+  const user = userEvent.setup();
+  const client = show({ names: holding(62) });
+  await open("Give builder a team secret");
+  expect(inDialog().queryByText(/at most 64 secrets/)).toBeNull();
+  await user.click(inDialog().getByRole("button", { name: "Give secret" }));
+  await vi.waitFor(() =>
+    expect(client.grantTeamSecret).toHaveBeenCalledWith(
+      "builder",
+      "DOCS_TOKEN",
+    ),
+  );
+});
+
+it("says a granted team secret is hidden by an own secret of the same name, and still offers Revoke", async () => {
+  show({
+    names: {
+      team: [{ name: "GH_TOKEN" }],
+      agents: [{ agent: "builder", secret: { name: "GH_TOKEN" } }],
+      grants: [{ agent: "builder", name: "GH_TOKEN" }],
+    },
+  });
+  const builder = await group("Secrets of builder");
+  expect(
+    within(builder).getByText(
+      "Team secret, hidden by its own secret of the same name.",
+    ),
+  ).toBeVisible();
+  expect(
+    within(builder).queryByText("Team secret granted to this agent."),
+  ).toBeNull();
+  expect(
+    within(builder).getByRole("button", {
+      name: "Revoke GH_TOKEN from builder",
+    }),
+  ).toBeEnabled();
+});
+
 it("gives an agent a team secret it does not hold", async () => {
   const user = userEvent.setup();
   const client = show({

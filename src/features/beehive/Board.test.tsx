@@ -34,6 +34,8 @@ type Setup = {
   cards?: Card[];
   archived?: Card[];
   runs?: Run[];
+  /** The read of the runs fails, so the board has cards and no runs. */
+  runsFail?: boolean;
   inbox?: InboxItem[];
   canRun?: boolean;
   archivedView?: boolean;
@@ -48,9 +50,13 @@ function board(setup: Setup = {}) {
         seq: 5n,
       }),
     ),
-    listRuns: vi.fn(async () =>
-      create(ListRunsResponseSchema, { runs: setup.runs ?? [], seq: 5n }),
-    ),
+    listRuns: vi.fn(async () => {
+      if (setup.runsFail) throw new Error("Beehive is not reachable");
+      return create(ListRunsResponseSchema, {
+        runs: setup.runs ?? [],
+        seq: 5n,
+      });
+    }),
     listWorkflows: vi.fn(async () =>
       create(ListWorkflowsResponseSchema, {
         workflows: [
@@ -482,6 +488,23 @@ it("sends nothing and says why when none of the selected cards can move", async 
   await user.click(
     screen.getByRole("checkbox", { name: "Select Running one" }),
   );
+  await user.click(screen.getByRole("button", { name: "Move to" }));
+  await user.click(await screen.findByRole("menuitem", { name: "rpi" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Cards that have started cannot move",
+  );
+  expect(b.calls.setCardWorkflow).not.toHaveBeenCalled();
+});
+
+it("sends no move when the runs could not be read, since no card is known to be unstarted", async () => {
+  const user = userEvent.setup();
+  const b = board({
+    cards: [card({ id: "a", title: "Idle one", state: "idle" })],
+    runsFail: true,
+  });
+  await loaded();
+  await user.click(screen.getByRole("button", { name: "Select" }));
+  await user.click(screen.getByRole("checkbox", { name: "Select Idle one" }));
   await user.click(screen.getByRole("button", { name: "Move to" }));
   await user.click(await screen.findByRole("menuitem", { name: "rpi" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
