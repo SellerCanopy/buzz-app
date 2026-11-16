@@ -5,11 +5,15 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   CardSchema,
   EventSchema,
+  RunSchema,
+  WorkflowSchema,
   type Card,
+  type Run,
+  type Workflow,
 } from "../gen/kiln/engine/v1/engine_pb";
 import type { Client } from "./client";
 import { EngineError } from "./transport";
-import { applyEvents, useLive } from "./useLive";
+import { applyEvents, touchesRuns, useLive } from "./useLive";
 
 const event = (type: string, cardId: string, payload: object = {}) =>
   create(EventSchema, {
@@ -84,14 +88,17 @@ afterEach(cleanup);
 
 type PollReply = { events: ReturnType<typeof event>[]; nextSeq: bigint };
 
-/** A client whose reads the test answers by hand, and that records what it was asked. */
-function liveClient() {
-  const lists: {
-    archived: boolean;
-    signal: AbortSignal | undefined;
-    resolve(cards: Card[], seq?: bigint): void;
-    reject(error: Error): void;
-  }[] = [];
+/** A client that answers every read from `data` at once, and parks its polls for the test. */
+function liveClient(
+  data: {
+    cards?: Card[];
+    archived?: Card[];
+    runs?: Run[];
+    workflows?: Workflow[];
+    seq?: bigint;
+    runsSeq?: bigint;
+  } = {},
+) {
   const polls: {
     after: bigint;
     signal: AbortSignal | undefined;
@@ -99,101 +106,195 @@ function liveClient() {
     reject(error: Error): void;
   }[] = [];
   const client = {
-    listCards: vi.fn(
-      (archived: boolean, signal?: AbortSignal) =>
-        new Promise((resolve, reject) => {
-          lists.push({
-            archived,
-            signal,
-            resolve: (cards, seq = 5n) => resolve({ cards, seq }),
-            reject,
-          });
-        }),
-    ),
+    listCards: vi.fn(async (archived: boolean) => ({
+      cards: (archived ? data.archived : data.cards) ?? [],
+      seq: data.seq ?? 5n,
+    })),
+    listRuns: vi.fn(async () => ({
+      runs: data.runs ?? [],
+      seq: data.runsSeq ?? 5n,
+    })),
+    listWorkflows: vi.fn(async () => ({ workflows: data.workflows ?? [] })),
     pollEvents: vi.fn(
       (after: bigint, _wait: number, signal?: AbortSignal) =>
         new Promise((resolve, reject) => {
           polls.push({ after, signal, resolve, reject });
         }),
     ),
-  } as unknown as Client;
-  return { client, lists, polls };
+  };
+  return { client: client as unknown as Client, calls: client, polls };
 }
 
-it("shows the cards of the latest read when an earlier one answers late", async () => {
-  const { client, lists } = liveClient();
-  const { result, rerender } = renderHook(
-    ({ archived }) => useLive(client, archived),
-    { initialProps: { archived: false } },
-  );
-  await waitFor(() => expect(lists).toHaveLength(1));
-  rerender({ archived: true });
-  await waitFor(() => expect(lists).toHaveLength(2));
-  expect(lists[0]?.signal?.aborted).toBe(true);
-  // The board's read answers after the person has moved on to the archive.
-  await act(async () => {
-    lists[0]?.resolve([create(CardSchema, { id: "board", title: "Board" })]);
+const ready = (live: ReturnType<typeof useLive>["live"]) =>
+  live.status === "ready" ? live : undefined;
+
+it("reads the board, the archive, the runs and the workflows once, and shows them", async () => {
+  const run = create(RunSchema, { id: "r1", cardId: "a" });
+  const workflow = create(WorkflowSchema, { name: "rpi" });
+  const { client, calls } = liveClient({
+    cards: [existing],
+    archived: [
+      create(CardSchema, { id: "z", title: "Shelved", archived: true }),
+    ],
+    runs: [run],
+    workflows: [workflow],
   });
+  const { result } = renderHook(() => useLive(client));
   expect(result.current.live.status).toBe("loading");
-  await act(async () => {
-    lists[1]?.resolve([create(CardSchema, { id: "old", title: "Archived" })]);
-  });
-  expect(result.current.live).toMatchObject({ status: "ready" });
-  expect(
-    result.current.live.status === "ready" && titles(result.current.live.cards),
-  ).toEqual(["Archived"]);
+  await waitFor(() => expect(result.current.live.status).toBe("ready"));
+  const live = ready(result.current.live);
+  expect(titles(live?.cards ?? [])).toEqual(["Old"]);
+  expect(titles(live?.archived ?? [])).toEqual(["Shelved"]);
+  expect(live?.runs).toEqual([run]);
+  expect(live?.workflows).toEqual([workflow]);
+  expect(calls.listCards).toHaveBeenCalledTimes(2);
+  expect(calls.listCards).toHaveBeenCalledWith(false, expect.anything());
+  expect(calls.listCards).toHaveBeenCalledWith(true, expect.anything());
+  expect(calls.listRuns).toHaveBeenCalledWith("", expect.anything());
+  expect(calls.listRuns).toHaveBeenCalledTimes(1);
 });
 
-it("follows the event log from the sequence number the read returned and stops on unmount", async () => {
-  const { client, lists, polls } = liveClient();
-  const { result, unmount } = renderHook(() => useLive(client, false));
-  await waitFor(() => expect(lists).toHaveLength(1));
-  await act(async () => {
-    lists[0]?.resolve([existing], 12n);
+it("follows the event log from the lowest sequence number the reads returned and stops on unmount", async () => {
+  const { client, polls } = liveClient({
+    cards: [existing],
+    seq: 14n,
+    runsSeq: 12n,
   });
+  const { result, unmount } = renderHook(() => useLive(client));
   await waitFor(() => expect(polls).toHaveLength(1));
   expect(polls[0]?.after).toBe(12n);
   await act(async () => {
     polls[0]?.resolve({
       events: [event("card.created", "b", { title: "New", state: "idle" })],
-      nextSeq: 13n,
+      nextSeq: 15n,
     });
   });
   await waitFor(() => expect(polls).toHaveLength(2));
-  expect(polls[1]?.after).toBe(13n);
-  expect(
-    result.current.live.status === "ready" && titles(result.current.live.cards),
-  ).toEqual(["New", "Old"]);
+  expect(polls[1]?.after).toBe(15n);
+  expect(titles(ready(result.current.live)?.cards ?? [])).toEqual([
+    "New",
+    "Old",
+  ]);
   unmount();
   expect(polls[1]?.signal?.aborted).toBe(true);
 });
 
-it("says the read failed and reads again on retry", async () => {
-  const { client, lists } = liveClient();
-  const { result } = renderHook(() => useLive(client, false));
-  await waitFor(() => expect(lists).toHaveLength(1));
+it("moves a card between the board and the archive as events arrive", async () => {
+  const { client, polls } = liveClient({ cards: [existing] });
+  const { result } = renderHook(() => useLive(client));
+  await waitFor(() => expect(polls).toHaveLength(1));
   await act(async () => {
-    lists[0]?.reject(new Error("Beehive is not reachable"));
+    polls[0]?.resolve({
+      events: [event("card.archived", "a", { title: "Old", state: "idle" })],
+      nextSeq: 6n,
+    });
   });
-  expect(result.current.live).toEqual({
-    status: "error",
-    message: "Beehive is not reachable",
+  expect(titles(ready(result.current.live)?.cards ?? [])).toEqual([]);
+  expect(titles(ready(result.current.live)?.archived ?? [])).toEqual(["Old"]);
+});
+
+it("keeps the cards when the runs or the workflows cannot be read", async () => {
+  const { client, calls } = liveClient({ cards: [existing] });
+  calls.listRuns.mockRejectedValue(new Error("no runs"));
+  calls.listWorkflows.mockRejectedValue(new Error("no workflows"));
+  const { result } = renderHook(() => useLive(client));
+  await waitFor(() => expect(result.current.live.status).toBe("ready"));
+  const live = ready(result.current.live);
+  expect(titles(live?.cards ?? [])).toEqual(["Old"]);
+  expect(live?.runs).toBeUndefined();
+  expect(live?.workflows).toBeUndefined();
+});
+
+it("recognises the events that change a run", () => {
+  for (const type of [
+    "run.started",
+    "run.ended",
+    "stage.routed",
+    "result.reported",
+    "round.ended",
+    "card.skipped",
+  ])
+    expect(touchesRuns([event(type, "a")]), type).toBe(true);
+  for (const type of ["card.created", "card.state", "activity.added"])
+    expect(touchesRuns([event(type, "a")]), type).toBe(false);
+});
+
+it("reads the runs again when a run event goes by, and collapses events that arrive during a read", async () => {
+  const first = create(RunSchema, { id: "r1", cardId: "a", state: "running" });
+  const { client, calls, polls } = liveClient({
+    cards: [existing],
+    runs: [first],
   });
+  const { result } = renderHook(() => useLive(client));
+  await waitFor(() => expect(polls).toHaveLength(1));
+  expect(calls.listRuns).toHaveBeenCalledTimes(1);
+  const ended = create(RunSchema, { id: "r1", cardId: "a", state: "ended" });
+  let release: () => void = () => {};
+  calls.listRuns.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve({ runs: [ended], seq: 7n });
+      }) as never,
+  );
+  await act(async () => {
+    polls[0]?.resolve({ events: [event("run.ended", "a")], nextSeq: 6n });
+  });
+  await waitFor(() => expect(polls).toHaveLength(2));
+  // Two more run events while the read is open make one more read, not two.
+  await act(async () => {
+    polls[1]?.resolve({
+      events: [event("run.started", "a"), event("stage.routed", "a")],
+      nextSeq: 7n,
+    });
+  });
+  await waitFor(() => expect(polls).toHaveLength(3));
+  expect(calls.listRuns).toHaveBeenCalledTimes(2);
+  await act(async () => release());
+  await waitFor(() => expect(calls.listRuns).toHaveBeenCalledTimes(3));
+  await waitFor(() =>
+    expect(ready(result.current.live)?.runs?.[0]?.state).toBe("running"),
+  );
+});
+
+it("reads everything again in place on refresh, and keeps the board with the failure when it fails", async () => {
+  const { client, calls } = liveClient({ cards: [existing] });
+  const { result } = renderHook(() => useLive(client));
+  await waitFor(() => expect(result.current.live.status).toBe("ready"));
+  calls.listCards.mockImplementationOnce(async () => ({
+    cards: [create(CardSchema, { id: "n", title: "Newer" })],
+    seq: 9n,
+  }));
+  await act(async () => result.current.refresh());
+  // The board stayed on screen: it never went back to loading.
+  expect(titles(ready(result.current.live)?.cards ?? [])).toEqual(["Newer"]);
+  calls.listCards.mockRejectedValueOnce(new Error("Beehive is not reachable"));
+  await act(async () => result.current.refresh());
+  expect(ready(result.current.live)).toMatchObject({
+    stale: "Beehive is not reachable",
+  });
+  expect(titles(ready(result.current.live)?.cards ?? [])).toEqual(["Newer"]);
+});
+
+it("says the read failed and reads again on retry", async () => {
+  const { client, calls } = liveClient();
+  calls.listCards.mockRejectedValueOnce(new Error("Beehive is not reachable"));
+  const { result } = renderHook(() => useLive(client));
+  await waitFor(() =>
+    expect(result.current.live).toEqual({
+      status: "error",
+      message: "Beehive is not reachable",
+    }),
+  );
   act(() => result.current.retry());
-  await waitFor(() => expect(lists).toHaveLength(2));
-  expect(result.current.live.status).toBe("loading");
+  await waitFor(() => expect(result.current.live.status).toBe("ready"));
 });
 
 it("pauses after repeated failures, logs the first, and recovers on a success", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
-    const { client, lists, polls } = liveClient();
-    const { result } = renderHook(() => useLive(client, false));
-    await vi.waitFor(() => expect(lists).toHaveLength(1));
-    await act(async () => {
-      lists[0]?.resolve([existing]);
-    });
+    const { client, polls } = liveClient({ cards: [existing] });
+    const { result } = renderHook(() => useLive(client));
     const down = new EngineError("unavailable", "down", 503);
     for (let failure = 1; failure <= 3; failure += 1) {
       await vi.waitFor(() => expect(polls).toHaveLength(failure));
@@ -201,9 +302,9 @@ it("pauses after repeated failures, logs the first, and recovers on a success", 
         polls[failure - 1]?.reject(down);
       });
       // Not yet paused for the first two blips.
-      expect(
-        result.current.live.status === "ready" && result.current.live.paused,
-      ).toBe(failure < 3 ? undefined : "Live updates paused: down");
+      expect(ready(result.current.live)?.paused).toBe(
+        failure < 3 ? undefined : "Live updates paused: down",
+      );
       await act(async () => {
         await vi.advanceTimersByTimeAsync(30_000);
       });
@@ -216,17 +317,12 @@ it("pauses after repeated failures, logs the first, and recovers on a success", 
       terminal: false,
     });
     // The cards stay while paused.
-    expect(
-      result.current.live.status === "ready" &&
-        titles(result.current.live.cards),
-    ).toEqual(["Old"]);
+    expect(titles(ready(result.current.live)?.cards ?? [])).toEqual(["Old"]);
     await vi.waitFor(() => expect(polls).toHaveLength(4));
     await act(async () => {
       polls[3]?.resolve({ events: [], nextSeq: 5n });
     });
-    expect(
-      result.current.live.status === "ready" && result.current.live.paused,
-    ).toBeUndefined();
+    expect(ready(result.current.live)?.paused).toBeUndefined();
   } finally {
     vi.useRealTimers();
     warn.mockRestore();
@@ -235,23 +331,20 @@ it("pauses after repeated failures, logs the first, and recovers on a success", 
 
 it("pauses at once when the engine refuses the caller, and stops polling", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  const { client, lists, polls } = liveClient();
-  const { result } = renderHook(() => useLive(client, false));
-  await waitFor(() => expect(lists).toHaveLength(1));
-  await act(async () => {
-    lists[0]?.resolve([existing]);
-  });
+  const { client, calls, polls } = liveClient({ cards: [existing] });
+  const { result } = renderHook(() => useLive(client));
   await waitFor(() => expect(polls).toHaveLength(1));
   await act(async () => {
     polls[0]?.reject(new EngineError("permission_denied", "no access", 403));
   });
-  expect(
-    result.current.live.status === "ready" && result.current.live.paused,
-  ).toBe("Live updates paused: no access");
+  expect(ready(result.current.live)?.paused).toBe(
+    "Live updates paused: no access",
+  );
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(polls).toHaveLength(1);
-  // Retry reads the list again and follows the log again.
+  // Retry reads the lists again and follows the log again.
   act(() => result.current.retry());
-  await waitFor(() => expect(lists).toHaveLength(2));
+  await waitFor(() => expect(calls.listCards).toHaveBeenCalledTimes(4));
+  await waitFor(() => expect(polls).toHaveLength(2));
   warn.mockRestore();
 });

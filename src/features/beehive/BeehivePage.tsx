@@ -70,7 +70,7 @@ export function BeehivePage({
   Thread: (props: EmbeddedThreadProps) => ReactNode;
 } & Pick<PageProps, "navigation"> & { navigator?: Navigation | undefined }) {
   const { canRun, isAdmin, me, problem, retry } = useAccess(client, level);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<"blank" | "issue">();
   const target = navigation?.target;
   const open = target ? visitedCard(target) : undefined;
   const live = !!navigator && !!navigation && !navigation.signal.aborted;
@@ -131,11 +131,16 @@ export function BeehivePage({
             }
             onLeaveCard={closeCard}
             onOpen={openCard}
-            onNew={() => setAdding(true)}
+            onNew={() => setAdding("blank")}
+            onNewFromIssue={() => setAdding("issue")}
           />
         </div>
         {adding && (
-          <NewCardDialog client={client} onClose={() => setAdding(false)} />
+          <NewCardDialog
+            client={client}
+            initial={adding}
+            onClose={() => setAdding(undefined)}
+          />
         )}
       </div>
     </Panel>

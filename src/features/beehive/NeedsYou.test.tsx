@@ -238,6 +238,7 @@ function views(initial: InboxItem[], options: { failFirst?: string } = {}) {
       onLeaveCard={vi.fn()}
       onOpen={vi.fn()}
       onNew={vi.fn()}
+      onNewFromIssue={vi.fn()}
     />,
   );
   return {

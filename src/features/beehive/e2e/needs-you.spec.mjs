@@ -52,7 +52,7 @@ test("a note shows on the card's Activity tab with who wrote it", async ({
   });
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await pane.getByRole("button", { name: /Needs a note/ }).click();
+  await pane.getByRole("button", { name: "Needs a note", exact: true }).click();
   await pane.getByRole("tab", { name: "Activity" }).click();
   const entry = pane
     .getByRole("list", { name: "Activity" })

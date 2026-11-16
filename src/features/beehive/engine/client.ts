@@ -66,6 +66,8 @@ import {
   SearchIssuesResponseSchema,
   SetAccessLevelRequestSchema,
   SetAutoModeRequestSchema,
+  SetCardWorkflowRequestSchema,
+  SetCardWorkflowResponseSchema,
   SetSettingRequestSchema,
   SettingSchema,
   StartStageRequestSchema,
@@ -141,6 +143,21 @@ export function createClient(session: Session) {
         CreateTaskRequestSchema,
         CardSchema,
         create(CreateTaskRequestSchema, input),
+        signal,
+      ),
+    /**
+     * Sort idle cards that have never run into a workflow, or into Backlog with an empty one.
+     * All or nothing: the engine refuses the whole batch when one card cannot move.
+     */
+    setCardWorkflow: (
+      moves: { cardId: string; workflow: string }[],
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SetCardWorkflow",
+        SetCardWorkflowRequestSchema,
+        SetCardWorkflowResponseSchema,
+        create(SetCardWorkflowRequestSchema, { moves }),
         signal,
       ),
     archiveCards: (cardIds: string[], signal?: AbortSignal) =>
@@ -228,8 +245,8 @@ export function createClient(session: Session) {
         create(RetryRunRequestSchema, { runId }),
         signal,
       ),
-    /** A card's runs, newest first. */
-    listRuns: (cardId: string, signal?: AbortSignal) =>
+    /** A card's runs, newest first. An empty `cardId` reads the runs of every card. */
+    listRuns: (cardId = "", signal?: AbortSignal) =>
       unary(
         "ListRuns",
         ListRunsRequestSchema,
@@ -438,9 +455,18 @@ export function createClient(session: Session) {
         create(ListReposRequestSchema, { host: "github.com" }),
         signal,
       ),
-    /** Open issues of one repo, narrowed by text. */
+    /**
+     * Issues of one or more repos, narrowed by text, label, assignee (a login, or `none`) and
+     * state. An empty state reads open and closed issues.
+     */
     searchIssues: (
-      input: { repo: string; text?: string },
+      input: {
+        repos: string[];
+        text?: string;
+        label?: string;
+        assignee?: string;
+        state?: "open" | "closed" | "";
+      },
       signal?: AbortSignal,
     ) =>
       unary(
@@ -450,9 +476,11 @@ export function createClient(session: Session) {
         create(SearchIssuesRequestSchema, {
           host: "github.com",
           filter: {
-            repos: [input.repo],
+            repos: input.repos,
             text: input.text ?? "",
-            state: "open",
+            label: input.label ?? "",
+            assignee: input.assignee ?? "",
+            state: input.state ?? "open",
           },
         }),
         signal,

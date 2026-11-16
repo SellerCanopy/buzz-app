@@ -26,7 +26,7 @@ test("Beehive signs in and shows an empty board", async ({ page }) => {
   await page.goto(url);
   const pane = page.getByRole("region", { name: "Beehive" });
   await expect(pane).toBeVisible();
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   await expect(pane.getByRole("alert")).toHaveCount(0);
   // The token trade came first, then the board read carried the token.
   const calls = await page.evaluate(() => window.beehiveFixture.calls);
@@ -50,9 +50,9 @@ test("a failed read shows its error beside the board and Retry recovers", async 
   await expect(
     pane.getByText("Beehive", { exact: true }).first(),
   ).toBeVisible();
-  await expect(pane.getByText("No cards yet")).toHaveCount(0);
+  await expect(pane.getByRole("region", { name: "Backlog" })).toHaveCount(0);
   await pane.getByRole("button", { name: "Retry" }).click();
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   await expect(pane.getByRole("alert")).toHaveCount(0);
 });
 
@@ -66,7 +66,9 @@ test("the empty board is readable in dark appearance and with large text", async
     document.documentElement.style.fontSize = "24px";
   });
   const pane = page.getByRole("region", { name: "Beehive" });
-  const empty = pane.getByText("No cards yet");
+  const empty = pane
+    .getByRole("region", { name: "Backlog" })
+    .getByText("No cards");
   await expect(empty).toBeVisible();
   const box = await empty.boundingBox();
   expect(box.x).toBeGreaterThanOrEqual(0);
@@ -87,24 +89,60 @@ test("a person adds a card and sees it on the board, then archives it and sees i
   const errors = watchPageErrors(page);
   await page.goto(url);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
 
   await addCard(pane, "Fix the build");
   // The new card arrives through the event log, not through the form.
   const backlog = pane.getByRole("region", { name: "Backlog" });
   await expect(backlog.getByText("Fix the build")).toBeVisible();
-  await expect(pane.getByText("No cards yet")).toHaveCount(0);
+  await expect(backlog.getByText("No cards")).toHaveCount(0);
 
-  await pane.getByRole("button", { name: /Fix the build/ }).click();
+  await pane
+    .getByRole("button", { name: "Fix the build", exact: true })
+    .click();
   await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
   await pane.getByRole("button", { name: "Archive" }).click();
   await expect(pane.getByRole("button", { name: "Restore" })).toBeVisible();
   await pane.getByRole("button", { name: "Close card" }).click();
 
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(backlog.getByText("No cards")).toBeVisible();
   await expect(pane.getByText("Fix the build")).toHaveCount(0);
-  await pane.getByRole("tab", { name: "Archived" }).click();
+  await pane.getByRole("tab", { name: /^Archived/ }).click();
   await expect(pane.getByText("Fix the build")).toBeVisible();
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("the board narrows cards by search and selects them in a mode of its own", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Beehive" });
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
+  await page.evaluate(() => {
+    window.beehiveFixture.externalCreate("Fix the build");
+    window.beehiveFixture.externalCreate("Write the docs");
+  });
+  const backlog = pane.getByRole("region", { name: "Backlog" });
+  await expect(backlog.getByText("Write the docs")).toBeVisible();
+  await expect(backlog.getByText("Fix the build")).toBeVisible();
+
+  await pane.getByRole("searchbox", { name: "Search cards" }).fill("docs");
+  await expect(backlog.getByText("Fix the build")).toHaveCount(0);
+  await expect(backlog.getByText("Write the docs")).toBeVisible();
+  await pane.getByRole("searchbox", { name: "Search cards" }).fill("");
+
+  const select = pane.getByRole("button", { name: "Select", exact: true });
+  await select.click();
+  await expect(select).toHaveAttribute("aria-pressed", "true");
+  const bar = pane.getByRole("toolbar", { name: "Selected cards" });
+  await expect(bar.getByText("0 selected")).toBeVisible();
+  await backlog.getByRole("checkbox", { name: "Select Fix the build" }).check();
+  await expect(bar.getByText("1 selected")).toBeVisible();
+  await bar.getByRole("button", { name: "Clear" }).click();
+  await expect(bar.getByText("0 selected")).toBeVisible();
+  await select.click();
+  await expect(bar).toHaveCount(0);
   expect(errors.unexplained()).toEqual([]);
 });
 
@@ -114,7 +152,9 @@ test("a card is a visit: Back returns to the board and Forward to the card", asy
   await page.goto(url);
   const pane = page.getByRole("region", { name: "Beehive" });
   await addCard(pane, "Write the docs");
-  await pane.getByRole("button", { name: /Write the docs/ }).click();
+  await pane
+    .getByRole("button", { name: "Write the docs", exact: true })
+    .click();
   await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
   await page.getByRole("button", { name: "Back" }).click();
   await expect(pane.getByRole("tab", { name: "Details" })).toHaveCount(0);
@@ -135,7 +175,7 @@ test("a person who can only read sees the board without a way to add cards", asy
   });
   await page.goto(url);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   await expect(pane.getByRole("button", { name: "New card" })).toHaveCount(0);
 });
 
@@ -148,13 +188,13 @@ test("a person who can only read has no Start run, no approvals and no Access li
   });
   await page.goto(url);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   await page.evaluate(() =>
     window.beehiveFixture.externalCreate("Ship the board", "demo"),
   );
   await pane
     .getByRole("region", { name: "To do" })
-    .getByRole("button", { name: /Ship the board/ })
+    .getByRole("button", { name: "Ship the board", exact: true })
     .click();
   await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
   await expect(pane.getByRole("button", { name: "Start run" })).toHaveCount(0);
@@ -215,7 +255,7 @@ test("a card another person adds shows up on the open board without a new read",
 }) => {
   await page.goto(url);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   const before = await page.evaluate(() => window.beehiveFixture.calls.length);
   // Another person's write goes straight to the engine, not through this page.
   await page.evaluate(() =>
@@ -314,12 +354,14 @@ test("an admin sets the update channel, then starts a run on a card with a workf
   });
   await page.goto(url);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   await page.evaluate(() =>
     window.beehiveFixture.externalCreate("Ship the board", "demo"),
   );
   const todo = pane.getByRole("region", { name: "To do" });
-  await todo.getByRole("button", { name: /Ship the board/ }).click();
+  await todo
+    .getByRole("button", { name: "Ship the board", exact: true })
+    .click();
 
   // With no update channel the engine refuses, and the page shows its words.
   await pane.getByRole("button", { name: "Start run" }).click();
@@ -344,7 +386,9 @@ test("an admin sets the update channel, then starts a run on a card with a workf
   await expect(pane.getByRole("alert")).toHaveCount(0);
 
   await pane.getByRole("button", { name: "Board" }).click();
-  await todo.getByRole("button", { name: /Ship the board/ }).click();
+  await todo
+    .getByRole("button", { name: "Ship the board", exact: true })
+    .click();
   await pane.getByRole("button", { name: "Start run" }).click();
   // A card with a stage thread opens on its Live tab.
   await expect(
@@ -376,7 +420,7 @@ test("a card whose next stage is held shows its steps, and Resume lets it carry 
   );
   await pane
     .getByRole("region", { name: "To do" })
-    .getByRole("button", { name: /Ship the board/ })
+    .getByRole("button", { name: "Ship the board", exact: true })
     .click();
   await pane.getByRole("button", { name: "Start run" }).click();
   await pane.getByRole("tab", { name: "Steps" }).click();
@@ -391,8 +435,8 @@ test("a card whose next stage is held shows its steps, and Resume lets it carry 
     created.id,
   );
   await pane
-    .getByRole("region", { name: "Waiting" })
-    .getByRole("button", { name: /Ship the board/ })
+    .getByRole("region", { name: "In progress" })
+    .getByRole("button", { name: "Ship the board", exact: true })
     .click();
   await pane.getByRole("tab", { name: "Steps" }).click();
   const items = stages.getByRole("listitem");
@@ -477,7 +521,7 @@ async function cardWithTwoThreads(page, title = "Ship the board") {
   );
   await pane
     .getByRole("region", { name: "To do" })
-    .getByRole("button", { name: title })
+    .getByRole("button", { name: title, exact: true })
     .click();
   await pane.getByRole("button", { name: "Start run" }).click();
   await pane.getByRole("button", { name: "Close card" }).click();
@@ -486,8 +530,8 @@ async function cardWithTwoThreads(page, title = "Ship the board") {
     created.id,
   );
   await pane
-    .getByRole("region", { name: "Waiting" })
-    .getByRole("button", { name: title })
+    .getByRole("region", { name: "In progress" })
+    .getByRole("button", { name: title, exact: true })
     .click();
   return pane;
 }
@@ -587,7 +631,7 @@ async function openNeedsYou(page, role) {
     }, role);
   await page.goto(url);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   return pane;
 }
 
@@ -596,7 +640,9 @@ test("an approval that opens shows on the Needs you tab without a new read, and 
 }) => {
   const errors = watchPageErrors(page);
   const pane = await openNeedsYou(page);
-  const tab = pane.getByRole("button", { name: /Needs you/ });
+  const tab = pane
+    .getByRole("navigation", { name: "Beehive views" })
+    .getByRole("button", { name: /Needs you/ });
   await expect(tab).not.toContainText("1");
 
   await page.evaluate(() =>
@@ -626,7 +672,9 @@ test("an approval that opens shows on the Needs you tab without a new read, and 
 
   // The answer is on the card's Activity tab with who gave it and why.
   await pane.getByRole("button", { name: "Board" }).click();
-  await pane.getByRole("button", { name: /Ship the board/ }).click();
+  await pane
+    .getByRole("button", { name: "Ship the board", exact: true })
+    .click();
   await pane.getByRole("tab", { name: "Activity" }).click();
   const entry = pane
     .getByRole("list", { name: "Activity" })
@@ -645,7 +693,10 @@ test("Approve answers at once, and Reject is not a history entry", async ({
   await page.evaluate(() =>
     window.beehiveFixture.externalGate("Cut the release"),
   );
-  await pane.getByRole("button", { name: /Needs you/ }).click();
+  await pane
+    .getByRole("navigation", { name: "Beehive views" })
+    .getByRole("button", { name: /Needs you/ })
+    .click();
   const gate = pane.getByRole("region", { name: /Approval: Cut the release/ });
 
   // Opening and cancelling the dialog leaves the history where it was.
@@ -666,7 +717,10 @@ test("a person who can only read sees what needs people but cannot answer", asyn
 }) => {
   const pane = await openNeedsYou(page, "read");
   await page.evaluate(() => window.beehiveFixture.externalGate("Read only"));
-  await pane.getByRole("button", { name: /Needs you/ }).click();
+  await pane
+    .getByRole("navigation", { name: "Beehive views" })
+    .getByRole("button", { name: /Needs you/ })
+    .click();
   const gate = pane.getByRole("region", { name: /Approval: Read only/ });
   await expect(gate.getByRole("button", { name: "Open card" })).toBeVisible();
   await expect(gate.getByRole("button", { name: "Approve" })).toHaveCount(0);
@@ -677,7 +731,10 @@ test("Needs you shows its empty state before anything waits", async ({
   page,
 }) => {
   const pane = await openNeedsYou(page);
-  await pane.getByRole("button", { name: /Needs you/ }).click();
+  await pane
+    .getByRole("navigation", { name: "Beehive views" })
+    .getByRole("button", { name: /Needs you/ })
+    .click();
   await expect(pane.getByText("Nothing needs you")).toBeVisible();
 });
 
@@ -723,7 +780,10 @@ test("Needs you and Usage stay inside a narrow window in dark appearance with la
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(420);
   };
-  await pane.getByRole("button", { name: /Needs you/ }).click();
+  await pane
+    .getByRole("navigation", { name: "Beehive views" })
+    .getByRole("button", { name: /Needs you/ })
+    .click();
   const gate = pane.getByRole("region", { name: /Approval:/ });
   await inside(gate);
   await inside(gate.getByRole("button", { name: "Approve" }));

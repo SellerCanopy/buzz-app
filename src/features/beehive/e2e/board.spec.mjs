@@ -74,17 +74,17 @@ test("the page signs in with the test key and shows the empty board", async ({
 }) => {
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   await expect(pane.getByRole("alert")).toHaveCount(0);
 });
 
 test("the page keeps working after the engine restarts", async ({ page }) => {
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   await hive.restart();
   await page.reload();
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
 });
 
 test("a member who can only read cannot add a card, in the page or in the engine", async ({
@@ -92,7 +92,7 @@ test("a member who can only read cannot add a card, in the page or in the engine
 }) => {
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await expect(pane.getByText("No cards yet")).toBeVisible();
+  await expect(pane.getByRole("region", { name: "Backlog" })).toBeVisible();
   await expect(pane.getByRole("button", { name: "New card" })).toHaveCount(0);
   await expect(
     nodeClient().createCard({ title: "Not allowed" }),

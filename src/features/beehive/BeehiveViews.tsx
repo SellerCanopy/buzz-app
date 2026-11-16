@@ -14,11 +14,10 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 import { SidebarNavigation } from "../../shared/design-system/ui/SidebarNavigation";
-import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
 import { useInbox } from "./engine/useInbox";
-import { CardList } from "./CardList";
+import { Board } from "./Board";
 import { IntakePage } from "./IntakePage";
 import { NeedsYouPage } from "./NeedsYouPage";
 import { SettingsPage } from "./SettingsPage";
@@ -71,6 +70,7 @@ export function BeehiveViews({
   onLeaveCard,
   onOpen,
   onNew,
+  onNewFromIssue,
 }: {
   client: Client;
   relay: RelayData;
@@ -86,15 +86,18 @@ export function BeehiveViews({
   onLeaveCard(): void;
   onOpen(card: string): void;
   onNew(): void;
+  /** Opens the new card form on its From an issue tab. */
+  onNewFromIssue(): void;
 }) {
   const [view, setView] = useState<View>("board");
   const [archived, setArchived] = useState(false);
   const { inbox, retry, refresh } = useInbox(client);
   const open = card !== undefined;
-  const waiting =
+  const openItems =
     inbox.status === "ready"
-      ? inbox.items.filter((item) => !item.resolvedAt).length
-      : 0;
+      ? inbox.items.filter((item) => !item.resolvedAt)
+      : [];
+  const waiting = openItems.length;
   // A count of zero must mean nothing waits, never that the list could not be read.
   const unsure =
     inbox.status === "error" ||
@@ -163,27 +166,17 @@ export function BeehiveViews({
         {notice}
         <div className="beehive-view" hidden={open}>
           {view === "board" && (
-            <>
-              <Header title="Board" />
-              <div className="beehive-filters">
-                <Tabs
-                  variant="segmented"
-                  size="sm"
-                  label="Archive"
-                  value={archived ? "archived" : null}
-                  items={[{ value: "archived", label: "Archived" }]}
-                  onValueChange={() => setArchived(true)}
-                  onReselect={() => setArchived(false)}
-                />
-              </div>
-              <CardList
-                client={client}
-                archived={archived}
-                canRun={canRun}
-                onOpen={onOpen}
-                onNew={onNew}
-              />
-            </>
+            <Board
+              client={client}
+              canRun={canRun}
+              archived={archived}
+              onArchived={setArchived}
+              waiting={openItems}
+              onOpen={onOpen}
+              onNew={onNew}
+              onNewFromIssue={onNewFromIssue}
+              onOpenNeedsYou={() => choose("needs-you")}
+            />
           )}
           {view === "needs-you" && (
             <>

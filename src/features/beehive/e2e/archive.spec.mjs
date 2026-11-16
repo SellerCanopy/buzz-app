@@ -34,8 +34,8 @@ test("archiving a card takes it off the board, the archive lists it, and Restore
   await pane.getByRole("button", { name: "Close card" }).click();
   await expect(pane.getByText("Old idea")).toHaveCount(0);
 
-  await pane.getByRole("tab", { name: "Archived" }).click();
-  const archived = pane.getByRole("button", { name: /Old idea/ });
+  await pane.getByRole("tab", { name: /^Archived/ }).click();
+  const archived = pane.getByRole("button", { name: "Old idea", exact: true });
   await expect(archived).toBeVisible();
   await archived.click();
   await pane.getByRole("button", { name: "Restore" }).click();
