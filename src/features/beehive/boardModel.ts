@@ -103,6 +103,15 @@ export type Chip = {
 /** The most chips a tile shows; the newest stages win. */
 const MAX_CHIPS = 4;
 
+/** How a stage the run reached stands. */
+function statusIn(run: Run, stage: string): Chip["status"] {
+  const step = lastStep(run, stage);
+  if (step?.skipped || step?.result === "passed") return "done";
+  if (step?.result) return "failed";
+  if (run.state !== "ended" && stage === run.stageId) return "running";
+  return "idle";
+}
+
 /**
  * The stages a tile lists: those the card's run reached, then the one the workflow lists after
  * the last of them. A card that has not run lists the workflow's first two stages.
@@ -115,15 +124,10 @@ export function chipsOf(
   if (!run) {
     return stages.slice(0, 2).map((stage) => ({ stage, status: "idle" }));
   }
-  const chips: Chip[] = reached(run).map((stage) => {
-    const step = lastStep(run, stage);
-    if (step?.skipped || step?.result === "passed")
-      return { stage, status: "done" };
-    if (step?.result) return { stage, status: "failed" };
-    if (run.state !== "ended" && stage === run.stageId)
-      return { stage, status: "running" };
-    return { stage, status: "idle" };
-  });
+  const chips: Chip[] = reached(run).map((stage) => ({
+    stage,
+    status: statusIn(run, stage),
+  }));
   const last = chips.at(-1);
   const after = last ? stages.indexOf(last.stage) + 1 : 0;
   const next = stages[after];
@@ -234,4 +238,33 @@ export function passes(
     if (named !== filters.workflow) return false;
   }
   return true;
+}
+
+/** Every stage of the workflow, in order, with how the card's run stands in it. */
+export function stripOf(
+  run: Run | undefined,
+  workflow: Workflow | undefined,
+): Chip[] {
+  const reachedStages = run ? new Set(reached(run)) : new Set<string>();
+  return (workflow?.stages ?? []).map((stage) => ({
+    stage: stage.id,
+    status:
+      run && reachedStages.has(stage.id) ? statusIn(run, stage.id) : "idle",
+  }));
+}
+
+/**
+ * The stage a card is at, for the caption under the strip: the stage the run is in, or the last
+ * one it reached. Zero based, or undefined when the card has not run.
+ */
+export function currentStage(
+  run: Run | undefined,
+  strip: Chip[],
+): number | undefined {
+  if (!run) return undefined;
+  const named = strip.findIndex((chip) => chip.stage === run.stageId);
+  if (named >= 0) return named;
+  const last = reached(run).at(-1);
+  const index = strip.findIndex((chip) => chip.stage === last);
+  return index >= 0 ? index : undefined;
 }

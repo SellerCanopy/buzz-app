@@ -1,32 +1,11 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Field } from "../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { errorMessage } from "./engine/transport";
 import type { InboxItem } from "./gen/kiln/engine/v1/engine_pb";
-import { artifactsOf, CHOICES, inboxKindLabel } from "./labels";
-
-/** The answers that carry words: a reason for the agent, or a reply to it. */
-const WITH_TEXT: Record<
-  string,
-  { title: string; label: string; help: string }
-> = {
-  reject: {
-    title: "Reject",
-    label: "Reason",
-    help: "The agent receives this reason with the card when the stage runs again.",
-  },
-  reply: {
-    title: "Reply",
-    label: "Reply",
-    help: "The agent receives this reply in the stage's thread.",
-  },
-};
-
-const FORM = "beehive-answer";
+import { TextDialog, WITH_TEXT } from "./AnswerDialog";
+import { artifactsOf, CHOICES, inboxKindLabel, subjectOf } from "./labels";
 
 /**
  * One thing that waits for a person: the card it belongs to, what it waits for and a button for
@@ -70,7 +49,7 @@ export function GateCard({
   };
 
   const choose = (choice: string) => {
-    if (choice in WITH_TEXT) setAsking(choice);
+    if (WITH_TEXT.has(choice)) setAsking(choice);
     else if (choice === "stop") setConfirmStop(true);
     else void send(choice);
   };
@@ -113,6 +92,7 @@ export function GateCard({
       {asking && (
         <TextDialog
           kind={asking}
+          subject={subjectOf(item.detailJson)}
           pending={pending}
           error={error}
           onClose={() => {
@@ -165,74 +145,5 @@ export function GateCard({
         </AlertDialog>
       )}
     </section>
-  );
-}
-
-/** Asks for the words an answer carries. The submit button waits for some. */
-function TextDialog({
-  kind,
-  pending,
-  error,
-  onClose,
-  onSubmit,
-}: {
-  kind: string;
-  pending: boolean;
-  error: string | undefined;
-  onClose(): void;
-  onSubmit(text: string): Promise<void>;
-}) {
-  const copy = WITH_TEXT[kind];
-  const field = useRef<HTMLTextAreaElement>(null);
-  const [text, setText] = useState("");
-  const ready = text.trim().length > 0;
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (ready && !pending) void onSubmit(text.trim());
-  };
-  if (!copy) return null;
-  return (
-    <Dialog
-      open
-      size="compact"
-      title={copy.title}
-      initialFocus={field}
-      dismissOnOutsideClick={false}
-      preventClose={pending}
-      onOpenChange={(open) => !open && onClose()}
-      actions={
-        <>
-          <Button disabled={pending} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            form={FORM}
-            variant="prominent"
-            loading={pending}
-            disabled={!ready || pending}
-          >
-            {copy.title}
-          </Button>
-        </>
-      }
-    >
-      <form id={FORM} onSubmit={submit} noValidate className="beehive-form">
-        <Field label={copy.label} description={copy.help}>
-          <Textarea
-            ref={field}
-            rows={4}
-            value={text}
-            disabled={pending}
-            onChange={(event) => setText(event.target.value)}
-          />
-        </Field>
-        {error && (
-          <p role="alert" className="text-body text-danger">
-            {error}
-          </p>
-        )}
-      </form>
-    </Dialog>
   );
 }

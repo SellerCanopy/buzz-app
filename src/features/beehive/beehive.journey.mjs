@@ -103,7 +103,7 @@ test("a person adds a card and sees it on the board, then archives it and sees i
   await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
   await pane.getByRole("button", { name: "Archive" }).click();
   await expect(pane.getByRole("button", { name: "Restore" })).toBeVisible();
-  await pane.getByRole("button", { name: "Close card" }).click();
+  await pane.getByRole("button", { name: "Back to Board" }).click();
 
   await expect(backlog.getByText("No cards")).toBeVisible();
   await expect(pane.getByText("Fix the build")).toHaveCount(0);
@@ -156,13 +156,13 @@ test("a card is a visit: Back returns to the board and Forward to the card", asy
     .getByRole("button", { name: "Write the docs", exact: true })
     .click();
   await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(pane.getByRole("tab", { name: "Details" })).toHaveCount(0);
   await expect(pane.getByText("Write the docs")).toBeVisible();
   await page.getByRole("button", { name: "Forward" }).click();
   await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
   // Close retires the visit: Back does not stop on the card again.
-  await pane.getByRole("button", { name: "Close card" }).click();
+  await pane.getByRole("button", { name: "Back to Board" }).click();
   await expect(pane.getByRole("tab", { name: "Details" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Forward" })).toBeDisabled();
 });
@@ -199,7 +199,7 @@ test("a person who can only read has no Start run, no approvals and no Access li
   await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
   await expect(pane.getByRole("button", { name: "Start run" })).toHaveCount(0);
   await expect(pane.getByRole("switch", { name: "Auto mode" })).toHaveCount(0);
-  await pane.getByRole("button", { name: "Close card" }).click();
+  await pane.getByRole("button", { name: "Back to Board" }).click();
 
   await pane.getByRole("button", { name: "Settings" }).click();
   await expect(
@@ -368,7 +368,7 @@ test("an admin sets the update channel, then starts a run on a card with a workf
   await expect(pane.getByRole("alert")).toHaveText(
     "choose an update channel in Beehive settings before starting a run",
   );
-  await pane.getByRole("button", { name: "Close card" }).click();
+  await pane.getByRole("button", { name: "Back to Board" }).click();
 
   await pane.getByRole("button", { name: "Settings" }).click();
   const channel = pane.getByRole("combobox", { name: "Update channel" });
@@ -424,12 +424,12 @@ test("a card whose next stage is held shows its steps, and Resume lets it carry 
     .click();
   await pane.getByRole("button", { name: "Start run" }).click();
   await pane.getByRole("tab", { name: "Steps" }).click();
-  const stages = pane.getByRole("list", { name: "Stages of the run" });
+  const stages = pane.getByRole("list", { name: "Steps of the run" });
   await expect(stages.getByRole("listitem")).toHaveCount(1);
   await expect(pane.getByRole("button", { name: "Resume" })).toHaveCount(0);
 
   // The first stage's agent reports. The workflow holds the card before approve.
-  await pane.getByRole("button", { name: "Close card" }).click();
+  await pane.getByRole("button", { name: "Back to Board" }).click();
   await page.evaluate(
     (id) => window.beehiveFixture.externalPass(id),
     created.id,
@@ -524,7 +524,7 @@ async function cardWithTwoThreads(page, title = "Ship the board") {
     .getByRole("button", { name: title, exact: true })
     .click();
   await pane.getByRole("button", { name: "Start run" }).click();
-  await pane.getByRole("button", { name: "Close card" }).click();
+  await pane.getByRole("button", { name: "Back to Board" }).click();
   await page.evaluate(
     (id) => window.beehiveFixture.externalPass(id),
     created.id,
@@ -581,14 +581,14 @@ test("a tab is a visit: Back returns to the tab a person left", async ({
   await selected("Steps");
   await pane.getByRole("tab", { name: "Files" }).click();
   await selected("Files");
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await selected("Steps");
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await selected("Live");
   await page.getByRole("button", { name: "Forward" }).click();
   await selected("Steps");
   // Close retires the card's tab visits along with the card.
-  await pane.getByRole("button", { name: "Close card" }).click();
+  await pane.getByRole("button", { name: "Back to Board" }).click();
   await expect(pane.getByRole("tab", { name: "Steps" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Forward" })).toBeDisabled();
 });
@@ -612,7 +612,9 @@ test("the Live tab stays inside a narrow window in dark appearance with large te
   };
   const title = pane.getByRole("heading", { name: longTitle });
   const titleBox = await inside(title);
-  const close = await inside(pane.getByRole("button", { name: "Close card" }));
+  const close = await inside(
+    pane.getByRole("button", { name: "Back to Board" }),
+  );
   // The actions wrap below the title rather than over it.
   const overlaps =
     titleBox.x < close.x + close.width &&
@@ -706,7 +708,9 @@ test("Approve answers at once, and Reject is not a history entry", async ({
     .getByRole("button", { name: "Cancel" })
     .click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Back" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Back", exact: true }),
+  ).toBeDisabled();
 
   await gate.getByRole("button", { name: "Approve" }).click();
   await expect(pane.getByText("Nothing needs you")).toBeVisible();

@@ -102,3 +102,12 @@ export function artifactsOf(detailJson: string): string[] {
     return [];
   }
 }
+
+/** The one artifact an approval is about, as `plan`, or empty when it lists none or several. */
+export function subjectOf(detailJson: string): string {
+  const listed = artifactsOf(detailJson);
+  const [only] = listed;
+  return listed.length === 1 && only
+    ? only.replace(/ \(version \d+\)$/, "")
+    : "";
+}

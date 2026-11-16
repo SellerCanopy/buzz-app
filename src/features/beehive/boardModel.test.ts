@@ -5,6 +5,7 @@ import {
   ALL,
   NO_FILTERS,
   chipsOf,
+  currentStage,
   laneOf,
   latestRuns,
   matchesText,
@@ -12,6 +13,7 @@ import {
   progressOf,
   repoOf,
   statusOf,
+  stripOf,
   waitingByCard,
 } from "./boardModel";
 import {
@@ -213,4 +215,45 @@ it("lets a card through only when it passes every filter, except the one skipped
     true,
   );
   expect(NO_FILTERS.state).toBe(ALL);
+});
+
+it("lists every stage of the workflow, with how the run stands in each", () => {
+  const run = create(RunSchema, {
+    state: "waiting",
+    stageId: "plan_review",
+    steps: [
+      step("plan", { result: "passed", routedTo: "plan_review" }),
+      step("plan_review"),
+    ],
+  });
+  const strip = stripOf(run, workflow);
+  expect(strip).toEqual([
+    { stage: "plan", status: "done" },
+    { stage: "plan_review", status: "running" },
+    { stage: "implement", status: "idle" },
+    { stage: "code_review", status: "idle" },
+  ]);
+  expect(currentStage(run, strip)).toBe(1);
+  expect(stripOf(undefined, workflow).map((c) => c.status)).toEqual([
+    "idle",
+    "idle",
+    "idle",
+    "idle",
+  ]);
+  expect(stripOf(run, undefined)).toEqual([]);
+  expect(currentStage(undefined, strip)).toBeUndefined();
+});
+
+it("names the last stage reached when the run has ended", () => {
+  const run = create(RunSchema, {
+    state: "ended",
+    stageId: "",
+    steps: [
+      step("plan", { result: "passed" }),
+      step("plan_review", { result: "failed" }),
+    ],
+  });
+  const strip = stripOf(run, workflow);
+  expect(strip[1]?.status).toBe("failed");
+  expect(currentStage(run, strip)).toBe(1);
 });

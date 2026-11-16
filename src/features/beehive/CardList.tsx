@@ -22,6 +22,7 @@ import type {
   Run,
   Workflow,
 } from "./gen/kiln/engine/v1/engine_pb";
+import { canRetry, canStart } from "./cardActions";
 import { MoveMenu } from "./MoveMenu";
 
 /** What a person can do to a card from the board, each as one call to the engine. */
@@ -45,21 +46,6 @@ type Context = {
   actions: TileActions;
   onOpen(card: string): void;
 };
-
-/** A card with a workflow and no run in flight can start one. */
-function canStart(card: Card): boolean {
-  return !card.archived && !!card.workflow && card.state === "idle";
-}
-
-/** A card whose run failed or was stopped can start again from the stage it reached. */
-function canRetry(card: Card, run: Run | undefined): run is Run {
-  return (
-    !!run &&
-    !card.archived &&
-    run.state === "ended" &&
-    (card.state === "failed" || card.state === "stopped")
-  );
-}
 
 /**
  * The four lanes of the board. A lane with no cards says so, and a lane folds away to its

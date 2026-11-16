@@ -114,20 +114,24 @@ export function BeehivePage({
               ) : undefined
             }
             card={
-              open !== undefined ? (
-                <CardPage
-                  key={open}
-                  client={client}
-                  relay={relay}
-                  navigator={navigator}
-                  Thread={Thread}
-                  id={open}
-                  tab={target ? visitedTab(target) : undefined}
-                  canRun={canRun}
-                  onTab={openTab}
-                  onClose={closeCard}
-                />
-              ) : undefined
+              open !== undefined
+                ? ({ waiting, refresh }) => (
+                    <CardPage
+                      key={open}
+                      client={client}
+                      relay={relay}
+                      navigator={navigator}
+                      Thread={Thread}
+                      id={open}
+                      tab={target ? visitedTab(target) : undefined}
+                      canRun={canRun}
+                      waiting={waiting}
+                      onAnswered={refresh}
+                      onTab={openTab}
+                      onClose={closeCard}
+                    />
+                  )
+                : undefined
             }
             onLeaveCard={closeCard}
             onOpen={openCard}

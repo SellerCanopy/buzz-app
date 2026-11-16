@@ -30,6 +30,7 @@ import {
   GetSettingsResponseSchema,
   GetUsageResponseSchema,
   GetStatusResponseSchema,
+  InboxItemSchema,
   RunSchema,
   RunStepSchema,
   SettingSchema,
@@ -143,6 +144,12 @@ function engine(
     ),
     retryRun: vi.fn(async () =>
       create(RunSchema, { id: "run-2", cardId: ID, state: "running" }),
+    ),
+    pauseCard: vi.fn(async () => card()),
+    resetCard: vi.fn(async () => card()),
+    removeCard: vi.fn(async () => ({})),
+    answerInbox: vi.fn(async (id: string) =>
+      create(InboxItemSchema, { id, state: "resolved" }),
     ),
     getCommunitySettings: vi.fn(async () =>
       create(GetSettingsResponseSchema, {
@@ -640,7 +647,7 @@ it("shows the tab a visit names", async () => {
     route: { version: 1, params: { card: ID, tab: "steps" } },
   } as OpenTarget);
   expect(
-    await screen.findByRole("list", { name: "Stages of the run" }),
+    await screen.findByRole("list", { name: "Steps of the run" }),
   ).toBeVisible();
 });
 
@@ -667,7 +674,7 @@ it("archives the open card and restores it", async () => {
 it("Close retires the card's visits and falls back to the board", async () => {
   const nav = page(engine().client, cardView);
   await userEvent.click(
-    await screen.findByRole("button", { name: "Close card" }),
+    await screen.findByRole("button", { name: "Back to Board" }),
   );
   expect(nav.dismiss).toHaveBeenCalledTimes(1);
   const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
@@ -778,7 +785,14 @@ it("merges the card's pull request and reads the card again", async () => {
   const e = engine();
   e.calls.getCard.mockResolvedValue(card({ pullRequest: openPull() }));
   page(e.client, cardView);
-  await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Merge pull request" }),
+  );
+  // The merge waits for the person to confirm it.
+  expect(e.calls.mergeCard).not.toHaveBeenCalled();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Merge the pull request" }),
+  );
   await vi.waitFor(() => expect(e.calls.mergeCard).toHaveBeenCalledWith(ID));
   await vi.waitFor(() => expect(e.calls.getCard).toHaveBeenCalledTimes(2));
 });
@@ -789,7 +803,9 @@ it("offers Merge only to a person who can run, for a pull request that can be me
   page(reader.client, cardView);
   await screen.findByRole("tab", { name: "Details" });
   await levelApplied(reader);
-  expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Merge pull request" }),
+  ).toBeNull();
   cleanup();
 
   for (const pull of [
@@ -805,14 +821,18 @@ it("offers Merge only to a person who can run, for a pull request that can be me
     await screen.findByRole("tab", { name: "Details" });
     await levelApplied(e);
     await screen.findByRole("button", { name: "Archive" });
-    expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Merge pull request" }),
+    ).toBeNull();
     cleanup();
   }
 
   const none = engine();
   page(none.client, cardView);
   await screen.findByRole("button", { name: "Archive" });
-  expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Merge pull request" }),
+  ).toBeNull();
 });
 
 it("shows the engine's refusal to merge", async () => {
@@ -822,7 +842,12 @@ it("shows the engine's refusal to merge", async () => {
     new Error("the pull request has failing checks"),
   );
   page(e.client, cardView);
-  await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Merge pull request" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Merge the pull request" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "the pull request has failing checks",
   );
@@ -963,7 +988,7 @@ it("has an Issue tab for a card made from an issue, and choosing it is a visit",
     ...board,
     route: { version: 1, params: { card: ID, tab: "issue" } },
   });
-  expect(await screen.findByText("example-org/api#42")).toBeVisible();
+  expect(await screen.findAllByText("example-org/api#42")).not.toHaveLength(0);
   expect(e.calls.listIssueComments).toHaveBeenCalledWith(ID, expect.anything());
 });
 
@@ -1031,7 +1056,7 @@ it("lists the stages of the card's run with where each stands", async () => {
   );
   page(e.client, cardView);
   await userEvent.click(await screen.findByRole("tab", { name: "Steps" }));
-  const stages = await screen.findByRole("list", { name: "Stages of the run" });
+  const stages = await screen.findByRole("list", { name: "Steps of the run" });
   const [first, second] = within(stages).getAllByRole("listitem");
   expect(first).toHaveTextContent("build");
   expect(first).toHaveTextContent("passed, then review");
@@ -1059,7 +1084,7 @@ it("marks a stage that was skipped, and one that is held", async () => {
   page(e.client, cardView);
   await userEvent.click(await screen.findByRole("tab", { name: "Steps" }));
   const [first, second] = within(
-    await screen.findByRole("list", { name: "Stages of the run" }),
+    await screen.findByRole("list", { name: "Steps of the run" }),
   ).getAllByRole("listitem");
   expect(first).toHaveTextContent("Skipped");
   expect(second).toHaveTextContent("Held until someone resumes it");
@@ -1402,7 +1427,7 @@ it("shows why a stage failed beside the stage", async () => {
   await userEvent.click(await screen.findByRole("tab", { name: "Steps" }));
   expect(
     within(
-      await screen.findByRole("list", { name: "Stages of the run" }),
+      await screen.findByRole("list", { name: "Steps of the run" }),
     ).getByText("build timed out after 30m"),
   ).toBeInTheDocument();
 });
@@ -1792,4 +1817,244 @@ it("toggles the archived cards from the board and returns to live cards", async 
   await screen.findByText("Old one");
   await userEvent.click(screen.getByRole("button", { name: "Board" }));
   expect(await screen.findByText("Live one")).toBeVisible();
+});
+
+/** A card in its second stage, waiting on an approval of its plan. */
+function reviewing(options: { role?: string } = {}) {
+  const e = engine({
+    ...options,
+    runs: [
+      run({
+        state: "waiting",
+        stageId: "plan_review",
+        steps: [
+          step({ stage: "plan", result: "passed", routedTo: "plan_review" }),
+          step({ stage: "plan_review" }),
+        ],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({
+      workflow: "demo",
+      state: "waiting",
+      stageId: "plan_review",
+      issue: ISSUE,
+      issueUrl: "https://github.example.org/example-org/api/issues/42",
+      pullRequest: openPull({ draft: true }),
+      stages: [
+        create(StageThreadSchema, {
+          stage: "plan_review",
+          visit: 1,
+          rootEventId: ROOT,
+          channelId: CHANNEL,
+        }),
+      ],
+    }),
+  );
+  e.calls.listWorkflows.mockResolvedValue(
+    create(ListWorkflowsResponseSchema, {
+      workflows: [
+        {
+          name: "demo",
+          ok: true,
+          stages: [{ id: "plan" }, { id: "plan_review" }, { id: "implement" }],
+        },
+      ],
+    }),
+  );
+  e.calls.listInbox.mockResolvedValue(
+    create(ListInboxResponseSchema, {
+      seq: INBOX_SEQ,
+      items: [
+        create(InboxItemSchema, {
+          id: "item-1",
+          kind: "approval",
+          cardId: ID,
+          cardTitle: "Fix the build",
+          stage: "plan_review",
+          detailJson: JSON.stringify({ artifacts: ["plan"] }),
+          choices: ["approve", "reject"],
+        }),
+      ],
+    }),
+  );
+  return e;
+}
+
+it("shows the card's facts, its stage strip and where the card is", async () => {
+  page(reviewing().client, cardView, channels);
+  expect(
+    await screen.findByRole("heading", { name: "Fix the build" }),
+  ).toBeVisible();
+  const strip = await screen.findByRole("list", { name: "Stages of the run" });
+  expect(within(strip).getAllByRole("listitem")).toHaveLength(3);
+  expect(
+    await screen.findByText("plan_review, needs you. Step 2 of 3"),
+  ).toBeVisible();
+  expect(screen.getByText("Ready for review")).toBeVisible();
+  expect(screen.getByText("example-org/api#42")).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Pull request #12" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.example.org/example-org/api/pull/12",
+  );
+  expect(screen.getByText("Workflow demo")).toBeVisible();
+  // The tabs run Issue, Live, Steps, Files, Activity, Details.
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+    "Issue",
+    "Live",
+    "Steps",
+    "Files",
+    "Activity",
+    "Details",
+  ]);
+});
+
+it("jumps from the Ready for review note to Live, where the approval is answered", async () => {
+  const e = reviewing();
+  const nav = page(
+    e.client,
+    {
+      ...board,
+      route: { version: 1, params: { card: ID, tab: "steps" } },
+    } as OpenTarget,
+    channels,
+  );
+  expect(await screen.findByText("1 of 3 steps done")).toBeVisible();
+  expect(
+    screen.getByText("Approve the plan, or send it back with a reason."),
+  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Jump to it" }));
+  expect(nav.open).toHaveBeenCalledWith({
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "live" } },
+  });
+  // Live carries its own note, so the frame's is gone.
+  expect(await screen.findByText("Waiting for your approval")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Jump to it" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await vi.waitFor(() =>
+    expect(e.calls.answerInbox).toHaveBeenCalledWith("item-1", "approve", ""),
+  );
+});
+
+it("rejects with a reason in the Reject the plan dialog", async () => {
+  const e = reviewing();
+  page(e.client, cardView, channels);
+  await userEvent.click(await screen.findByRole("button", { name: "Reject" }));
+  const dialog = await screen.findByRole("dialog", { name: "Reject the plan" });
+  expect(
+    within(dialog).getByText(
+      "Say what to change. The agent reads your reason on the next try.",
+    ),
+  ).toBeVisible();
+  const submit = within(dialog).getByRole("button", { name: "Reject" });
+  expect(submit).toBeDisabled();
+  await userEvent.type(
+    within(dialog).getByRole("textbox", { name: "Reason" }),
+    "Add a rollback step",
+  );
+  await userEvent.click(submit);
+  await vi.waitFor(() =>
+    expect(e.calls.answerInbox).toHaveBeenCalledWith(
+      "item-1",
+      "reject",
+      "Add a rollback step",
+    ),
+  );
+});
+
+it("offers no Approve or Reject to a person who can only read", async () => {
+  const e = reviewing({ role: "read" });
+  page(e.client, cardView, channels);
+  await screen.findByText("Waiting for your approval");
+  await levelApplied(e);
+  expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+});
+
+it("opens the issue and the pull request from More actions", async () => {
+  page(reviewing().client, cardView, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "More actions" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Open issue" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.example.org/example-org/api/issues/42",
+  );
+  expect(
+    screen.getByRole("menuitem", { name: "Open pull request" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.example.org/example-org/api/pull/12",
+  );
+});
+
+it("removes the card only after asking, then closes its page", async () => {
+  const e = reviewing();
+  const nav = page(e.client, cardView, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "More actions" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "Remove this card" }),
+  );
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Remove this card?",
+  });
+  expect(e.calls.removeCard).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Remove card" }),
+  );
+  await vi.waitFor(() => expect(e.calls.removeCard).toHaveBeenCalledWith(ID));
+  await vi.waitFor(() => expect(nav.dismiss).toHaveBeenCalledTimes(1));
+});
+
+it("resets the card only after asking", async () => {
+  const e = reviewing();
+  page(e.client, cardView, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "More actions" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "Reset this card" }),
+  );
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Reset this card?",
+  });
+  expect(e.calls.resetCard).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Reset card" }),
+  );
+  await vi.waitFor(() => expect(e.calls.resetCard).toHaveBeenCalledWith(ID));
+});
+
+it("holds a running card with Pause", async () => {
+  const e = engine({
+    runs: [
+      run({
+        state: "running",
+        stageId: "build",
+        steps: [step({ stage: "build" })],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("button", { name: "Pause" }));
+  await vi.waitFor(() => expect(e.calls.pauseCard).toHaveBeenCalledWith(ID));
+});
+
+it("gives a person who can only read no More actions menu when there is nothing to open", async () => {
+  const e = engine({ role: "read" });
+  page(e.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  await levelApplied(e);
+  expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
 });

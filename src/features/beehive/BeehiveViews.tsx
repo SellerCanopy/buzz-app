@@ -16,6 +16,7 @@ import {
 import { SidebarNavigation } from "../../shared/design-system/ui/SidebarNavigation";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
+import type { InboxItem } from "./gen/kiln/engine/v1/engine_pb";
 import { useInbox } from "./engine/useInbox";
 import { Board } from "./Board";
 import { IntakePage } from "./IntakePage";
@@ -80,8 +81,13 @@ export function BeehiveViews({
   me: string;
   /** What to say above the view, such as that the person's level could not be read. */
   notice?: ReactNode;
-  /** The open card's page, which takes the view's place while it is open. */
-  card?: ReactNode;
+  /**
+   * The open card's page, which takes the view's place while it is open. It is given the open
+   * items of the inbox and a way to read the inbox again, which the shell keeps current.
+   */
+  card?:
+    | ((inbox: { waiting: InboxItem[]; refresh(): void }) => ReactNode)
+    | undefined;
   /** Closes the open card, as when another view is chosen. */
   onLeaveCard(): void;
   onOpen(card: string): void;
@@ -230,7 +236,7 @@ export function BeehiveViews({
             </>
           )}
         </div>
-        {card}
+        {card?.({ waiting: openItems, refresh })}
       </div>
     </>
   );

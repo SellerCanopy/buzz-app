@@ -1,24 +1,52 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { XIcon } from "../../shared/design-system/icons";
-import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
+import { useEffect, useState, type ReactNode } from "react";
+import { CaretLeftIcon, DotsThreeIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import {
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuLinkItem,
+  MenuPopup,
+  MenuRoot,
+  MenuSeparator,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs, type TabItem } from "../../shared/design-system/ui/Tabs";
-import type { Card, Run } from "./gen/kiln/engine/v1/engine_pb";
+import type {
+  Card,
+  InboxItem,
+  Run,
+  Workflow,
+} from "./gen/kiln/engine/v1/engine_pb";
 import type { EmbeddedThreadProps } from "../conversation/EmbeddedThread";
 import type { Navigation } from "../navigation/controller";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
+import { TextDialog } from "./AnswerDialog";
 import { ActivityTab } from "./ActivityTab";
+import {
+  currentStage,
+  issueOf,
+  progressOf,
+  statusOf,
+  stripOf,
+  type Progress,
+} from "./boardModel";
+import { Callout } from "./Callout";
+import { CardConfirm, type Confirm } from "./CardConfirm";
+import { canPause, canRetry, canStart, canStop, isWebUrl } from "./cardActions";
+import { Details, pullState } from "./CardDetails";
 import { FilesTab } from "./FilesTab";
-import { stateLabel, stepStatus } from "./labels";
+import { stepStatus, subjectOf } from "./labels";
 import { IssueTab } from "./IssueTab";
 import { LiveTab } from "./LiveTab";
 import type { CardTab } from "./routes";
+import { StageStrip } from "./StageStrip";
 
 type Loaded =
   | { status: "loading" }
@@ -27,11 +55,13 @@ type Loaded =
   | { status: "error"; message: string };
 
 /**
- * One card: the current stage's thread, the stages its latest run went through, the files they
- * saved, what happened on it and its details, and Start run, Resume, Stop run, Retry run, Merge, Archive and Restore for a
- * person who can run. A person who can run also turns auto mode on and off: while it is on the
- * engine answers the card's approval gates, failed runs and silent stages by rule.
- * The tab is part of the page's route, so Back returns to the tab a person left.
+ * One card: a way back to the board, its facts and the stages of its workflow above the tabs. The
+ * tabs are the issue, the current stage's thread, the stages its latest run went through, the
+ * files they saved, what happened on it and its details. A person who can run starts, holds,
+ * stops and retries the run from the header, merges and archives from Details, and approves or
+ * sends back the card's approval wherever it shows. A person who can run also turns auto mode on
+ * and off: while it is on the engine answers the card's approval gates, failed runs and silent
+ * stages by rule. The tab is part of the page's route, so Back returns to the tab a person left.
  */
 export function CardPage({
   client,
@@ -41,6 +71,8 @@ export function CardPage({
   id,
   tab,
   canRun,
+  waiting,
+  onAnswered,
   onTab,
   onClose,
 }: {
@@ -52,16 +84,22 @@ export function CardPage({
   /** The tab the visit names; the card's own default when it names none. */
   tab: CardTab | undefined;
   canRun: boolean;
+  /** The open items of the inbox, of every card. */
+  waiting: InboxItem[];
+  /** The inbox changed, so it should be read again. */
+  onAnswered(): void;
   onTab(tab: CardTab): void;
   onClose(): void;
 }) {
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
+  const [workflows, setWorkflows] = useState<Workflow[]>();
   const [attempt, setAttempt] = useState(0);
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string>();
-  // Stopping asks first. The confirmation is a transient surface, so it has no history visit.
-  const [confirmStop, setConfirmStop] = useState(false);
-  const cancelStop = useRef<HTMLButtonElement>(null);
+  // Stopping, merging, resetting and removing ask first, and a reject asks for its reason. These
+  // are transient surfaces, so none has a history visit.
+  const [confirm, setConfirm] = useState<Confirm>();
+  const [rejecting, setRejecting] = useState(false);
 
   useEffect(() => {
     // `attempt` re-reads the card after a failure or an action.
@@ -89,16 +127,37 @@ export function CardPage({
     return () => abort.abort();
   }, [client, id, attempt]);
 
-  /** Run one action on the card, then read it again. A refusal shows as the engine words it. */
-  const act = async (action: () => Promise<unknown>) => {
-    if (pending) return;
+  // The stage strip needs the workflow's stages. Without them the page reads the same without
+  // the strip, so a failed read says nothing.
+  useEffect(() => {
+    const abort = new AbortController();
+    void Promise.resolve()
+      .then(() => client.listWorkflows(abort.signal))
+      .then(
+        (reply) => !abort.signal.aborted && setWorkflows(reply.workflows),
+        () => undefined,
+      );
+    return () => abort.abort();
+  }, [client]);
+
+  /**
+   * Run one action on the card, then read it again unless `reload` is off. A refusal shows as
+   * the engine words it. Reports whether the action went through.
+   */
+  const act = async (
+    action: () => Promise<unknown>,
+    reload = true,
+  ): Promise<boolean> => {
+    if (pending) return false;
     setPending(true);
     setActionError(undefined);
     try {
       await action();
-      setAttempt((n) => n + 1);
+      if (reload) setAttempt((n) => n + 1);
+      return true;
     } catch (error) {
       setActionError(errorMessage(error));
+      return false;
     } finally {
       setPending(false);
     }
@@ -110,33 +169,117 @@ export function CardPage({
         : client.archiveCards([card.id]),
     );
   const startRun = (card: Card) => act(() => client.startRun(card.id));
+  const pause = (card: Card) => act(() => client.pauseCard(card.id));
   const resume = (card: Card) => act(() => client.resumeCard(card.id));
-  const stop = (current: Run) => act(() => client.stopRun(current.id));
-  const retry = (current: Run) => act(() => client.retryRun(current.id));
-  const merge = (card: Card) => act(() => client.mergeCard(card.id));
   const setAutoMode = (current: Card, enabled: boolean) =>
     act(() => client.setAutoMode(current.id, enabled));
+  const answer = (item: InboxItem, choice: string, text = "") =>
+    act(async () => {
+      await client.answerInbox(item.id, choice, text);
+      onAnswered();
+    });
+  /** Runs what the open confirmation asked for, then closes it. */
+  const confirmed = async (card: Card, run: Run | undefined) => {
+    const done = await (confirm === "stop" && run
+      ? act(() => client.stopRun(run.id))
+      : confirm === "merge"
+        ? act(() => client.mergeCard(card.id))
+        : confirm === "reset"
+          ? act(() => client.resetCard(card.id))
+          : confirm === "remove"
+            ? act(() => client.removeCard(card.id), false)
+            : Promise.resolve(false));
+    setConfirm(undefined);
+    // A removed card has no page to read again.
+    if (done && confirm === "remove") onClose();
+  };
 
   const card = loaded.status === "ready" ? loaded.card : undefined;
   const run = loaded.status === "ready" ? loaded.run : undefined;
+  const mine = waiting.filter((item) => item.cardId === id);
+  const approval = mine.find((item) => item.kind === "approval");
+  const subject = approval ? subjectOf(approval.detailJson) : "";
+  const workflow = workflows?.find((item) => item.name === card?.workflow);
+  const strip = stripOf(run, workflow);
+  const at = currentStage(run, strip);
+  const status = card ? statusOf(card, mine) : undefined;
   const hasSteps = !!run?.steps.length;
   // A card with no run has no thread and has saved nothing, so those tabs wait for the first run.
   const sections: TabItem<CardTab>[] = [];
+  // A card made from an issue also shows the issue, as the host last returned it.
+  if (card?.issue) sections.push({ value: "issue", label: "Issue" });
   if (run) sections.push({ value: "live", label: "Live" });
   if (hasSteps) sections.push({ value: "steps", label: "Steps" });
   if (run) sections.push({ value: "files", label: "Files" });
   sections.push({ value: "activity", label: "Activity" });
-  // A card made from an issue also shows the issue, as the host last returned it.
-  if (card?.issue) sections.push({ value: "issue", label: "Issue" });
   sections.push({ value: "details", label: "Details" });
   const fallback: CardTab = card?.stages.length ? "live" : "details";
   const section = tab && sections.some((s) => s.value === tab) ? tab : fallback;
+  const pull = card?.pullRequest;
+  const issueLink = card && isWebUrl(card.issueUrl) ? card.issueUrl : "";
+  const pullLink = pull && isWebUrl(pull.url) ? pull.url : "";
+  const canReset = !!card && canRun && !card.archived && !!run;
+  const hasMenu = !!issueLink || !!pullLink || canReset || canRun;
   return (
     <div className="beehive-card-page">
+      <div className="beehive-crumb">
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label="Back to Board"
+          onClick={onClose}
+        >
+          <CaretLeftIcon size="1rem" aria-hidden="true" />
+          Board
+        </Button>
+      </div>
       <Header
         title={card?.title ?? "Card"}
+        subtitle={
+          card &&
+          status && (
+            <span className="beehive-meta">
+              <span
+                className="beehive-status text-body-sm"
+                data-tone={status.tone}
+              >
+                {card.archived ? "Archived" : status.label}
+              </span>
+              {issueOf(card) && <code>{issueOf(card)}</code>}
+              {pull && (
+                <span>
+                  {pullLink ? (
+                    <Button
+                      variant="link"
+                      size="text"
+                      role="link"
+                      nativeButton={false}
+                      render={
+                        <a href={pullLink} target="_blank" rel="noreferrer" />
+                      }
+                    >
+                      {`Pull request #${pull.number}`}
+                    </Button>
+                  ) : (
+                    `Pull request #${pull.number}`
+                  )}
+                  {` ${pullState(pull.state, pull.draft)}`}
+                </span>
+              )}
+              {card.workflow && <span>{`Workflow ${card.workflow}`}</span>}
+            </span>
+          )
+        }
         actions={
           <>
+            {card && canRun && !card.archived && (
+              <Switch
+                label="Auto mode"
+                checked={card.autoMode}
+                disabled={pending}
+                onCheckedChange={(enabled) => void setAutoMode(card, enabled)}
+              />
+            )}
             {card && canRun && canStart(card) && (
               <Button
                 variant="prominent"
@@ -155,11 +298,16 @@ export function CardPage({
                 Resume
               </Button>
             )}
+            {card && canRun && canPause(card, run) && (
+              <Button disabled={pending} onClick={() => void pause(card)}>
+                Pause
+              </Button>
+            )}
             {card && run && canRun && canStop(run) && (
               <Button
                 variant="destructive"
                 disabled={pending}
-                onClick={() => setConfirmStop(true)}
+                onClick={() => setConfirm("stop")}
               >
                 Stop run
               </Button>
@@ -168,73 +316,114 @@ export function CardPage({
               <Button
                 variant="prominent"
                 disabled={pending}
-                onClick={() => void retry(run)}
+                onClick={() => void act(() => client.retryRun(run.id))}
               >
                 Retry run
               </Button>
             )}
-            {card && canRun && canMerge(card) && (
-              <Button
-                variant="prominent"
-                disabled={pending}
-                onClick={() => void merge(card)}
-              >
-                Merge
-              </Button>
+            {card && hasMenu && (
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      aria-label="More actions"
+                      icon={<DotsThreeIcon size="1rem" />}
+                    />
+                  }
+                />
+                <MenuPopup>
+                  {(issueLink || pullLink) && (
+                    <MenuGroup>
+                      <MenuGroupLabel>Open from this card</MenuGroupLabel>
+                      {issueLink && (
+                        <MenuLinkItem
+                          href={issueLink}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open issue
+                        </MenuLinkItem>
+                      )}
+                      {pullLink && (
+                        <MenuLinkItem
+                          href={pullLink}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open pull request
+                        </MenuLinkItem>
+                      )}
+                    </MenuGroup>
+                  )}
+                  {(issueLink || pullLink) && canRun && <MenuSeparator />}
+                  {canReset && (
+                    <MenuItem onClick={() => setConfirm("reset")}>
+                      Reset this card
+                    </MenuItem>
+                  )}
+                  {canRun && (
+                    <MenuItem
+                      tone="danger"
+                      onClick={() => setConfirm("remove")}
+                    >
+                      Remove this card
+                    </MenuItem>
+                  )}
+                </MenuPopup>
+              </MenuRoot>
             )}
-            {card && canRun && !card.archived && (
-              <Switch
-                label="Auto mode"
-                checked={card.autoMode}
-                disabled={pending}
-                onCheckedChange={(enabled) => void setAutoMode(card, enabled)}
-              />
-            )}
-            {card && canRun && (
-              <Button
-                loading={pending}
-                disabled={pending}
-                onClick={() => void toggleArchive(card)}
-              >
-                {card.archived ? "Restore" : "Archive"}
-              </Button>
-            )}
-            <IconButton
-              aria-label="Close card"
-              icon={<XIcon size="1rem" />}
-              onClick={onClose}
-            />
           </>
         }
       />
-      {confirmStop && run && (
-        <AlertDialog
-          title="Stop this run?"
-          description="The run ends and the card moves to Stopped. What its stages already saved stays, and you can retry the run afterwards."
-          pending={pending}
-          initialFocus={cancelStop}
-          onClose={() => setConfirmStop(false)}
-          actions={
-            <>
-              <Button
-                ref={cancelStop}
-                disabled={pending}
-                onClick={() => setConfirmStop(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                loading={pending}
-                onClick={() => void stop(run).then(() => setConfirmStop(false))}
-              >
-                Stop run
-              </Button>
-            </>
+      {card && (
+        <StageStrip
+          stages={strip}
+          caption={
+            at === undefined || !status
+              ? undefined
+              : `${strip[at]?.stage}, ${mine.length > 0 ? "needs you" : status.label.toLowerCase()}. Step ${at + 1} of ${strip.length}`
           }
         />
       )}
-      {actionError && (
+      {card && approval && section !== "live" && (
+        <Callout
+          tone="warning"
+          title="Ready for review"
+          actions={
+            <Button size="sm" onClick={() => onTab("live")}>
+              Jump to it
+            </Button>
+          }
+        >
+          {subject
+            ? `Approve the ${subject}, or send it back with a reason.`
+            : "Approve it, or send it back with a reason."}
+        </Callout>
+      )}
+      {confirm && card && (
+        <CardConfirm
+          kind={confirm}
+          pending={pending}
+          onCancel={() => setConfirm(undefined)}
+          onConfirm={() => void confirmed(card, run)}
+        />
+      )}
+      {rejecting && approval && (
+        <TextDialog
+          kind="reject"
+          subject={subject}
+          pending={pending}
+          error={actionError}
+          onClose={() => {
+            setRejecting(false);
+            setActionError(undefined);
+          }}
+          onSubmit={async (text) => {
+            if (await answer(approval, "reject", text)) setRejecting(false);
+          }}
+        />
+      )}
+      {actionError && !rejecting && (
         <p role="alert" className="text-danger">
           {actionError}
         </p>
@@ -270,14 +459,50 @@ export function CardPage({
             onValueChange={onTab}
             renderPanel={(value) =>
               value === "live" && run ? (
-                <LiveTab
-                  card={card}
-                  relay={relay}
-                  navigator={navigator}
-                  Thread={Thread}
-                />
+                <>
+                  {approval && (
+                    <Callout
+                      tone="warning"
+                      title="Waiting for your approval"
+                      actions={
+                        canRun ? (
+                          <>
+                            <Button
+                              disabled={pending}
+                              onClick={() => setRejecting(true)}
+                            >
+                              Reject
+                            </Button>
+                            <Button
+                              variant="prominent"
+                              disabled={pending}
+                              onClick={() => void answer(approval, "approve")}
+                            >
+                              Approve
+                            </Button>
+                          </>
+                        ) : undefined
+                      }
+                    >
+                      {subject
+                        ? `Review the ${subject}, then approve it or send it back with a note.`
+                        : "Review it, then approve it or send it back with a note."}
+                    </Callout>
+                  )}
+                  <LiveTab
+                    card={card}
+                    relay={relay}
+                    navigator={navigator}
+                    Thread={Thread}
+                  />
+                </>
               ) : value === "steps" && run ? (
-                <Steps run={run} />
+                <Steps
+                  run={run}
+                  progress={progressOf(card, run, workflow)}
+                  review={!!approval}
+                  onOpenLive={() => onTab("live")}
+                />
               ) : value === "files" && run ? (
                 <FilesTab client={client} relay={relay} cardId={card.id} />
               ) : value === "activity" ? (
@@ -285,7 +510,13 @@ export function CardPage({
               ) : value === "issue" && card.issue ? (
                 <IssueTab client={client} card={card} />
               ) : (
-                <Details card={card} />
+                <Details
+                  card={card}
+                  canRun={canRun}
+                  pending={pending}
+                  onMerge={() => setConfirm("merge")}
+                  onArchive={() => void toggleArchive(card)}
+                />
               )
             }
           />
@@ -295,134 +526,59 @@ export function CardPage({
   );
 }
 
-/** A card with a workflow and no run in flight can start one. */
-function canStart(card: Card): boolean {
-  return !card.archived && !!card.workflow && card.state === "idle";
-}
-
-/** A run that has not ended can be stopped. */
-function canStop(run: Run): boolean {
-  return run.state !== "ended";
-}
-
-/** A card whose run failed or was stopped can start again from the stage it reached. */
-function canRetry(card: Card, run: Run): boolean {
-  return (
-    !card.archived &&
-    run.state === "ended" &&
-    (card.state === "failed" || card.state === "stopped")
-  );
-}
-
 /**
- * A card whose pull request is open, out of draft and not failing or waiting on checks can be
- * merged. The engine reads the host again and refuses what it finds not ready, so this only
- * keeps the button off a card that plainly cannot be merged.
+ * The stages the run entered, oldest first, each with where it stands, under a count of those
+ * done. The stage the card waits on for an approval says so and links to where it is answered.
  */
-function canMerge(card: Card): boolean {
-  const pull = card.pullRequest;
+function Steps({
+  run,
+  progress,
+  review,
+  onOpenLive,
+}: {
+  run: Run;
+  progress: Progress | undefined;
+  /** The card waits on an approval, which is of the run's latest step. */
+  review: boolean;
+  onOpenLive(): void;
+}) {
   return (
-    !card.archived &&
-    !!pull &&
-    pull.state === "open" &&
-    !pull.draft &&
-    pull.checks !== "failing" &&
-    pull.checks !== "pending"
-  );
-}
-
-/** A pull request address is shown as a link only when it is a web address. */
-function isWebUrl(url: string): boolean {
-  return /^https?:\/\//i.test(url);
-}
-
-export function Details({ card }: { card: Card }) {
-  const pull = card.pullRequest;
-  return (
-    <dl className="beehive-details">
-      <div>
-        <dt className="text-label text-subtle">State</dt>
-        <dd>{card.archived ? "Archived" : stateLabel(card)}</dd>
-      </div>
-      {card.branch && (
-        <div>
-          <dt className="text-label text-subtle">Branch</dt>
-          <dd>
-            <code>{card.branch}</code>
-          </dd>
-        </div>
+    <>
+      {progress && (
+        <p className="beehive-steps-count text-body-sm text-subtle">
+          {`${progress.done} of ${progress.total} steps done`}
+        </p>
       )}
-      {pull && (
-        <div>
-          <dt className="text-label text-subtle">Pull request</dt>
-          <dd>
-            {isWebUrl(pull.url) ? (
-              <Button
-                variant="link"
-                size="text"
-                role="link"
-                nativeButton={false}
-                render={<a href={pull.url} target="_blank" rel="noreferrer" />}
-              >
-                {`#${pull.number}`}
-              </Button>
-            ) : (
-              `#${pull.number}`
-            )}
-            {` ${pullState(pull.state, pull.draft)}`}
-            {pull.checks && ` · checks ${pull.checks}`}
-          </dd>
-        </div>
-      )}
-      {card.workflow && (
-        <div>
-          <dt className="text-label text-subtle">Workflow</dt>
-          <dd>{card.workflow}</dd>
-        </div>
-      )}
-      {card.autoMode && (
-        <div>
-          <dt className="text-label text-subtle">Auto mode</dt>
-          <dd>On</dd>
-        </div>
-      )}
-      <div>
-        <dt className="text-label text-subtle">Description</dt>
-        <dd className="beehive-description">
-          {card.body || "No description."}
-        </dd>
-      </div>
-    </dl>
-  );
-}
-
-/** Where a pull request stands: a draft that is still open says so. */
-function pullState(state: string, draft: boolean): string {
-  return draft && state === "open" ? "draft" : state;
-}
-
-/** The stages the run entered, oldest first, each with where it stands. */
-function Steps({ run }: { run: Run }) {
-  return (
-    <ol className="beehive-steps" aria-label="Stages of the run">
-      {run.steps.map((step, index) => (
-        <li key={`${step.stage}:${step.visit}`}>
-          <span>{step.stage}</span>
-          <span className="text-body-sm text-subtle">
-            {stepStatus(step, run, index === run.steps.length - 1)}
-          </span>
-          {step.failure && (
-            <span className="beehive-step-summary text-body-sm text-danger">
-              {step.failure}
-            </span>
-          )}
-          {step.summary && (
-            <span className="beehive-step-summary text-body-sm">
-              {step.summary}
-            </span>
-          )}
-        </li>
-      ))}
-    </ol>
+      <ol className="beehive-steps" aria-label="Steps of the run">
+        {run.steps.map((step, index) => {
+          const latest = index === run.steps.length - 1;
+          return (
+            <li key={`${step.stage}:${step.visit}`}>
+              <span>{step.stage}</span>
+              <span className="text-body-sm text-subtle">
+                {review && latest
+                  ? "Ready for review"
+                  : stepStatus(step, run, latest)}
+              </span>
+              {review && latest && (
+                <Button variant="link" size="text" onClick={onOpenLive}>
+                  Open it on Live
+                </Button>
+              )}
+              {step.failure && (
+                <span className="beehive-step-summary text-body-sm text-danger">
+                  {step.failure}
+                </span>
+              )}
+              {step.summary && (
+                <span className="beehive-step-summary text-body-sm">
+                  {step.summary}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 }

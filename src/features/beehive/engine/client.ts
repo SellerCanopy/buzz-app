@@ -52,11 +52,15 @@ import {
   ListWorkflowsRequestSchema,
   ListWorkflowsResponseSchema,
   MergeCardRequestSchema,
+  PauseCardRequestSchema,
   PollEventsRequestSchema,
   PollEventsResponseSchema,
   ReadArtifactRequestSchema,
+  RemoveCardRequestSchema,
+  RemoveCardResponseSchema,
   RefreshIntakeRequestSchema,
   RefreshIntakeResponseSchema,
+  ResetCardRequestSchema,
   ResumeCardRequestSchema,
   RestoreCardRequestSchema,
   RetryRunRequestSchema,
@@ -252,6 +256,33 @@ export function createClient(session: Session) {
         ListRunsRequestSchema,
         ListRunsResponseSchema,
         create(ListRunsRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Hold a running card: its run stops where it is until `resumeCard`. */
+    pauseCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "PauseCard",
+        PauseCardRequestSchema,
+        CardSchema,
+        create(PauseCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Stop a card's run and put the card back to idle. Its artifacts and branch are kept. */
+    resetCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "ResetCard",
+        ResetCardRequestSchema,
+        CardSchema,
+        create(ResetCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Take a card off the board for good. The engine refuses a card whose run is working. */
+    removeCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "RemoveCard",
+        RemoveCardRequestSchema,
+        RemoveCardResponseSchema,
+        create(RemoveCardRequestSchema, { cardId }),
         signal,
       ),
     /** Let a held card carry on: a stage held before it started posts its task. */
