@@ -128,9 +128,25 @@ fn client() -> Result<&'static reqwest::Client> {
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(30))
                 .build()
+                .inspect_err(|error| eprintln!("Beehive network client was not built: {error}"))
         })
         .as_ref()
         .map_err(|_| Failure::unavailable("Beehive network client is unavailable"))
+}
+
+/// Say why a request failed, and log the cause: a timeout, a refused
+/// connection and a bad request read differently to the person and to support.
+/// The error's URL is dropped, so a log line never carries more than the path.
+fn network_failure(path: &str, error: reqwest::Error, otherwise: &str) -> Failure {
+    let error = error.without_url();
+    eprintln!("Beehive request to {path} failed: {error}");
+    Failure::unavailable(if error.is_timeout() {
+        "Beehive did not answer in time"
+    } else if error.is_connect() {
+        "Beehive is not reachable"
+    } else {
+        otherwise
+    })
 }
 
 /// A bearer token or `Nostr` event is one printable header token, never a line.
@@ -216,13 +232,13 @@ pub(crate) async fn beehive_request(
     let mut response = request
         .send()
         .await
-        .map_err(|_| Failure::unavailable("Beehive is not reachable"))?;
+        .map_err(|error| network_failure(&path, error, "The request to Beehive failed"))?;
     let status = response.status();
     let mut bytes = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| Failure::unavailable("Beehive stopped answering"))?
+        .map_err(|error| network_failure(&path, error, "Beehive stopped answering"))?
     {
         if bytes.len() + chunk.len() > MAX_RESPONSE {
             return Err(Failure::unavailable("Beehive's answer was too large"));
@@ -349,6 +365,34 @@ mod tests {
         assert!(authorization(token, None, Some("Basic abc")).is_err());
         assert!(authorization(method, Some("a\r\nb"), None).is_err());
         assert!(authorization(method, Some("a b"), None).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_reads_as_not_reachable() {
+        let error = reqwest::Client::new()
+            .post("http://127.0.0.1:1/")
+            .send()
+            .await
+            .unwrap_err();
+        let failed = network_failure("/auth/token", error, "other");
+        assert_eq!(failed.message, "Beehive is not reachable");
+    }
+
+    #[tokio::test]
+    async fn a_slow_answer_reads_as_timed_out() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let error = reqwest::Client::builder()
+            .timeout(Duration::from_millis(50))
+            .build()
+            .unwrap()
+            .post(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap_err();
+        let failed = network_failure("/auth/token", error, "other");
+        assert_eq!(failed.message, "Beehive did not answer in time");
+        drop(listener);
     }
 
     #[test]

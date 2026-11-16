@@ -13,6 +13,7 @@ import type { Client } from "./engine/client";
 import { EngineError } from "./engine/transport";
 import {
   AccessEntrySchema,
+  AgentLoginStatusSchema,
   ArtifactInfoSchema,
   ArtifactVersionSchema,
   CardSchema,
@@ -30,9 +31,12 @@ import {
   ListWorkflowsResponseSchema,
   WorkflowSchema,
   GetSettingsResponseSchema,
+  GetHiveHealthResponseSchema,
   GetUsageResponseSchema,
   GetWorkflowDraftResponseSchema,
   ListAgentsResponseSchema,
+  ListAgentToolServersResponseSchema,
+  ListSecretNamesResponseSchema,
   ListStageTemplatesResponseSchema,
   GetStatusResponseSchema,
   InboxItemSchema,
@@ -212,6 +216,21 @@ function engine(
       if (entry) entry.level = level;
       return create(AccessEntrySchema, { pubkey, level });
     }),
+    listAgentToolServers: vi.fn(async () =>
+      create(ListAgentToolServersResponseSchema, {
+        agents: [
+          { agent: "builder", servers: [] },
+          { agent: "reviewer", servers: [] },
+        ],
+      }),
+    ),
+    getHiveHealth: vi.fn(async () => create(GetHiveHealthResponseSchema, {})),
+    getAgentLoginStatus: vi.fn(async () =>
+      create(AgentLoginStatusSchema, { state: "needs-sign-in" }),
+    ),
+    listSecretNames: vi.fn(async () =>
+      create(ListSecretNamesResponseSchema, {}),
+    ),
     setCommunitySetting: vi.fn(async (key: string, valueJson: string) =>
       create(SettingSchema, { key, valueJson }),
     ),
@@ -1486,6 +1505,20 @@ it("says so when a card has saved nothing, and shows a failure with a retry", as
   expect(await screen.findByText("No files yet")).toBeVisible();
 });
 
+it("says a file has no versions instead of loading it for good, and Retry reads again", async () => {
+  const e = withFiles([saved({ name: "plan", version: 1, content: "Draft" })]);
+  e.calls.listArtifactVersions.mockResolvedValueOnce(
+    create(ListArtifactVersionsResponseSchema, { versions: [] }),
+  );
+  await userEvent.click(await screen.findByRole("tab", { name: "Files" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This file has no versions.",
+  );
+  expect(screen.queryByText("Loading plan…")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByLabelText("plan")).toHaveTextContent("Draft");
+});
+
 it("has no Files tab for a card that never ran", async () => {
   page(engine().client, cardView);
   await screen.findByRole("tab", { name: "Details" });
@@ -2058,6 +2091,63 @@ it("gives a person who is not an admin no access list", async () => {
   await screen.findByRole("combobox", { name: "Update channel" });
   expect(screen.queryByRole("combobox", { name: "Level for Ben" })).toBeNull();
   expect(e.calls.listAccess).not.toHaveBeenCalled();
+});
+
+it("shows an admin the agent tools in Settings", async () => {
+  const e = engine({ role: "admin", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Add tool server" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Tool servers each agent can use during a stage."),
+  ).toBeVisible();
+  expect(e.calls.listAgentToolServers).toHaveBeenCalled();
+});
+
+it("shows an admin the secrets in Settings, by name, with no value to read", async () => {
+  const e = engine({ role: "admin", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Add team secret" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/A value cannot be read back, only replaced\./),
+  ).toBeVisible();
+  expect(e.calls.listSecretNames).toHaveBeenCalledTimes(1);
+});
+
+it("gives a person who is not an admin no secrets and reads none", async () => {
+  const e = engine({ role: "run", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  await screen.findByRole("combobox", { name: "Update channel" });
+  expect(screen.queryByText("Secrets")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add team secret" })).toBeNull();
+  expect(e.calls.listSecretNames).not.toHaveBeenCalled();
+});
+
+it("gives a person who is not an admin no agent tools and reads none", async () => {
+  const e = engine({ role: "run", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  await screen.findByRole("combobox", { name: "Update channel" });
+  expect(screen.queryByText("Agent tools")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add tool server" })).toBeNull();
+  expect(e.calls.listAgentToolServers).not.toHaveBeenCalled();
+  expect(e.calls.getHiveHealth).not.toHaveBeenCalled();
+  expect(e.calls.getAgentLoginStatus).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
 });
 
 it("says so when the settings cannot be read and Retry reads them again", async () => {

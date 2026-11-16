@@ -9,6 +9,8 @@ import {
   AcceptTicketProposalRequestSchema,
   AcceptTicketProposalResponseSchema,
   AccessEntrySchema,
+  AgentLoginStatusSchema,
+  AgentToolsChangeSchema,
   AddIssueRepoRequestSchema,
   AddNoteRequestSchema,
   AddNoteResponseSchema,
@@ -27,6 +29,8 @@ import {
   DeleteIntakeRuleResponseSchema,
   CreateTaskRequestSchema,
   GetCardRequestSchema,
+  GetHiveHealthRequestSchema,
+  GetHiveHealthResponseSchema,
   GetSettingsRequestSchema,
   GetSettingsResponseSchema,
   GetStatusRequestSchema,
@@ -103,6 +107,22 @@ import {
   ImportWorkflowRequestSchema,
   ListAgentsRequestSchema,
   ListAgentsResponseSchema,
+  ListAgentToolServersRequestSchema,
+  ListAgentToolServersResponseSchema,
+  GetAgentLoginStatusRequestSchema,
+  GrantTeamSecretRequestSchema,
+  PasteAgentLoginRequestSchema,
+  PasteAgentLoginResponseSchema,
+  StartAgentLoginRequestSchema,
+  StartAgentLoginResponseSchema,
+  ListSecretNamesRequestSchema,
+  ListSecretNamesResponseSchema,
+  RevokeTeamSecretRequestSchema,
+  SecretChangeSchema,
+  SetAgentSecretRequestSchema,
+  SetTeamSecretRequestSchema,
+  RemoveAgentToolServerRequestSchema,
+  SetAgentToolServerRequestSchema,
   ListStageTemplatesRequestSchema,
   ListStageTemplatesResponseSchema,
   SaveWorkflowRequestSchema,
@@ -755,6 +775,160 @@ export function createClient(session: Session) {
         AcceptTicketProposalRequestSchema,
         AcceptTicketProposalResponseSchema,
         create(AcceptTicketProposalRequestSchema, { proposalId }),
+        signal,
+      ),
+    /**
+     * Every agent that has a folder on the host, each with the tool servers it starts. Needs
+     * Read. A server never holds a secret value.
+     */
+    listAgentToolServers: (signal?: AbortSignal) =>
+      unary(
+        "ListAgentToolServers",
+        ListAgentToolServersRequestSchema,
+        ListAgentToolServersResponseSchema,
+        create(ListAgentToolServersRequestSchema),
+        signal,
+      ),
+    /**
+     * Add a tool server to an agent, or replace the one with its name. `spec` is the whole entry:
+     * a command with args, or a url. The change is saved even when the host cannot apply it, and
+     * the reply says which happened. Needs Admin.
+     */
+    setAgentToolServer: (
+      agent: string,
+      server: { name: string; transport: string; spec: object },
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SetAgentToolServer",
+        SetAgentToolServerRequestSchema,
+        AgentToolsChangeSchema,
+        create(SetAgentToolServerRequestSchema, {
+          agent,
+          server: {
+            name: server.name,
+            transport: server.transport,
+            specJson: JSON.stringify(server.spec),
+          },
+        }),
+        signal,
+      ),
+    /** Take a tool server off an agent and apply the agent. Needs Admin. */
+    removeAgentToolServer: (
+      agent: string,
+      name: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "RemoveAgentToolServer",
+        RemoveAgentToolServerRequestSchema,
+        AgentToolsChangeSchema,
+        create(RemoveAgentToolServerRequestSchema, { agent, name }),
+        signal,
+      ),
+    /** Every secret's name and which agents hold it. Never a value. Needs Admin. */
+    listSecretNames: (signal?: AbortSignal) =>
+      unary(
+        "ListSecretNames",
+        ListSecretNamesRequestSchema,
+        ListSecretNamesResponseSchema,
+        create(ListSecretNamesRequestSchema),
+        signal,
+      ),
+    /**
+     * Set or replace a team secret. The value is write only: it goes to the secret store and is
+     * never returned. Agents that hold a replaced secret restart. Needs Admin.
+     */
+    setTeamSecret: (name: string, value: string, signal?: AbortSignal) =>
+      unary(
+        "SetTeamSecret",
+        SetTeamSecretRequestSchema,
+        SecretChangeSchema,
+        create(SetTeamSecretRequestSchema, { name, value }),
+        signal,
+      ),
+    /** Set or replace one agent's own secret, which wins over a team secret of the same name. */
+    setAgentSecret: (
+      agent: string,
+      name: string,
+      value: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SetAgentSecret",
+        SetAgentSecretRequestSchema,
+        SecretChangeSchema,
+        create(SetAgentSecretRequestSchema, { agent, name, value }),
+        signal,
+      ),
+    /** Give an agent a team secret by name. An agent has none until it is granted one. */
+    grantTeamSecret: (agent: string, name: string, signal?: AbortSignal) =>
+      unary(
+        "GrantTeamSecret",
+        GrantTeamSecretRequestSchema,
+        SecretChangeSchema,
+        create(GrantTeamSecretRequestSchema, { agent, name }),
+        signal,
+      ),
+    /** Take a team secret from an agent. The value stays for the agents that still hold it. */
+    revokeTeamSecret: (agent: string, name: string, signal?: AbortSignal) =>
+      unary(
+        "RevokeTeamSecret",
+        RevokeTeamSecretRequestSchema,
+        SecretChangeSchema,
+        create(RevokeTeamSecretRequestSchema, { agent, name }),
+        signal,
+      ),
+    /**
+     * Start the Claude CLI's sign-in for one of an agent's HTTP tool servers and get the link to
+     * open. The host keeps the waiting process for ten minutes. The link is the sign-in itself.
+     * Needs Admin.
+     */
+    startAgentLogin: (agent: string, server: string, signal?: AbortSignal) =>
+      unary(
+        "StartAgentLogin",
+        StartAgentLoginRequestSchema,
+        StartAgentLoginResponseSchema,
+        create(StartAgentLoginRequestSchema, { agent, server }),
+        signal,
+      ),
+    /**
+     * Hand the address the browser ended on to the waiting sign-in. The address can carry the
+     * authorization code, so it is sent and never kept. Needs Admin.
+     */
+    pasteAgentLogin: (
+      agent: string,
+      server: string,
+      url: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "PasteAgentLogin",
+        PasteAgentLoginRequestSchema,
+        PasteAgentLoginResponseSchema,
+        create(PasteAgentLoginRequestSchema, { agent, server, url }),
+        signal,
+      ),
+    /** Whether the agent's CLI holds a sign-in for the server: `needs-sign-in` or `connected`. Needs Admin. */
+    getAgentLoginStatus: (
+      agent: string,
+      server: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "GetAgentLoginStatus",
+        GetAgentLoginStatusRequestSchema,
+        AgentLoginStatusSchema,
+        create(GetAgentLoginStatusRequestSchema, { agent, server }),
+        signal,
+      ),
+    /** What the engine reports about itself, including the agents that are not set up for stage threads. */
+    getHiveHealth: (signal?: AbortSignal) =>
+      unary(
+        "GetHiveHealth",
+        GetHiveHealthRequestSchema,
+        GetHiveHealthResponseSchema,
+        create(GetHiveHealthRequestSchema),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

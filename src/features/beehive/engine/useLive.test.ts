@@ -179,6 +179,21 @@ it("follows the event log from the lowest sequence number the reads returned and
   expect(polls[1]?.signal?.aborted).toBe(true);
 });
 
+it("keeps the same state when a batch changes no card, so the board does not render again", async () => {
+  const { client, polls } = liveClient({ cards: [existing] });
+  const { result } = renderHook(() => useLive(client));
+  await waitFor(() => expect(polls).toHaveLength(1));
+  const before = result.current.live;
+  await act(async () => {
+    polls[0]?.resolve({
+      events: [event("inbox.opened", "a")],
+      nextSeq: 6n,
+    });
+  });
+  await waitFor(() => expect(polls).toHaveLength(2));
+  expect(result.current.live).toBe(before);
+});
+
 it("moves a card between the board and the archive as events arrive", async () => {
   const { client, polls } = liveClient({ cards: [existing] });
   const { result } = renderHook(() => useLive(client));

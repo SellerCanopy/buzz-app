@@ -101,32 +101,38 @@ export function choiceLabel(kind: string, choice: string): string {
   return CHOICES[choice]?.label ?? choice;
 }
 
-/**
- * The artifacts an approval item lists. The engine lists names, as `plan`; an entry that also
- * carries a version reads as `plan v2`.
- */
-export function artifactsOf(detailJson: string): string[] {
+/** The artifacts an approval item lists, each with its version when the entry carries one. */
+function entriesOf(detailJson: string): { name: string; version?: number }[] {
   try {
     const detail: unknown = JSON.parse(detailJson || "{}");
     const listed = (detail as { artifacts?: unknown }).artifacts;
     if (!Array.isArray(listed)) return [];
     return listed.flatMap((entry: unknown) => {
-      if (typeof entry === "string") return entry ? [entry] : [];
+      if (typeof entry === "string") return entry ? [{ name: entry }] : [];
       const { name, version } = (entry ?? {}) as {
         name?: unknown;
         version?: unknown;
       };
       if (typeof name !== "string") return [];
-      return [typeof version === "number" ? `${name} v${version}` : name];
+      return [typeof version === "number" ? { name, version } : { name }];
     });
   } catch {
     return [];
   }
 }
 
+/**
+ * The artifacts an approval item lists. The engine lists names, as `plan`; an entry that also
+ * carries a version reads as `plan v2`.
+ */
+export function artifactsOf(detailJson: string): string[] {
+  return entriesOf(detailJson).map(({ name, version }) =>
+    version === undefined ? name : `${name} v${version}`,
+  );
+}
+
 /** The one artifact an approval is about, as `plan`, or empty when it lists none or several. */
 export function subjectOf(detailJson: string): string {
-  const listed = artifactsOf(detailJson);
-  const [only] = listed;
-  return listed.length === 1 && only ? only.replace(/ v\d+$/, "") : "";
+  const listed = entriesOf(detailJson);
+  return listed.length === 1 ? (listed[0]?.name ?? "") : "";
 }

@@ -109,7 +109,10 @@ export function Board({
   };
   const moveSelected = async (workflow: string) => {
     // The engine refuses a whole batch with a card that cannot move, so only those that can go.
-    const movable = chosen.filter((card) => canMove(card, runs?.get(card.id)));
+    // With the runs unread no card can be shown never to have run, so none is sent.
+    const movable = runs
+      ? chosen.filter((card) => canMove(card, runs.get(card.id)))
+      : [];
     const skipped = movable.length < chosen.length;
     if (movable.length === 0) return setActionError(NOT_MOVED);
     const moves = movable.map((card) => ({ cardId: card.id, workflow }));

@@ -7,7 +7,7 @@ import { expect, test } from "../../../../tests/browser/playwright-test.mjs";
 import { createClient } from "../engine/client.ts";
 import { createSession } from "../engine/session.ts";
 import { TOKEN_PATH, webCarrier } from "../engine/transport.ts";
-import { provideWebSigner, webAuthorization } from "../engine/web-signer.ts";
+import { signAuthorization } from "../engine/web-signer.ts";
 import { hiveUnavailable } from "./engine.mjs";
 import { testPubkey, testSigner } from "./signer.ts";
 import { startWorld } from "./world.mjs";
@@ -28,9 +28,10 @@ test.afterAll(async () => {
 
 // The same client the app uses, with the web carrier and the test signer.
 function nodeClient() {
-  provideWebSigner(testSigner);
   return createClient(
-    createSession(webCarrier(hive.url, () => webAuthorization(hive.url))),
+    createSession(
+      webCarrier(hive.url, () => signAuthorization(hive.url, testSigner)),
+    ),
   );
 }
 
@@ -60,8 +61,7 @@ test("a call without a token is unauthenticated", async () => {
 });
 
 test("a signed event can be used for one token only", async () => {
-  provideWebSigner(testSigner);
-  const authorization = await webAuthorization(hive.url);
+  const authorization = await signAuthorization(hive.url, testSigner);
   const carrier = webCarrier(hive.url, async () => authorization);
   await carrier.post(TOKEN_PATH, {}, { authorization });
   await expect(

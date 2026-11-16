@@ -177,15 +177,16 @@ export function useLive(client: Client) {
       unfollow = feedOf(client).follow({
         after,
         onEvents: (events) => {
-          setLive((current) =>
-            current.status === "ready"
-              ? {
-                  ...current,
-                  cards: applyEvents(current.cards, events, false),
-                  archived: applyEvents(current.archived, events, true),
-                }
-              : current,
-          );
+          setLive((current) => {
+            if (current.status !== "ready") return current;
+            const cards = applyEvents(current.cards, events, false);
+            const archived = applyEvents(current.archived, events, true);
+            // Most batches are run, stage or inbox events that change no card: keep the state,
+            // so the board does not render again for them.
+            return cards === current.cards && archived === current.archived
+              ? current
+              : { ...current, cards, archived };
+          });
           if (touchesRuns(events)) void readRuns();
         },
         onError: pollErrorHandler("Beehive live updates failed", (paused) =>

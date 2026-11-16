@@ -1,28 +1,14 @@
-import { afterEach, expect, it } from "vitest";
-import { EngineError } from "./transport";
-import { provideWebSigner, webAuthorization } from "./web-signer";
-
-afterEach(() => provideWebSigner(undefined));
-
-it("refuses to sign in without a signer", async () => {
-  await expect(
-    webAuthorization("https://hive.example.org"),
-  ).rejects.toMatchObject({
-    code: "unauthenticated",
-  });
-  await expect(
-    webAuthorization("https://hive.example.org"),
-  ).rejects.toBeInstanceOf(EngineError);
-});
+import { expect, it } from "vitest";
+import { signAuthorization } from "./web-signer";
 
 it("asks the signer for a NIP-98 event for the token URL", async () => {
   let seen: unknown;
-  provideWebSigner(async (template) => {
-    seen = template;
-    return { ...template, id: "i", pubkey: "p", sig: "s" };
-  });
-  const header = await webAuthorization(
+  const header = await signAuthorization(
     "https://hive.example.org",
+    async (template) => {
+      seen = template;
+      return { ...template, id: "i", pubkey: "p", sig: "s" };
+    },
     () => 5_000,
   );
   expect(seen).toMatchObject({
@@ -41,4 +27,18 @@ it("asks the signer for a NIP-98 event for the token URL", async () => {
     id: "i",
     kind: 27235,
   });
+});
+
+it("signs for two signers at once without one leaking into the other", async () => {
+  const origin = "https://hive.example.org";
+  const as = (pubkey: string) => async (template: object) => ({
+    ...template,
+    pubkey,
+  });
+  const [a, b] = await Promise.all([
+    signAuthorization(origin, as("a")),
+    signAuthorization(origin, as("b")),
+  ]);
+  expect(JSON.parse(atob(a.slice(6))).pubkey).toBe("a");
+  expect(JSON.parse(atob(b.slice(6))).pubkey).toBe("b");
 });

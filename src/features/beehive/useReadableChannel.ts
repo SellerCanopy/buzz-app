@@ -1,5 +1,6 @@
 import { useChannelList, useRelayConnection } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
+import { splitPartition } from "../relay/partition";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { NavigationScope } from "../navigation/targets";
@@ -28,11 +29,14 @@ export function useReadableChannel(
   const connection = useRelayConnection(relay);
   const list = useChannelList(connection.session.channels);
   const { viewer, scope } = connection;
+  const communityOrigin = scope
+    ? splitPartition(scope)?.communityOrigin
+    : undefined;
   if (
     connection.status !== "ready" ||
     list.status !== "ready" ||
     !viewer ||
-    !scope
+    !communityOrigin
   )
     return { status: "waiting" };
   const channel = list.channels.find((c) => c.id === channelId);
@@ -41,9 +45,6 @@ export function useReadableChannel(
     status: "readable",
     channel,
     session: connection.session,
-    scope: {
-      viewer,
-      communityOrigin: scope.slice(0, -(viewer.length + 1)),
-    },
+    scope: { viewer, communityOrigin },
   };
 }

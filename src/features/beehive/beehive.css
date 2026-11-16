@@ -401,6 +401,17 @@
 .beehive-settings p {
   margin: 0;
 }
+.beehive-settings section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+.beehive-agent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
 .beehive-files,
 .beehive-file {
   display: flex;
