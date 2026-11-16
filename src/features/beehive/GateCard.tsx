@@ -86,7 +86,7 @@ export function GateCard({
         // With nothing listed, the engine's "waits for approval of" has nothing after it.
         subtitle={
           item.kind === "approval" && artifacts.length === 0
-            ? item.title.replace(/\s+of$/, "")
+            ? item.title.replace(/\s+of\s*$/, "")
             : item.title
         }
         eyebrow={[

@@ -163,7 +163,9 @@ export function Board({
             <p className="text-body-sm text-subtle">
               {needing
                 .flatMap((card) => byCard.get(card.id) ?? [])
-                .map((item) => item.title || item.cardTitle)
+                .map((item) =>
+                  (item.title || item.cardTitle).replace(/\s+of\s*$/, ""),
+                )
                 .join(" · ")}
             </p>
           </div>

@@ -127,7 +127,7 @@ it("puts Reject before Approve, the quieter answer first", () => {
 it("ends the sentence when an approval lists nothing, without adding a name", () => {
   card({
     item: item({
-      title: "Gate waits for approval of",
+      title: "Gate waits for approval of ",
       detailJson: "{}",
     }),
   });
