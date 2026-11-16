@@ -463,9 +463,8 @@ export type Card = Message<"kiln.engine.v1.Card"> & {
 
   /**
    * Why the card's issue left its intake rule's search after the card
-   * ran: closed, reassigned or unmatched. Empty while it is in the search.
-   * A repos-and-label rule keeps a held issue in its search, so there
-   * reassigned marks a card whose issue someone else holds.
+   * ran: closed or unmatched. Empty while it is in the search. Readers
+   * should also show reassigned, which a later engine may write.
    *
    * @generated from field: string intake_status = 7;
    */
@@ -7233,7 +7232,7 @@ export type Intake = Message<"kiln.engine.v1.Intake"> & {
   query: string;
 
   /**
-   * How often the search runs, in seconds; 0 is five minutes, and the
+   * How often the search runs, in seconds; 0 is fifteen minutes, and the
    * least is 60.
    *
    * @generated from field: int32 interval_s = 3;
@@ -7241,8 +7240,8 @@ export type Intake = Message<"kiln.engine.v1.Intake"> & {
   intervalS: number;
 
   /**
-   * unassigned_or_me (the default) takes issues no one, or the person, is
-   * assigned; anyone takes them all.
+   * anyone (the default, also written as empty) takes every issue;
+   * unassigned takes only issues no one is assigned.
    *
    * @generated from field: string assignees = 4;
    */
