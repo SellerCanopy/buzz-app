@@ -11,7 +11,17 @@ import {
   ListReposResponseSchema,
   RefreshIntakeResponseSchema,
 } from "./gen/kiln/engine/v1/engine_pb";
-import { IntakePage, parseLogins, ruleSummary } from "./IntakePage";
+import {
+  ASSIGNEES,
+  DEFAULT_INTERVAL_S,
+  effectiveInterval,
+  IntakePage,
+  INTERVALS,
+  intervalLabel,
+  MIN_INTERVAL_S,
+  parseLogins,
+  ruleSummary,
+} from "./IntakePage";
 
 afterEach(cleanup);
 
@@ -205,6 +215,8 @@ it("reads the rules again after a failure", async () => {
   expect(
     await screen.findByRole("list", { name: "Intake rules" }),
   ).toBeVisible();
+  // The failure of the first read does not outlive the read that worked.
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("reads logins separated by commas or spaces and drops a leading @", () => {
@@ -228,4 +240,296 @@ it("summarises a rule that has no label or authors by its repo", () => {
       }),
     ),
   ).toBe("example-org/api, unassigned");
+});
+
+const openEdit = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(await screen.findByRole("button", { name: "Edit" }));
+  return screen.findByRole("dialog", { name: "Edit rule" });
+};
+
+const choose = async (
+  user: ReturnType<typeof userEvent.setup>,
+  dialog: HTMLElement,
+  field: string,
+  option: string,
+) => {
+  await user.click(
+    await within(dialog).findByRole("combobox", { name: field }),
+  );
+  await user.click(await screen.findByRole("option", { name: option }));
+};
+
+it("says Nothing new when a refresh added no card, and Added 1 card for one", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  e.calls.refreshIntake.mockResolvedValueOnce(
+    create(RefreshIntakeResponseSchema, { addedCardIds: [] }),
+  );
+  e.calls.refreshIntake.mockResolvedValueOnce(
+    create(RefreshIntakeResponseSchema, { addedCardIds: ["a"] }),
+  );
+  render(<IntakePage client={e.client} canRun />);
+  await user.click(await screen.findByRole("button", { name: "Refresh all" }));
+  expect(e.calls.refreshIntake).toHaveBeenLastCalledWith("");
+  expect(await screen.findByText("Nothing new.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Refresh all" }));
+  expect(await screen.findByText("Added 1 card.")).toBeVisible();
+});
+
+it("ignores a second action while one is running", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  let release: () => void = () => {};
+  e.calls.refreshIntake.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve(create(RefreshIntakeResponseSchema, { addedCardIds: [] }));
+      }),
+  );
+  render(<IntakePage client={e.client} canRun />);
+  await user.click(await screen.findByRole("button", { name: "Refresh all" }));
+  await vi.waitFor(() => expect(e.calls.refreshIntake).toHaveBeenCalled());
+  expect(screen.getByRole("button", { name: "Refresh all" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  try {
+    await user.click(screen.getByRole("button", { name: "Refresh all" }));
+    expect(e.calls.refreshIntake).toHaveBeenCalledTimes(1);
+  } finally {
+    release();
+  }
+  expect(await screen.findByText("Nothing new.")).toBeVisible();
+});
+
+it("says a failed switch beside the rules, which stay on screen", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  e.calls.saveIntakeRule.mockRejectedValueOnce(new Error("could not save"));
+  render(<IntakePage client={e.client} canRun />);
+  await user.click(
+    await screen.findByRole("switch", { name: /Rule on: Bugs/ }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("could not save");
+  expect(screen.getByRole("list", { name: "Intake rules" })).toBeVisible();
+});
+
+it("keeps the rules and says so when reading them again fails after a change", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  render(<IntakePage client={e.client} canRun />);
+  const toggle = await screen.findByRole("switch", { name: /Rule on: Bugs/ });
+  e.calls.listIntakeRules.mockRejectedValueOnce(new Error("offline"));
+  await user.click(toggle);
+  expect(await screen.findByRole("alert")).toHaveTextContent("offline");
+  expect(screen.getByRole("list", { name: "Intake rules" })).toBeVisible();
+});
+
+it("deletes after the confirmation, closes it and reads the rules again", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  render(<IntakePage client={e.client} canRun />);
+  await user.click(await screen.findByRole("button", { name: "Delete" }));
+  const confirm = await screen.findByRole("alertdialog");
+  const reads = e.calls.listIntakeRules.mock.calls.length;
+  await user.click(
+    within(confirm).getByRole("button", { name: "Delete rule" }),
+  );
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  await vi.waitFor(() =>
+    expect(e.calls.listIntakeRules.mock.calls.length).toBeGreaterThan(reads),
+  );
+});
+
+it("leaves the rule alone when the delete confirmation is cancelled", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  render(<IntakePage client={e.client} canRun />);
+  await user.click(await screen.findByRole("button", { name: "Delete" }));
+  const confirm = await screen.findByRole("alertdialog");
+  await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(e.calls.deleteIntakeRule).not.toHaveBeenCalled();
+  expect(screen.getByRole("list", { name: "Intake rules" })).toBeVisible();
+});
+
+it("says a failed delete inside the confirmation, which stays open", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  e.calls.deleteIntakeRule.mockRejectedValueOnce(new Error("rule is busy"));
+  render(<IntakePage client={e.client} canRun />);
+  await user.click(await screen.findByRole("button", { name: "Delete" }));
+  const confirm = await screen.findByRole("alertdialog");
+  await user.click(
+    within(confirm).getByRole("button", { name: "Delete rule" }),
+  );
+  expect(await within(confirm).findByRole("alert")).toHaveTextContent(
+    "rule is busy",
+  );
+  expect(screen.getByRole("alertdialog")).toBeVisible();
+});
+
+it("labels a rule with no name by its search, and shows an off rule as Off with no Refresh", async () => {
+  render(
+    <IntakePage
+      client={
+        engine([rule({ name: "", enabled: false }), rule({ id: "r2" })]).client
+      }
+      canRun
+    />,
+  );
+  const list = await screen.findByRole("list", { name: "Intake rules" });
+  const [off] = within(list).getAllByRole("listitem");
+  expect(off).toHaveTextContent("example-org/api, label bug, opened by octo");
+  expect(off).toHaveTextContent("Off");
+  expect(
+    within(off as HTMLElement).getByRole("button", { name: "Refresh" }),
+  ).toBeDisabled();
+  expect(
+    within(off as HTMLElement).getByRole("switch", {
+      name: "Rule on: example-org/api, label bug, opened by octo",
+    }),
+  ).not.toBeChecked();
+});
+
+it("names an interval the list does not know in seconds, and reads 0 as the engine's default", () => {
+  expect(intervalLabel(45)).toBe("Every 45 seconds");
+  expect(intervalLabel(0)).toBe("Every 15 minutes");
+  expect(effectiveInterval(0)).toBe(DEFAULT_INTERVAL_S);
+  expect(effectiveInterval(120)).toBe(120);
+  // The ladder starts at the engine's least and offers its default.
+  expect(INTERVALS[0]?.seconds).toBe(MIN_INTERVAL_S);
+  expect(INTERVALS.map((i) => i.seconds)).toContain(DEFAULT_INTERVAL_S);
+});
+
+it("shows a rule with no interval as reading every 15 minutes", async () => {
+  const stored = rule({
+    intake: { host: "github.com", repos: ["example-org/api"], intervalS: 0 },
+  });
+  render(<IntakePage client={engine([stored]).client} canRun />);
+  const list = await screen.findByRole("list", { name: "Intake rules" });
+  expect(list).toHaveTextContent("Every 15 minutes");
+  expect(list).not.toHaveTextContent("Every 0 seconds");
+});
+
+it("opens a rule's form with what it holds", async () => {
+  const user = userEvent.setup();
+  const stored = rule({
+    enabled: false,
+    intake: {
+      host: "github.com",
+      repos: ["example-org/api"],
+      label: "bug",
+      assignees: ASSIGNEES.unassigned,
+      authors: ["octo", "hubot"],
+      intervalS: 1800,
+    },
+  });
+  render(<IntakePage client={engine([stored]).client} canRun />);
+  const dialog = await openEdit(user);
+  expect(within(dialog).getByLabelText(/^Name/)).toHaveValue("Bugs");
+  expect(within(dialog).getByLabelText(/^Label/)).toHaveValue("bug");
+  expect(within(dialog).getByLabelText(/^Authors/)).toHaveValue("octo, hubot");
+  expect(within(dialog).getByLabelText(/^Workflow/)).toHaveValue("rpi");
+  expect(
+    await within(dialog).findByRole("combobox", { name: "Repo" }),
+  ).toHaveTextContent("example-org/api");
+  expect(
+    within(dialog).getByRole("combobox", { name: "Assigned to" }),
+  ).toHaveTextContent("No one");
+  expect(
+    within(dialog).getByRole("combobox", { name: "Read the repo" }),
+  ).toHaveTextContent("Every 30 minutes");
+  expect(
+    within(dialog).getByRole("switch", { name: "Rule is on" }),
+  ).not.toBeChecked();
+});
+
+it("saves an edit with the assignee, interval and trimmed workflow it was given", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  render(<IntakePage client={e.client} canRun />);
+  const dialog = await openEdit(user);
+  await choose(user, dialog, "Assigned to", "No one");
+  await choose(user, dialog, "Read the repo", "Every hour");
+  const workflow = within(dialog).getByLabelText(/^Workflow/);
+  await user.clear(workflow);
+  await user.type(workflow, "  ship  ");
+  await user.click(within(dialog).getByRole("button", { name: "Save rule" }));
+  expect(e.calls.saveIntakeRule).toHaveBeenCalledTimes(1);
+  expect(e.calls.saveIntakeRule.mock.calls[0]?.[0]).toEqual({
+    id: "r1",
+    name: "Bugs",
+    enabled: true,
+    workflow: "ship",
+    intake: {
+      host: "github.com",
+      repos: ["example-org/api"],
+      label: "bug",
+      assignees: ASSIGNEES.unassigned,
+      authors: ["octo"],
+      intervalS: 3600,
+    },
+  });
+});
+
+it("saves a stored rule with no interval at the engine's default, not 0", async () => {
+  const user = userEvent.setup();
+  const stored = rule({
+    intake: { host: "github.com", repos: ["example-org/api"], intervalS: 0 },
+  });
+  const e = engine([stored]);
+  render(<IntakePage client={e.client} canRun />);
+  const dialog = await openEdit(user);
+  expect(
+    within(dialog).getByRole("combobox", { name: "Read the repo" }),
+  ).toHaveTextContent("Every 15 minutes");
+  await user.click(within(dialog).getByRole("button", { name: "Save rule" }));
+  expect(e.calls.saveIntakeRule.mock.calls[0]?.[0]).toMatchObject({
+    intake: { intervalS: DEFAULT_INTERVAL_S, assignees: ASSIGNEES.anyone },
+  });
+});
+
+it("offers an interval the list does not know when a rule has one", async () => {
+  const user = userEvent.setup();
+  const stored = rule({
+    intake: { host: "github.com", repos: ["example-org/api"], intervalS: 45 },
+  });
+  render(<IntakePage client={engine([stored]).client} canRun />);
+  const dialog = await openEdit(user);
+  expect(
+    within(dialog).getByRole("combobox", { name: "Read the repo" }),
+  ).toHaveTextContent("Every 45 seconds");
+});
+
+it("keeps the saved repo choosable when the token no longer lists it", async () => {
+  const user = userEvent.setup();
+  const stored = rule({
+    intake: { host: "github.com", repos: ["example-org/gone"], intervalS: 900 },
+  });
+  const e = engine([stored]);
+  render(<IntakePage client={e.client} canRun />);
+  const dialog = await openEdit(user);
+  const repo = await within(dialog).findByRole("combobox", { name: "Repo" });
+  expect(repo).toHaveTextContent("example-org/gone");
+  await user.click(repo);
+  expect(
+    await screen.findByRole("option", { name: "example-org/gone" }),
+  ).toBeVisible();
+  expect(screen.getByRole("option", { name: "example-org/api" })).toBeVisible();
+});
+
+it("says in the form when the repos cannot be read, and reads them again on Retry", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  e.calls.listRepos.mockRejectedValueOnce(new Error("GitHub is not connected"));
+  render(<IntakePage client={e.client} canRun />);
+  const dialog = await openEdit(user);
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "GitHub is not connected",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+  expect(
+    await within(dialog).findByRole("combobox", { name: "Repo" }),
+  ).toBeVisible();
+  expect(e.calls.listRepos).toHaveBeenCalledTimes(2);
 });

@@ -25,19 +25,42 @@ type Loaded =
   | { status: "ready"; rules: IntakeRule[] }
   | { status: "error"; message: string };
 
-const INTERVALS = [
-  { seconds: 60, label: "Every minute" },
+/**
+ * The engine owns the interval rules: a rule that names none reads every 900 seconds, and the
+ * least it accepts is 60 (`DEFAULT_INTERVAL_S` and `MIN_INTERVAL_S` in the engine's
+ * `domain/intake.rs`). The doc comment on `Intake.interval_s` in the proto says "five minutes"
+ * and is out of date; the engine's constants are what a saved rule gets.
+ */
+export const DEFAULT_INTERVAL_S = 900;
+export const MIN_INTERVAL_S = 60;
+
+export const INTERVALS = [
+  { seconds: MIN_INTERVAL_S, label: "Every minute" },
   { seconds: 300, label: "Every 5 minutes" },
-  { seconds: 900, label: "Every 15 minutes" },
+  { seconds: DEFAULT_INTERVAL_S, label: "Every 15 minutes" },
   { seconds: 1800, label: "Every 30 minutes" },
   { seconds: 3600, label: "Every hour" },
 ];
-const DEFAULT_INTERVAL = 900;
+
+/** The seconds a rule really reads at: the engine's default stands in for an unset interval. */
+export function effectiveInterval(seconds: number): number {
+  return seconds || DEFAULT_INTERVAL_S;
+}
+
+/**
+ * What `Intake.assignees` takes. These are the values the engine accepts when it saves a rule
+ * (an empty value reads as `anyone`); the engine answers with one of the two.
+ */
+export const ASSIGNEES = {
+  anyone: "anyone",
+  unassigned: "unassigned",
+} as const;
 
 /** How often a rule reads the host, in words. */
 export function intervalLabel(seconds: number): string {
-  const known = INTERVALS.find((i) => i.seconds === seconds);
-  return known ? known.label : `Every ${seconds} seconds`;
+  const effective = effectiveInterval(seconds);
+  const known = INTERVALS.find((i) => i.seconds === effective);
+  return known ? known.label : `Every ${effective} seconds`;
 }
 
 /** A rule's search in a line: `owner/repo`, its label and who may have opened the issues. */
@@ -46,7 +69,7 @@ export function ruleSummary(rule: IntakeRule): string {
   if (!intake) return "";
   const parts = [intake.repos.join(", ")];
   if (intake.label) parts.push(`label ${intake.label}`);
-  if (intake.assignees === "unassigned") parts.push("unassigned");
+  if (intake.assignees === ASSIGNEES.unassigned) parts.push("unassigned");
   if (intake.authors.length > 0)
     parts.push(`opened by ${intake.authors.join(", ")}`);
   return parts.filter(Boolean).join(", ");
@@ -82,8 +105,10 @@ export function IntakePage({
     client
       .listIntakeRules(abort.signal)
       .then((reply) => {
-        if (!abort.signal.aborted)
-          setLoaded({ status: "ready", rules: reply.rules });
+        if (abort.signal.aborted) return;
+        // A read that works clears the failure an earlier read left.
+        setFailure(undefined);
+        setLoaded({ status: "ready", rules: reply.rules });
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
@@ -159,7 +184,7 @@ export function IntakePage({
           {notice}
         </p>
       )}
-      {failure && loaded.status === "ready" && (
+      {failure && !deleting && loaded.status === "ready" && (
         <p role="alert" className="text-danger">
           {failure}
         </p>
@@ -229,7 +254,10 @@ export function IntakePage({
                     <Button
                       variant="destructive"
                       disabled={pending}
-                      onClick={() => setDeleting(rule)}
+                      onClick={() => {
+                        setFailure(undefined);
+                        setDeleting(rule);
+                      }}
                     >
                       Delete
                     </Button>
@@ -276,7 +304,13 @@ export function IntakePage({
               </Button>
             </>
           }
-        />
+        >
+          {failure && (
+            <p role="alert" className="text-body text-danger">
+              {failure}
+            </p>
+          )}
+        </AlertDialog>
       )}
     </div>
   );
@@ -313,12 +347,12 @@ function RuleDialog({
   const [repo, setRepo] = useState(intake?.repos[0] ?? "");
   const [label, setLabel] = useState(intake?.label ?? "");
   const [unassigned, setUnassigned] = useState(
-    intake?.assignees === "unassigned",
+    intake?.assignees === ASSIGNEES.unassigned,
   );
   const [authors, setAuthors] = useState(intake?.authors.join(", ") ?? "");
   const [workflow, setWorkflow] = useState(rule?.workflow ?? "");
   const [interval, setInterval] = useState(
-    intake?.intervalS || DEFAULT_INTERVAL,
+    effectiveInterval(intake?.intervalS ?? 0),
   );
   const [enabled, setEnabled] = useState(rule?.enabled ?? true);
   const [repoError, setRepoError] = useState<string>();
@@ -333,7 +367,7 @@ function RuleDialog({
     const abort = new AbortController();
     setRepos({ status: "loading" });
     client
-      .listRepos("", abort.signal)
+      .listRepos(abort.signal)
       .then((reply) => {
         if (!abort.signal.aborted)
           setRepos({ status: "ready", repos: reply.repos });
@@ -364,7 +398,7 @@ function RuleDialog({
           host: "github.com",
           repos: [repo],
           label: label.trim(),
-          assignees: unassigned ? "unassigned" : "anyone",
+          assignees: unassigned ? ASSIGNEES.unassigned : ASSIGNEES.anyone,
           authors: parseLogins(authors),
           intervalS: interval,
         },
@@ -471,15 +505,15 @@ function RuleDialog({
         <Select
           label="Assigned to"
           variant="field"
-          value={unassigned ? "unassigned" : "anyone"}
+          value={unassigned ? ASSIGNEES.unassigned : ASSIGNEES.anyone}
           disabled={pending}
-          onValueChange={(next) => setUnassigned(next === "unassigned")}
+          onValueChange={(next) => setUnassigned(next === ASSIGNEES.unassigned)}
           groups={[
             {
               label: "Assigned to",
               options: [
-                { value: "anyone", label: "Anyone or no one" },
-                { value: "unassigned", label: "No one" },
+                { value: ASSIGNEES.anyone, label: "Anyone or no one" },
+                { value: ASSIGNEES.unassigned, label: "No one" },
               ],
             },
           ]}

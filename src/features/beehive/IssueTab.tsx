@@ -24,11 +24,19 @@ export function issueName(card: Card): string {
   return ref ? `${ref.owner}/${ref.repo}#${ref.number}` : "";
 }
 
+/** The values of `Card.intake_status` the engine's proto documents. */
+type IntakeStatus = "closed" | "reassigned" | "unmatched";
+
 /** Why a card's issue is no longer taken by its rule, in words a person reads. */
-const LEFT: Record<string, string> = {
+const LEFT: Record<IntakeStatus, string> = {
   closed: "The issue was closed.",
+  reassigned: "The issue was assigned to someone else.",
   unmatched: "The issue no longer matches the rule that brought it.",
 };
+
+/** Words for a status; one the app does not know yet is shown as the engine wrote it. */
+const leftText = (status: string) =>
+  (LEFT as Record<string, string | undefined>)[status] ?? status;
 
 /**
  * The issue a card came from: its title, labels and text as the host last returned them, and
@@ -77,7 +85,7 @@ export function IssueTab({ client, card }: { client: Client; card: Card }) {
         {card.intakeStatus && (
           <div>
             <dt className="text-label text-subtle">Intake</dt>
-            <dd>{LEFT[card.intakeStatus] ?? card.intakeStatus}</dd>
+            <dd>{leftText(card.intakeStatus)}</dd>
           </div>
         )}
         <div>

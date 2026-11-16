@@ -45,8 +45,6 @@ import {
   ListIntakeRulesResponseSchema,
   ListIssueCommentsRequestSchema,
   ListIssueCommentsResponseSchema,
-  ListOwnersRequestSchema,
-  ListOwnersResponseSchema,
   ListReposRequestSchema,
   ListReposResponseSchema,
   ListRunsRequestSchema,
@@ -432,25 +430,17 @@ export function createClient(session: Session) {
         signal,
       ),
     /** The repos the team's token reaches on github.com, as "owner/name". */
-    listRepos: (owner = "", signal?: AbortSignal) =>
+    listRepos: (signal?: AbortSignal) =>
       unary(
         "ListRepos",
         ListReposRequestSchema,
         ListReposResponseSchema,
-        create(ListReposRequestSchema, { host: "github.com", owner }),
+        create(ListReposRequestSchema, { host: "github.com" }),
         signal,
       ),
-    listOwners: (signal?: AbortSignal) =>
-      unary(
-        "ListOwners",
-        ListOwnersRequestSchema,
-        ListOwnersResponseSchema,
-        create(ListOwnersRequestSchema, { host: "github.com" }),
-        signal,
-      ),
-    /** Open issues of one repo, narrowed by text. `cursor` is the last page's `nextCursor`. */
+    /** Open issues of one repo, narrowed by text. */
     searchIssues: (
-      input: { repo: string; text?: string; cursor?: string },
+      input: { repo: string; text?: string },
       signal?: AbortSignal,
     ) =>
       unary(
@@ -464,7 +454,6 @@ export function createClient(session: Session) {
             text: input.text ?? "",
             state: "open",
           },
-          cursor: input.cursor ?? "",
         }),
         signal,
       ),

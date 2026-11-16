@@ -51,7 +51,7 @@ export function IssuePicker({
     const abort = new AbortController();
     setRepos({ status: "loading" });
     client
-      .listRepos("", abort.signal)
+      .listRepos(abort.signal)
       .then((reply) => {
         if (abort.signal.aborted) return;
         setRepos({
@@ -94,12 +94,14 @@ export function IssuePicker({
       });
     return () => abort.abort();
   }, [client, query]);
-  const search = (nextRepo = repo) =>
+  // A new search replaces the list, so the issue picked from the old one is let go.
+  const search = (nextRepo = repo) => {
+    onPick(undefined);
     setQuery((last) => ({ repo: nextRepo, text, n: (last?.n ?? 0) + 1 }));
+  };
 
   const choose = (next: string) => {
     setRepo(next);
-    onPick(undefined);
     search(next);
   };
 

@@ -98,6 +98,9 @@ export function NewCardDialog({
           value={mode}
           onValueChange={(next) => {
             setMode(next);
+            // The picker is left and comes back empty, so what it had picked goes too.
+            setPicked(undefined);
+            setPickError(undefined);
             setError(undefined);
           }}
           items={[

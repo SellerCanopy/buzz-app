@@ -82,6 +82,23 @@ it("shows text from the host as plain text, never as markup or a link", async ()
   );
 });
 
+it.each([
+  ["closed", "The issue was closed."],
+  ["reassigned", "The issue was assigned to someone else."],
+  ["unmatched", "The issue no longer matches the rule that brought it."],
+])(
+  "says in words why a card whose intake status is %s left its rule",
+  async (status, words) => {
+    show([], { card: card({ intakeStatus: status }) });
+    expect(await screen.findByText(words)).toBeVisible();
+  },
+);
+
+it("shows a status the app does not know as the engine wrote it", async () => {
+  show([], { card: card({ intakeStatus: "archived_upstream" }) });
+  expect(await screen.findByText("archived_upstream")).toBeVisible();
+});
+
 it("says why a card left its rule and when the issue has more comments", async () => {
   show([], {
     truncated: true,
