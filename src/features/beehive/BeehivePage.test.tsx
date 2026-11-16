@@ -13,6 +13,7 @@ import type { Client } from "./engine/client";
 import { EngineError } from "./engine/transport";
 import {
   AccessEntrySchema,
+  AgentLoginStatusSchema,
   ArtifactInfoSchema,
   ArtifactVersionSchema,
   CardSchema,
@@ -224,6 +225,9 @@ function engine(
       }),
     ),
     getHiveHealth: vi.fn(async () => create(GetHiveHealthResponseSchema, {})),
+    getAgentLoginStatus: vi.fn(async () =>
+      create(AgentLoginStatusSchema, { state: "needs-sign-in" }),
+    ),
     listSecretNames: vi.fn(async () =>
       create(ListSecretNamesResponseSchema, {}),
     ),
@@ -2128,6 +2132,8 @@ it("gives a person who is not an admin no agent tools and reads none", async () 
   expect(screen.queryByRole("button", { name: "Add tool server" })).toBeNull();
   expect(e.calls.listAgentToolServers).not.toHaveBeenCalled();
   expect(e.calls.getHiveHealth).not.toHaveBeenCalled();
+  expect(e.calls.getAgentLoginStatus).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
 });
 
 it("says so when the settings cannot be read and Retry reads them again", async () => {

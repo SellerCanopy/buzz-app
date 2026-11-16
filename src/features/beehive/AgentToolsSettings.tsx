@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { AgentLoginDialog } from "./AgentLoginDialog";
 import { Callout } from "./Callout";
 import type { Client } from "./engine/client";
-import { errorMessage } from "./engine/transport";
+import { EngineError, errorMessage } from "./engine/transport";
 import type {
   AgentSettingIssue,
   AgentToolServer,
@@ -26,6 +27,9 @@ type Health =
   | { status: "loading" }
   | { status: "ready"; issues: readonly AgentSettingIssue[] }
   | { status: "error"; message: string };
+
+/** The key of a server in the sign-in states. */
+const loginKey = (agent: string, server: string) => `${agent}\n${server}`;
 
 /** What the last save or removal did, as the engine reported it. */
 type Outcome = { verb: "Saved" | "Removed"; name: string } & Pick<
@@ -55,6 +59,13 @@ export function AgentToolsSettings({ client }: { client: Client }) {
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string>();
   const [outcome, setOutcome] = useState<Outcome>();
+  const [logins, setLogins] = useState<Record<string, string>>({});
+  const [loginNote, setLoginNote] = useState<string>();
+  const [loginCheck, setLoginCheck] = useState(0);
+  const [connecting, setConnecting] = useState<{
+    agent: string;
+    server: string;
+  }>();
   const cancelRemove = useRef<HTMLButtonElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
@@ -94,6 +105,53 @@ export function AgentToolsSettings({ client }: { client: Client }) {
       });
     return () => abort.abort();
   }, [client, healthAttempt]);
+
+  const hostedKey = useMemo(
+    () =>
+      JSON.stringify(
+        (loaded.status === "ready" ? loaded.agents : []).flatMap((entry) =>
+          entry.servers
+            .filter((server) => server.transport === "http")
+            .map((server) => [entry.agent, server.name]),
+        ),
+      ),
+    [loaded],
+  );
+
+  useEffect(() => {
+    // Whether each hosted server holds a sign-in is read once the list is known, one at a time
+    // (the host lists the agent's servers for each), and again on request.
+    void loginCheck;
+    const abort = new AbortController();
+    const hosted = JSON.parse(hostedKey) as [string, string][];
+    setLoginNote(undefined);
+    void (async () => {
+      for (const [agent, server] of hosted) {
+        try {
+          const reply = await client.getAgentLoginStatus(
+            agent,
+            server,
+            abort.signal,
+          );
+          if (abort.signal.aborted) return;
+          setLogins((was) => ({
+            ...was,
+            [loginKey(agent, server)]: reply.state,
+          }));
+        } catch (error) {
+          if (abort.signal.aborted) return;
+          setLoginNote((was) => was ?? errorMessage(error));
+          // No host to ask, or one that cannot be reached: every other server would fail the same way.
+          if (
+            error instanceof EngineError &&
+            error.code === "failed_precondition"
+          )
+            return;
+        }
+      }
+    })();
+    return () => abort.abort();
+  }, [client, hostedKey, loginCheck]);
 
   /** The agent's list as the engine now holds it replaces the one on screen. */
   const changed = (
@@ -170,6 +228,18 @@ export function AgentToolsSettings({ client }: { client: Client }) {
       />
       {outcome && <Applied outcome={outcome} />}
       <Issues health={health} onRetry={recheck} />
+      {loginNote && (
+        <p role="status" className="text-body-sm text-subtle">
+          {`Could not check the tool server sign-ins. ${loginNote} `}
+          <Button
+            size="inline"
+            variant="link"
+            onClick={() => setLoginCheck((n) => n + 1)}
+          >
+            Check sign-ins again
+          </Button>
+        </p>
+      )}
       <LoadingRegion
         pending={loaded.status === "loading"}
         label="Loading tool servers…"
@@ -209,6 +279,26 @@ export function AgentToolsSettings({ client }: { client: Client }) {
                     }
                     trailing={
                       <>
+                        {server.transport === "http" && (
+                          <>
+                            <LoginState
+                              state={logins[loginKey(entry.agent, server.name)]}
+                            />
+                            <Button
+                              size="sm"
+                              aria-label={`Connect ${server.name} on ${entry.agent}`}
+                              disabled={pending}
+                              onClick={() =>
+                                setConnecting({
+                                  agent: entry.agent,
+                                  server: server.name,
+                                })
+                              }
+                            >
+                              Connect
+                            </Button>
+                          </>
+                        )}
                         <Button
                           size="sm"
                           aria-label={`Edit ${server.name} on ${entry.agent}`}
@@ -239,6 +329,21 @@ export function AgentToolsSettings({ client }: { client: Client }) {
           </section>
         ))}
       </LoadingRegion>
+      {connecting && (
+        <AgentLoginDialog
+          client={client}
+          agent={connecting.agent}
+          server={connecting.server}
+          onClose={() => setConnecting(undefined)}
+          onSignedIn={(state) => {
+            setLogins((was) => ({
+              ...was,
+              [loginKey(connecting.agent, connecting.server)]: state,
+            }));
+            setConnecting(undefined);
+          }}
+        />
+      )}
       {editing && loaded.status === "ready" && (
         <ToolServerDialog
           client={client}
@@ -285,6 +390,20 @@ export function AgentToolsSettings({ client }: { client: Client }) {
         </AlertDialog>
       )}
     </>
+  );
+}
+
+/** Whether the agent holds a sign-in for a hosted server, once the host has said. */
+function LoginState({ state }: { state: string | undefined }) {
+  if (!state) return null;
+  const connected = state === "connected";
+  return (
+    <span
+      className="beehive-chip text-body-sm"
+      data-status={connected ? "done" : undefined}
+    >
+      {connected ? "Connected" : "Needs sign-in"}
+    </span>
   );
 }
 

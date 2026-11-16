@@ -9,6 +9,7 @@ import {
   AcceptTicketProposalRequestSchema,
   AcceptTicketProposalResponseSchema,
   AccessEntrySchema,
+  AgentLoginStatusSchema,
   AgentToolsChangeSchema,
   AddIssueRepoRequestSchema,
   AddNoteRequestSchema,
@@ -108,7 +109,12 @@ import {
   ListAgentsResponseSchema,
   ListAgentToolServersRequestSchema,
   ListAgentToolServersResponseSchema,
+  GetAgentLoginStatusRequestSchema,
   GrantTeamSecretRequestSchema,
+  PasteAgentLoginRequestSchema,
+  PasteAgentLoginResponseSchema,
+  StartAgentLoginRequestSchema,
+  StartAgentLoginResponseSchema,
   ListSecretNamesRequestSchema,
   ListSecretNamesResponseSchema,
   RevokeTeamSecretRequestSchema,
@@ -871,6 +877,49 @@ export function createClient(session: Session) {
         RevokeTeamSecretRequestSchema,
         SecretChangeSchema,
         create(RevokeTeamSecretRequestSchema, { agent, name }),
+        signal,
+      ),
+    /**
+     * Start the Claude CLI's sign-in for one of an agent's HTTP tool servers and get the link to
+     * open. The host keeps the waiting process for ten minutes. The link is the sign-in itself.
+     * Needs Admin.
+     */
+    startAgentLogin: (agent: string, server: string, signal?: AbortSignal) =>
+      unary(
+        "StartAgentLogin",
+        StartAgentLoginRequestSchema,
+        StartAgentLoginResponseSchema,
+        create(StartAgentLoginRequestSchema, { agent, server }),
+        signal,
+      ),
+    /**
+     * Hand the address the browser ended on to the waiting sign-in. The address can carry the
+     * authorization code, so it is sent and never kept. Needs Admin.
+     */
+    pasteAgentLogin: (
+      agent: string,
+      server: string,
+      url: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "PasteAgentLogin",
+        PasteAgentLoginRequestSchema,
+        PasteAgentLoginResponseSchema,
+        create(PasteAgentLoginRequestSchema, { agent, server, url }),
+        signal,
+      ),
+    /** Whether the agent's CLI holds a sign-in for the server: `needs-sign-in` or `connected`. Needs Admin. */
+    getAgentLoginStatus: (
+      agent: string,
+      server: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "GetAgentLoginStatus",
+        GetAgentLoginStatusRequestSchema,
+        AgentLoginStatusSchema,
+        create(GetAgentLoginStatusRequestSchema, { agent, server }),
         signal,
       ),
     /** What the engine reports about itself, including the agents that are not set up for stage threads. */

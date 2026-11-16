@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AgentToolsSettings } from "./AgentToolsSettings";
 import type { Client } from "./engine/client";
 import {
+  AgentLoginStatusSchema,
   AgentToolsChangeSchema,
   GetHiveHealthResponseSchema,
   ListAgentToolServersResponseSchema,
@@ -76,6 +77,9 @@ function show(
         allowlistApplied: options.issues?.length ? "no" : "yes",
         agentIssues: options.issues ?? [],
       }),
+    ),
+    getAgentLoginStatus: vi.fn(async () =>
+      create(AgentLoginStatusSchema, { state: "needs-sign-in" }),
     ),
     setAgentToolServer: vi.fn(async () => {
       if (options.set instanceof Error) throw options.set;

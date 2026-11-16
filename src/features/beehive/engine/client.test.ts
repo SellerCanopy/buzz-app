@@ -215,6 +215,45 @@ it("sends a secret's value only in the request of the call that sets it, and lis
   expect(sent(4).path).toBe(`${SERVICE}ListSecretNames`);
 });
 
+it("sends a sign-in as the agent and server, and the pasted address only with the paste", async () => {
+  const { client, sent } = wire({
+    url: "https://example.org/authorize",
+    signedIn: true,
+    state: "connected",
+  });
+  expect((await client.startAgentLogin("builder", "linear")).url).toBe(
+    "https://example.org/authorize",
+  );
+  expect(sent(0)).toEqual({
+    path: `${SERVICE}StartAgentLogin`,
+    body: { agent: "builder", server: "linear" },
+  });
+  expect(
+    (
+      await client.pasteAgentLogin(
+        "builder",
+        "linear",
+        "http://localhost:4000/cb?code=c",
+      )
+    ).signedIn,
+  ).toBe(true);
+  expect(sent(1)).toEqual({
+    path: `${SERVICE}PasteAgentLogin`,
+    body: {
+      agent: "builder",
+      server: "linear",
+      url: "http://localhost:4000/cb?code=c",
+    },
+  });
+  expect((await client.getAgentLoginStatus("builder", "linear")).state).toBe(
+    "connected",
+  );
+  expect(sent(2)).toEqual({
+    path: `${SERVICE}GetAgentLoginStatus`,
+    body: { agent: "builder", server: "linear" },
+  });
+});
+
 it("ignores a field of the reply that this app does not know, as an older app meets a newer engine", async () => {
   const { client } = wire({ headSeq: "12", addedByANewerEngine: { x: 1 } });
   const status = await client.getStatus();
