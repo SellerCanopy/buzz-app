@@ -39,10 +39,44 @@ export function routeCard(value: JsonValue | undefined): string | undefined {
     : undefined;
 }
 
+/** What a package name may be. The engine applies the same rule when it saves one. */
+export const WORKFLOW_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+
+/** The rule in words, for a name that does not match it. */
+export const NAME_RULE =
+  "Use lowercase letters, digits, - and _, starting with a letter or digit, up to 32 characters.";
+
+function only(
+  value: JsonValue | undefined,
+  key: string,
+): JsonValue | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const keys = Object.keys(value);
+  return keys.length === 1 && keys[0] === key
+    ? (value as Record<string, JsonValue>)[key]
+    : undefined;
+}
+
+/** The workflow a route opens in the editor: `{ workflow: <name> }` and nothing else. */
+export function routeWorkflow(
+  value: JsonValue | undefined,
+): string | undefined {
+  const name = only(value, "workflow");
+  return typeof name === "string" && WORKFLOW_NAME.test(name)
+    ? name
+    : undefined;
+}
+
+/** True for the route of the new workflow page: `{ newWorkflow: true }` and nothing else. */
+export function routeNewWorkflow(value: JsonValue | undefined): boolean {
+  return only(value, "newWorkflow") === true;
+}
+
 /** The page's route contract: the one validator the page registers and the tests use. */
 export const PAGE_ROUTE = {
   version: 1,
-  validate: (params: JsonValue) => !!routeCard(params),
+  validate: (params: JsonValue) =>
+    !!routeCard(params) || !!routeWorkflow(params) || routeNewWorkflow(params),
 } as const;
 
 /** The tab a route names, or undefined when it names none or an unknown one. */
@@ -67,6 +101,26 @@ export function visitedCard(target: OpenTarget): string | undefined {
 /** The tab a visit shows, or undefined for the card's own default. */
 export function visitedTab(target: OpenTarget): CardTab | undefined {
   return isBeehive(target) ? routeTab(target.route?.params) : undefined;
+}
+
+/** The workflow a visit edits, or undefined when it edits none. */
+export function visitedWorkflow(target: OpenTarget): string | undefined {
+  return isBeehive(target) ? routeWorkflow(target.route?.params) : undefined;
+}
+
+/** True when a visit shows the page that adds a workflow. */
+export function visitedNewWorkflow(target: OpenTarget): boolean {
+  return isBeehive(target) && routeNewWorkflow(target.route?.params);
+}
+
+/** The same page opened on the editor of one workflow. */
+export function workflowTarget(target: PageTarget, name: string): OpenTarget {
+  return { ...target, route: { version: 1, params: { workflow: name } } };
+}
+
+/** The same page opened on the page that adds a workflow. */
+export function newWorkflowTarget(target: PageTarget): OpenTarget {
+  return { ...target, route: { version: 1, params: { newWorkflow: true } } };
 }
 
 /** The same page opened on one card, and on one of its tabs when given. */

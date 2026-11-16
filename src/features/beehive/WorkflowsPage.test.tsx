@@ -214,3 +214,50 @@ it("names a kind it does not know as the engine sent it", () => {
     } as never),
   ).toBe("review");
 });
+
+it("tags a built-in workflow and opens a workflow in the editor from its Edit button", async () => {
+  const onEdit = vi.fn();
+  render(
+    <WorkflowsPage
+      canRun
+      onEdit={onEdit}
+      client={
+        engine([demo], [{ name: "demo", path: "builtin/demo", findings: [] }])
+          .client
+      }
+    />,
+  );
+  const section = await screen.findByRole("region", { name: "demo" });
+  expect(within(section).getByText("Built in")).toBeVisible();
+  await userEvent.click(
+    within(section).getByRole("button", { name: "Edit demo" }),
+  );
+  expect(onEdit).toHaveBeenCalledWith("demo");
+});
+
+it("offers a person who cannot run View in the place of Edit", async () => {
+  render(
+    <WorkflowsPage
+      onEdit={vi.fn()}
+      client={
+        engine([demo], [{ name: "demo", path: "builtin/demo", findings: [] }])
+          .client
+      }
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "View demo" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Edit demo" })).toBeNull();
+});
+
+it("reads the workflows again when a workflow was saved", async () => {
+  const e = engine([demo], []);
+  const { rerender } = render(<WorkflowsPage client={e.client} revision={0} />);
+  await screen.findByRole("region", { name: "demo" });
+  expect(e.calls.listWorkflows).toHaveBeenCalledTimes(1);
+  rerender(<WorkflowsPage client={e.client} revision={1} />);
+  await vi.waitFor(() =>
+    expect(e.calls.listWorkflows).toHaveBeenCalledTimes(2),
+  );
+});

@@ -81,11 +81,43 @@ import {
   StopRunRequestSchema,
   WhoAmIRequestSchema,
   WhoAmIResponseSchema,
+  DeleteWorkflowRequestSchema,
+  DeleteWorkflowResponseSchema,
+  DuplicateWorkflowRequestSchema,
+  ExportWorkflowRequestSchema,
+  ExportWorkflowResponseSchema,
+  GetWorkflowDraftRequestSchema,
+  GetWorkflowDraftResponseSchema,
+  ImportWorkflowRequestSchema,
+  ListAgentsRequestSchema,
+  ListAgentsResponseSchema,
+  ListStageTemplatesRequestSchema,
+  ListStageTemplatesResponseSchema,
+  SaveWorkflowRequestSchema,
+  SaveWorkflowResponseSchema,
+  WorkflowSchema,
 } from "../gen/kiln/engine/v1/engine_pb";
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import type { Session } from "./session";
 
 const SERVICE = "/kiln.engine.v1.EngineService/";
+
+/** A package's files by path, as text. */
+export type WorkflowFiles = { name: string; files: Record<string, string> };
+
+const encoder = new TextEncoder();
+
+function toDraft(draft: WorkflowFiles) {
+  return {
+    name: draft.name,
+    files: Object.fromEntries(
+      Object.entries(draft.files).map(([path, text]) => [
+        path,
+        encoder.encode(text),
+      ]),
+    ),
+  };
+}
 
 /** The Beehive methods the app calls. Each phase adds the methods it needs. */
 export function createClient(session: Session) {
@@ -369,6 +401,98 @@ export function createClient(session: Session) {
         ListWorkflowsRequestSchema,
         ListWorkflowsResponseSchema,
         create(ListWorkflowsRequestSchema),
+        signal,
+      ),
+    /** Check one unsaved package as the editor holds it, in place of a loaded one. */
+    checkDraft: (draft: WorkflowFiles, signal?: AbortSignal) =>
+      unary(
+        "CheckWorkflow",
+        CheckWorkflowRequestSchema,
+        CheckWorkflowResponseSchema,
+        create(CheckWorkflowRequestSchema, { draft: toDraft(draft) }),
+        signal,
+      ),
+    /** A package's files as text, with the hash an edit of them is made against. */
+    getWorkflowDraft: (name: string, signal?: AbortSignal) =>
+      unary(
+        "GetWorkflowDraft",
+        GetWorkflowDraftRequestSchema,
+        GetWorkflowDraftResponseSchema,
+        create(GetWorkflowDraftRequestSchema, { name, text: true }),
+        signal,
+      ),
+    /**
+     * Save a package. `baseHash` is the hash the files were opened at, and empty for a new
+     * name. A save made against an older hash fails with `failed_precondition`, and a draft the
+     * checks find errors in fails with `invalid_argument`. Nothing is written in either case.
+     */
+    saveWorkflow: (
+      draft: WorkflowFiles,
+      baseHash: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SaveWorkflow",
+        SaveWorkflowRequestSchema,
+        SaveWorkflowResponseSchema,
+        create(SaveWorkflowRequestSchema, {
+          draft: toDraft(draft),
+          baseHash,
+        }),
+        signal,
+      ),
+    /** Copy a package under a new name. The copy is the person's own. */
+    duplicateWorkflow: (name: string, newName: string, signal?: AbortSignal) =>
+      unary(
+        "DuplicateWorkflow",
+        DuplicateWorkflowRequestSchema,
+        WorkflowSchema,
+        create(DuplicateWorkflowRequestSchema, { name, newName }),
+        signal,
+      ),
+    /** Delete a saved package. A built-in, or one a card still uses, is refused. */
+    deleteWorkflow: (name: string, signal?: AbortSignal) =>
+      unary(
+        "DeleteWorkflow",
+        DeleteWorkflowRequestSchema,
+        DeleteWorkflowResponseSchema,
+        create(DeleteWorkflowRequestSchema, { name }),
+        signal,
+      ),
+    /** A package as a zip of its files. */
+    exportWorkflow: (name: string, signal?: AbortSignal) =>
+      unary(
+        "ExportWorkflow",
+        ExportWorkflowRequestSchema,
+        ExportWorkflowResponseSchema,
+        create(ExportWorkflowRequestSchema, { name }),
+        signal,
+      ),
+    /** Add the package in a zip, under `name` when given. */
+    importWorkflow: (zip: Uint8Array, name = "", signal?: AbortSignal) =>
+      unary(
+        "ImportWorkflow",
+        ImportWorkflowRequestSchema,
+        WorkflowSchema,
+        create(ImportWorkflowRequestSchema, { zip, name }),
+        signal,
+      ),
+    /** The stages a person can add, each as the JSON a workflow's stage holds. */
+    listStageTemplates: (signal?: AbortSignal) =>
+      unary(
+        "ListStageTemplates",
+        ListStageTemplatesRequestSchema,
+        ListStageTemplatesResponseSchema,
+        create(ListStageTemplatesRequestSchema),
+        signal,
+      ),
+    /** The agents in the community by display name, which a workflow stage names. */
+    listAgents: (signal?: AbortSignal) =>
+      unary(
+        "ListAgents",
+        ListAgentsRequestSchema,
+        ListAgentsResponseSchema,
+        create(ListAgentsRequestSchema),
         signal,
       ),
     /** Check every package and folder the engine loaded. */

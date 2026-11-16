@@ -637,3 +637,197 @@
 .beehive-step-group + .beehive-step-group {
   margin-block-start: var(--space-4);
 }
+
+/* The workflow editor: a canvas of stages beside the settings of the one that is picked. */
+.wf-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26rem;
+  gap: var(--space-6);
+  align-items: start;
+}
+@container (max-width: 60rem) {
+  .wf-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.wf-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.wf-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.wf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.wf-swatch {
+  inline-size: 1.25rem;
+  block-size: 0.1875rem;
+  border-radius: var(--radius-row);
+  background: var(--text-link);
+}
+.wf-swatch[data-result="passed"] {
+  background: var(--text-success);
+}
+.wf-swatch[data-result="needs_work"] {
+  background: var(--border-warning);
+}
+.wf-swatch[data-result="failed"] {
+  background: var(--border-danger);
+}
+.wf-canvas {
+  overflow-x: auto;
+  padding: var(--space-4);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+}
+.wf-nodes {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-6) * 2);
+  margin: 0;
+  padding: 0 var(--space-4);
+  list-style: none;
+}
+.wf-node {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.wf-node-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  text-align: start;
+  color: inherit;
+  background: var(--surface-raised, var(--surface-inset));
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.wf-node[data-selected] .wf-node-main {
+  border-color: var(--text-link);
+  box-shadow: 0 0 0 1px var(--text-link);
+}
+.wf-node[data-mark="error"] .wf-node-main {
+  border-color: var(--border-danger);
+}
+.wf-node[data-mark="warning"] .wf-node-main {
+  border-color: var(--border-warning);
+}
+.wf-node-tools {
+  display: flex;
+  gap: var(--space-1);
+}
+.wf-arcs {
+  display: block;
+  margin-inline-start: 0;
+  fill: none;
+}
+.wf-arc {
+  fill: none;
+  stroke: var(--text-link);
+  stroke-width: 1.5;
+}
+.wf-arc[data-result="passed"] {
+  stroke: var(--text-success);
+}
+.wf-arc[data-result="needs_work"] {
+  stroke: var(--border-warning);
+}
+.wf-arc[data-result="failed"] {
+  stroke: var(--border-danger);
+}
+.wf-findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.wf-findings p {
+  margin: 0;
+}
+.wf-findings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.wf-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+}
+.wf-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.wf-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-new-form {
+  max-inline-size: 28rem;
+}
+.wf-recipes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-recipe {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  inline-size: 100%;
+  block-size: 100%;
+  padding: var(--space-4);
+  text-align: start;
+  color: inherit;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+  cursor: pointer;
+}
+.wf-recipe:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.wf-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}

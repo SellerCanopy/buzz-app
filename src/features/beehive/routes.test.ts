@@ -8,10 +8,16 @@ import {
   PLUGIN_ID,
   boardTarget,
   cardTarget,
+  newWorkflowTarget,
+  routeNewWorkflow,
+  routeWorkflow,
   routeCard,
   routeTab,
   visitedCard,
+  visitedNewWorkflow,
   visitedTab,
+  visitedWorkflow,
+  workflowTarget,
 } from "./routes";
 
 const ID = "0b8f4d1e-6c1f-4f0e-9d53-2f3f6a0a1c11";
@@ -89,4 +95,39 @@ it("opens the board, not a card, for a link naming no valid card", () => {
   const { format: _format, ...plugin } = link;
   const target = { version: 1, kind: "plugin", ...plugin } as const;
   expect(visitedCard(linkedPageTarget(target, page))).toBeUndefined();
+});
+
+it("accepts a route naming one workflow by a name the engine can save", () => {
+  expect(routeWorkflow({ workflow: "my-flow" })).toBe("my-flow");
+  expect(routeWorkflow({ workflow: "a_1" })).toBe("a_1");
+  expect(routeWorkflow({ workflow: "Upper" })).toBeUndefined();
+  expect(routeWorkflow({ workflow: "../x" })).toBeUndefined();
+  expect(routeWorkflow({ workflow: "x".repeat(33) })).toBeUndefined();
+  expect(routeWorkflow({ workflow: "a", card: ID })).toBeUndefined();
+  expect(routeWorkflow({ workflow: 7 })).toBeUndefined();
+  expect(routeWorkflow(undefined)).toBeUndefined();
+  expect(routeNewWorkflow({ newWorkflow: true })).toBe(true);
+  expect(routeNewWorkflow({ newWorkflow: false })).toBe(false);
+  expect(routeNewWorkflow({ newWorkflow: true, card: ID })).toBe(false);
+  expect(routeCard({ workflow: "a" })).toBeUndefined();
+});
+
+it("round-trips the editor and the new workflow page through their targets", () => {
+  const edit = workflowTarget(board, "my-flow");
+  expect(visitedWorkflow(edit)).toBe("my-flow");
+  expect(visitedCard(edit)).toBeUndefined();
+  expect(visitedNewWorkflow(edit)).toBe(false);
+  const added = newWorkflowTarget(board);
+  expect(visitedNewWorkflow(added)).toBe(true);
+  expect(visitedWorkflow(added)).toBeUndefined();
+  expect(visitedWorkflow(board)).toBeUndefined();
+  expect(visitedWorkflow({ version: 1, kind: "home" })).toBeUndefined();
+});
+
+it("registers a contract that accepts a card, a workflow and the new page, and nothing else", () => {
+  expect(PAGE_ROUTE.validate({ card: ID })).toBe(true);
+  expect(PAGE_ROUTE.validate({ workflow: "my-flow" })).toBe(true);
+  expect(PAGE_ROUTE.validate({ newWorkflow: true })).toBe(true);
+  expect(PAGE_ROUTE.validate({ workflow: "Bad Name" })).toBe(false);
+  expect(PAGE_ROUTE.validate({})).toBe(false);
 });

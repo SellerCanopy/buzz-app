@@ -6,6 +6,7 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
+import { Findings } from "./Findings";
 import type {
   Finding,
   PackageCheck,
@@ -18,14 +19,18 @@ type Loaded =
   | { status: "ready"; workflows: Workflow[]; checks: PackageCheck[] }
   | { status: "error"; message: string };
 
-/** The packages the engine loaded, and what its checks found in each. Read once; `retry` reads again. */
-function useWorkflows(client: Client) {
+/**
+ * The packages the engine loaded, and what its checks found in each. Read once; `retry` reads
+ * again, and so does a new `revision`, which the page bumps when a workflow was saved.
+ */
+function useWorkflows(client: Client, revision: number) {
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   useEffect(() => {
-    // `attempt` restarts the read; it is not otherwise used.
+    // `attempt` and `revision` restart the read; neither is otherwise used.
     void attempt;
+    void revision;
     const abort = new AbortController();
     setLoaded({ status: "loading" });
     Promise.all([
@@ -45,7 +50,7 @@ function useWorkflows(client: Client) {
         setLoaded({ status: "error", message: errorMessage(error) });
       });
     return () => abort.abort();
-  }, [client, attempt]);
+  }, [client, attempt, revision]);
   return { loaded, retry };
 }
 
@@ -54,12 +59,6 @@ const KINDS: Record<string, string> = {
   approval: "Approval",
   wait: "Wait",
   action: "Action",
-};
-
-const SEVERITIES: Record<string, { label: string; tone: string }> = {
-  error: { label: "Error", tone: "text-danger" },
-  warning: { label: "Warning", tone: "text-warning" },
-  note: { label: "Note", tone: "text-subtle" },
 };
 
 /**
@@ -77,10 +76,21 @@ export function stageSummary(stage: WorkflowStage): string {
 
 /**
  * Every package the engine loaded with its stages and findings, and the folders that did not
- * load. Read only: creating, importing and editing a workflow come with Phase 19.
+ * load. A person who can run opens one in the editor; anyone else opens it to read.
  */
-export function WorkflowsPage({ client }: { client: Client }) {
-  const { loaded, retry } = useWorkflows(client);
+export function WorkflowsPage({
+  client,
+  canRun = false,
+  revision = 0,
+  onEdit,
+}: {
+  client: Client;
+  canRun?: boolean;
+  /** Changes when a workflow was saved, deleted or imported, so the list reads again. */
+  revision?: number;
+  onEdit?(name: string): void;
+}) {
+  const { loaded, retry } = useWorkflows(client, revision);
   const failed = loaded.status === "error";
   const workflows = loaded.status === "ready" ? loaded.workflows : [];
   const checks = loaded.status === "ready" ? loaded.checks : [];
@@ -121,6 +131,8 @@ export function WorkflowsPage({ client }: { client: Client }) {
               key={workflow.name}
               workflow={workflow}
               findings={findingsOf(workflow.name)}
+              canRun={canRun}
+              onEdit={onEdit}
             />
           ))}
           {unloaded.length > 0 && (
@@ -149,9 +161,13 @@ export function WorkflowsPage({ client }: { client: Client }) {
 function WorkflowSection({
   workflow,
   findings,
+  canRun,
+  onEdit,
 }: {
   workflow: Workflow;
   findings: Finding[];
+  canRun: boolean;
+  onEdit: ((name: string) => void) | undefined;
 }) {
   // `Built in, version 0.1.0.` for a package every build ships, `Version 1` for the rest.
   const details = workflow.builtin
@@ -167,11 +183,23 @@ function WorkflowSection({
         title={workflow.name}
         subtitle={workflow.description || undefined}
         actions={
-          <span
-            className={`text-body-sm ${workflow.ok ? "text-subtle" : "text-danger"}`}
-          >
-            {workflow.ok ? "Ready" : "Has problems"}
-          </span>
+          <>
+            {workflow.builtin && <span className="beehive-tag">Built in</span>}
+            <span
+              className={`text-body-sm ${workflow.ok ? "text-subtle" : "text-danger"}`}
+            >
+              {workflow.ok ? "Ready" : "Has problems"}
+            </span>
+            {onEdit && (
+              <Button
+                size="sm"
+                aria-label={`${canRun ? "Edit" : "View"} ${workflow.name}`}
+                onClick={() => onEdit(workflow.name)}
+              >
+                {canRun ? "Edit" : "View"}
+              </Button>
+            )}
+          </>
         }
       />
       {details && <p className="text-body-sm text-subtle">{details}</p>}
@@ -192,31 +220,5 @@ function WorkflowSection({
       )}
       <Findings label={workflow.name} findings={findings} />
     </section>
-  );
-}
-
-function Findings({ label, findings }: { label: string; findings: Finding[] }) {
-  if (!findings.length) return null;
-  return (
-    <ul className="beehive-findings" aria-label={`Findings for ${label}`}>
-      {findings.map((finding) => {
-        const severity = SEVERITIES[finding.severity] ?? {
-          label: finding.severity,
-          tone: "text-subtle",
-        };
-        return (
-          <li key={`${finding.path}|${finding.code}|${finding.message}`}>
-            <span className={`text-body-sm ${severity.tone}`}>
-              {severity.label}
-            </span>{" "}
-            <code className="text-mono-sm">{finding.code}</code>{" "}
-            {finding.message}
-            {finding.path && (
-              <span className="text-body-sm text-subtle"> {finding.path}</span>
-            )}
-          </li>
-        );
-      })}
-    </ul>
   );
 }

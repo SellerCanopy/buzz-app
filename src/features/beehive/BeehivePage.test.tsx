@@ -29,6 +29,9 @@ import {
   ListWorkflowsResponseSchema,
   GetSettingsResponseSchema,
   GetUsageResponseSchema,
+  GetWorkflowDraftResponseSchema,
+  ListAgentsResponseSchema,
+  ListStageTemplatesResponseSchema,
   GetStatusResponseSchema,
   InboxItemSchema,
   RunSchema,
@@ -100,6 +103,23 @@ function engine(
       }),
     ),
     checkWorkflow: vi.fn(async () => create(CheckWorkflowResponseSchema, {})),
+    checkDraft: vi.fn(async () => create(CheckWorkflowResponseSchema, {})),
+    getWorkflowDraft: vi.fn(async () =>
+      create(GetWorkflowDraftResponseSchema, {
+        hash: "h1",
+        textFiles: {
+          "kiln-package.yaml": JSON.stringify({ name: "demo", version: "1" }),
+          "workflow.yaml": JSON.stringify({
+            version: 2,
+            stages: [{ id: "plan", kind: "prompt", agent: "a", prompt: "p" }],
+          }),
+        },
+      }),
+    ),
+    listAgents: vi.fn(async () => create(ListAgentsResponseSchema, {})),
+    listStageTemplates: vi.fn(async () =>
+      create(ListStageTemplatesResponseSchema, {}),
+    ),
     getUsage: vi.fn(async () => create(GetUsageResponseSchema, {})),
     getCard: vi.fn(async () => card({ body: "Line one\nLine two" })),
     createCard: vi.fn(async () => card()),
@@ -517,6 +537,111 @@ it("lists the workflows from the Workflows view and returns to the board", async
   expect(e.calls.listCards).toHaveBeenCalledTimes(4);
   await vi.waitFor(() => expect(e.polls).toHaveLength(2));
   expect(e.polls[1]?.signal?.aborted).toBe(false);
+});
+
+const editorView: OpenTarget = {
+  ...board,
+  route: { version: 1, params: { workflow: "demo" } },
+} as OpenTarget;
+const newWorkflowView: OpenTarget = {
+  ...board,
+  route: { version: 1, params: { newWorkflow: true } },
+} as OpenTarget;
+
+it("offers Import and New workflow, and Edit on each workflow, to someone who can run", async () => {
+  const e = engine();
+  const nav = page(e.client);
+  await levelApplied(e);
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  expect(await screen.findByRole("button", { name: "Import" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Edit demo" }));
+  expect(nav.open).toHaveBeenLastCalledWith({
+    ...board,
+    route: { version: 1, params: { workflow: "demo" } },
+  });
+});
+
+it("opens the page that adds a workflow as a visit", async () => {
+  const e = engine();
+  const nav = page(e.client);
+  await levelApplied(e);
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "New workflow" }),
+  );
+  expect(nav.open).toHaveBeenLastCalledWith({
+    ...board,
+    route: { version: 1, params: { newWorkflow: true } },
+  });
+});
+
+it("gives a reader the workflows to read, with no Import, New workflow or Edit", async () => {
+  const e = engine({ role: "read" });
+  page(e.client);
+  await levelApplied(e);
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  expect(
+    await screen.findByRole("button", { name: "View demo" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "New workflow" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Edit/ })).toBeNull();
+});
+
+it("shows the editor when its visit is shown, under Workflows in the sidebar", async () => {
+  const e = engine();
+  page(e.client, editorView);
+  expect(await screen.findByRole("heading", { name: "demo" })).toBeVisible();
+  expect(e.calls.getWorkflowDraft).toHaveBeenCalledWith(
+    "demo",
+    expect.anything(),
+  );
+  expect(screen.getByRole("button", { name: "Workflows" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
+it("Back to Workflows retires the editor's visits and falls back to the board", async () => {
+  const nav = page(engine().client, editorView);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Back to Workflows" }),
+  );
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(retire(editorView)).toBe(true);
+  expect(retire(board)).toBe(false);
+  expect(retire(cardView)).toBe(false);
+  expect(fallback).toEqual(board);
+});
+
+it("leaves the editor when another view is chosen in the sidebar", async () => {
+  const nav = page(engine().client, editorView);
+  await userEvent.click(await screen.findByRole("button", { name: "Usage" }));
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  const [retire] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+  ];
+  expect(retire(editorView)).toBe(true);
+});
+
+it("shows the new workflow page when its visit is shown, and Cancel retires it", async () => {
+  const e = engine();
+  const nav = page(e.client, newWorkflowView);
+  expect(
+    await screen.findByRole("heading", { name: "New workflow" }),
+  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(retire(newWorkflowView)).toBe(true);
+  expect(retire(editorView)).toBe(false);
+  expect(fallback).toEqual(board);
 });
 
 it("offers New card only to someone who can run", async () => {

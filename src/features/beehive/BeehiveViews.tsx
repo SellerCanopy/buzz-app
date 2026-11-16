@@ -5,6 +5,7 @@ import {
   WarningCircleIcon,
 } from "../../shared/design-system/icons";
 import { CountBadge } from "../../shared/design-system/ui/CountBadge";
+import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -19,6 +20,7 @@ import type { Client } from "./engine/client";
 import type { InboxItem } from "./gen/kiln/engine/v1/engine_pb";
 import { useInbox } from "./engine/useInbox";
 import { Board } from "./Board";
+import { ImportWorkflowDialog } from "./ImportWorkflowDialog";
 import { IntakePage } from "./IntakePage";
 import { NeedsYouPage } from "./NeedsYouPage";
 import { SettingsPage } from "./SettingsPage";
@@ -68,10 +70,15 @@ export function BeehiveViews({
   me,
   notice,
   card,
+  workflowPage,
+  workflowsRevision,
   onLeaveCard,
   onOpen,
   onNew,
   onNewFromIssue,
+  onEditWorkflow,
+  onNewWorkflow,
+  onWorkflowsChanged,
 }: {
   client: Client;
   relay: RelayData;
@@ -88,17 +95,27 @@ export function BeehiveViews({
   card?:
     | ((inbox: { waiting: InboxItem[]; refresh(): void }) => ReactNode)
     | undefined;
-  /** Closes the open card, as when another view is chosen. */
+  /** The workflow editor or the new workflow page, which also takes the view's place. */
+  workflowPage?: ReactNode;
+  /** Changes when a workflow was saved, deleted or imported, so the list reads again. */
+  workflowsRevision: number;
+  /** Closes the open card or workflow page, as when another view is chosen. */
   onLeaveCard(): void;
   onOpen(card: string): void;
   onNew(): void;
   /** Opens the new card form on its From an issue tab. */
   onNewFromIssue(): void;
+  onEditWorkflow(name: string): void;
+  onNewWorkflow(): void;
+  onWorkflowsChanged(): void;
 }) {
-  const [view, setView] = useState<View>("board");
+  const [chosen, setView] = useState<View>("board");
+  const [importing, setImporting] = useState(false);
   const [archived, setArchived] = useState(false);
   const { inbox, retry, refresh } = useInbox(client);
-  const open = card !== undefined;
+  const open = card !== undefined || workflowPage !== undefined;
+  // A workflow page opened from a link or by Back has no view chosen, and belongs to Workflows.
+  const view = workflowPage !== undefined ? "workflows" : chosen;
   const openItems =
     inbox.status === "ready"
       ? inbox.items.filter((item) => !item.resolvedAt)
@@ -211,8 +228,23 @@ export function BeehiveViews({
               <Header
                 title="Workflows"
                 subtitle="The stages a card runs through."
+                actions={
+                  canRun ? (
+                    <>
+                      <Button onClick={() => setImporting(true)}>Import</Button>
+                      <Button variant="prominent" onClick={onNewWorkflow}>
+                        New workflow
+                      </Button>
+                    </>
+                  ) : undefined
+                }
               />
-              <WorkflowsPage client={client} />
+              <WorkflowsPage
+                client={client}
+                canRun={canRun}
+                revision={workflowsRevision}
+                onEdit={onEditWorkflow}
+              />
             </>
           )}
           {view === "usage" && (
@@ -237,6 +269,17 @@ export function BeehiveViews({
           )}
         </div>
         {card?.({ waiting: openItems, refresh })}
+        {workflowPage}
+        {importing && (
+          <ImportWorkflowDialog
+            client={client}
+            onImported={() => {
+              setImporting(false);
+              onWorkflowsChanged();
+            }}
+            onClose={() => setImporting(false)}
+          />
+        )}
       </div>
     </>
   );
