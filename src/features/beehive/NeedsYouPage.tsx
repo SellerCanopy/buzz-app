@@ -4,13 +4,20 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import type { Client } from "./engine/client";
 import type { Inbox } from "./engine/useInbox";
+import type { InboxItem } from "./gen/kiln/engine/v1/engine_pb";
 import { GateCard } from "./GateCard";
+
+/** When an item was opened, as nanoseconds; one with no time sorts first. */
+function openedAt(item: InboxItem): bigint {
+  const at = item.createdAt;
+  return at ? at.seconds * 1_000_000_000n + BigInt(at.nanos) : 0n;
+}
 
 /**
  * What waits for a person: approvals, agents' questions, and the runs that stopped for a
- * decision. Only the open items show, newest first; an answered item leaves the list and
- * its answer is in the card's Activity tab. The list is read by `useInbox` in the page, which
- * also counts it for the tab.
+ * decision. Only the open items show, oldest first, as the page's subtitle says; an answered
+ * item leaves the list and its answer is in the card's Activity tab. The list is read by
+ * `useInbox` in the page, which also counts it for the sidebar.
  */
 export function NeedsYouPage({
   client,
@@ -28,7 +35,14 @@ export function NeedsYouPage({
   onAnswered(): void;
   onRetry(): void;
 }) {
-  const items = inbox.status === "ready" ? inbox.items : [];
+  // The engine sends the newest first. A sort is stable, so equal times keep its order.
+  const items =
+    inbox.status === "ready"
+      ? [...inbox.items].sort((a, b) => {
+          const [x, y] = [openedAt(a), openedAt(b)];
+          return x < y ? -1 : x > y ? 1 : 0;
+        })
+      : [];
   const problem =
     inbox.status === "error"
       ? inbox.message

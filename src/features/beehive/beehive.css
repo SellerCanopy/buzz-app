@@ -1,15 +1,43 @@
 .beehive-page {
-  display: flex;
-  flex-direction: column;
   height: 100%;
   min-height: 0;
   color: var(--text-standard);
+  /* The sidebar gives way to a strip above the view when the pane is narrow. */
+  container-type: inline-size;
 }
-.beehive-body {
+.beehive-layout {
+  display: grid;
+  grid-template-columns: 16.25rem minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.beehive-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-inline-end: 1px solid var(--border-standard);
+}
+.beehive-nav {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  padding: var(--space-2);
+}
+.beehive-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
   padding: var(--space-4) var(--space-panel-inset) var(--space-8);
+}
+.beehive-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.beehive-view[hidden] {
+  display: none;
 }
 .beehive-error {
   display: flex;
@@ -21,23 +49,33 @@
 .beehive-error p {
   margin: 0;
 }
-.beehive-toolbar {
+.beehive-filters {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  margin: 0 0 var(--space-4);
 }
-/*
- * Six views do not fit a narrow window with enlarged text. The toolbar scrolls sideways and
- * keeps each tab readable, rather than the page scrolling or the tabs squeezing together.
- * The padding leaves room for the focus ring that the scroll box would clip.
- */
-.beehive-toolbar {
-  overflow-x: auto;
-  padding: var(--space-1);
-}
-.beehive-toolbar > * {
-  flex: none;
+@container (max-width: 40rem) {
+  .beehive-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .beehive-sidebar {
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--border-standard);
+  }
+  /* The two sections sit side by side, and scroll sideways rather than squeeze. */
+  .beehive-nav {
+    display: flex;
+    gap: var(--space-4);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .beehive-nav .navigation-section {
+    flex: none;
+    min-width: 9rem;
+    margin-top: 0;
+  }
 }
 .beehive-columns {
   display: grid;

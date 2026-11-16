@@ -11,7 +11,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -159,9 +159,9 @@ export function IntakePage({
   const rules = loaded.status === "ready" ? loaded.rules : [];
   return (
     <div className="beehive-intake">
-      <InlineHeader
-        title="Intake rules"
-        subtitle="Open issues of a GitHub repo become cards on the board."
+      <Header
+        title="Intake"
+        subtitle="Issues that match a rule become cards. Beehive reads GitHub with the team token."
         actions={
           canRun ? (
             <>

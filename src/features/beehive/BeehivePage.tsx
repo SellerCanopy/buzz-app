@@ -5,14 +5,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { HexagonIcon, PlusIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Panel } from "../../shared/design-system/ui/Panel";
-import {
-  PanelHeader,
-  PanelHeaderLabel,
-} from "../../shared/design-system/ui/PanelHeader";
 import type { EmbeddedThreadProps } from "../conversation/EmbeddedThread";
 import type { Navigation } from "../navigation/controller";
 import type { PageProps } from "../pages/service";
@@ -57,7 +51,7 @@ function useAccess(client: Client, shared: LevelStore | undefined) {
 }
 
 /**
- * The Beehive destination: a workspace pane whose header stays mounted in every
+ * The Beehive destination: a workspace pane whose sidebar stays mounted in every
  * state. A card is its own visit of this page, so Back returns to the board.
  */
 export function BeehivePage({
@@ -102,57 +96,43 @@ export function BeehivePage({
   return (
     <Panel aria-label="Beehive">
       <div className="beehive-page text-body">
-        <PanelHeader
-          title={
-            <PanelHeaderLabel
-              title="Beehive"
-              icon={<HexagonIcon size="1rem" />}
-            />
-          }
-          actions={
-            canRun ? (
-              <IconButton
-                aria-label="New card"
-                icon={<PlusIcon size="1rem" />}
-                onClick={() => setAdding(true)}
-              />
-            ) : undefined
-          }
-        />
-        <div className="beehive-body">
-          {problem && (
-            <div className="beehive-error">
-              <p role="alert" className="text-danger">
-                {`Could not check what you can do. ${problem}`}
-              </p>
-              <Button onClick={retry}>Retry</Button>
-            </div>
-          )}
-          <div hidden={open !== undefined}>
-            <BeehiveViews
-              client={client}
-              relay={relay}
-              canRun={canRun}
-              isAdmin={isAdmin}
-              me={me}
-              onOpen={openCard}
-              onNew={() => setAdding(true)}
-            />
-          </div>
-          {open !== undefined && (
-            <CardPage
-              key={open}
-              client={client}
-              relay={relay}
-              navigator={navigator}
-              Thread={Thread}
-              id={open}
-              tab={target ? visitedTab(target) : undefined}
-              canRun={canRun}
-              onTab={openTab}
-              onClose={closeCard}
-            />
-          )}
+        <div className="beehive-layout">
+          <BeehiveViews
+            client={client}
+            relay={relay}
+            canRun={canRun}
+            isAdmin={isAdmin}
+            me={me}
+            notice={
+              problem ? (
+                <div className="beehive-error">
+                  <p role="alert" className="text-danger">
+                    {`Could not check what you can do. ${problem}`}
+                  </p>
+                  <Button onClick={retry}>Retry</Button>
+                </div>
+              ) : undefined
+            }
+            card={
+              open !== undefined ? (
+                <CardPage
+                  key={open}
+                  client={client}
+                  relay={relay}
+                  navigator={navigator}
+                  Thread={Thread}
+                  id={open}
+                  tab={target ? visitedTab(target) : undefined}
+                  canRun={canRun}
+                  onTab={openTab}
+                  onClose={closeCard}
+                />
+              ) : undefined
+            }
+            onLeaveCard={closeCard}
+            onOpen={openCard}
+            onNew={() => setAdding(true)}
+          />
         </div>
         {adding && (
           <NewCardDialog client={client} onClose={() => setAdding(false)} />

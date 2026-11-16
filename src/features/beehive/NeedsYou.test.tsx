@@ -235,6 +235,7 @@ function views(initial: InboxItem[], options: { failFirst?: string } = {}) {
       canRun
       isAdmin={false}
       me=""
+      onLeaveCard={vi.fn()}
       onOpen={vi.fn()}
       onNew={vi.fn()}
     />,
@@ -297,7 +298,7 @@ it("reads the list again for an inbox event only, not for a card event", async (
 it("answers from the list and reads it again, so the item leaves at once", async () => {
   const user = userEvent.setup();
   const e = views([item(), item({ id: "item-2", title: "Which region?" })]);
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   const list = await screen.findByRole("list", { name: "Needs you" });
   expect(within(list).getAllByRole("listitem")).toHaveLength(2);
   await user.click(
@@ -310,17 +311,47 @@ it("answers from the list and reads it again, so the item leaves at once", async
   expect(screen.getByRole("img", { name: "1 item needs you" })).toBeVisible();
 });
 
+it("titles the page with how many wait, and lists the oldest first", async () => {
+  const user = userEvent.setup();
+  views([
+    item({
+      id: "new",
+      cardTitle: "Newer card",
+      createdAt: { seconds: 200n, nanos: 0 },
+    }),
+    item({
+      id: "old",
+      cardTitle: "Older card",
+      createdAt: { seconds: 100n, nanos: 0 },
+    }),
+  ]);
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
+  expect(
+    await screen.findByRole("heading", { name: "Needs you" }),
+  ).toBeVisible();
+  expect(screen.getByText("2 waiting. Oldest first.")).toBeVisible();
+  const list = await screen.findByRole("list", { name: "Needs you" });
+  expect(
+    within(list)
+      .getAllByRole("listitem")
+      .map((entry) => entry.textContent),
+  ).toEqual([
+    expect.stringContaining("Older card"),
+    expect.stringContaining("Newer card"),
+  ]);
+});
+
 it("says so when nothing waits", async () => {
   const user = userEvent.setup();
   views([]);
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   expect(await screen.findByText("Nothing needs you")).toBeVisible();
 });
 
 it("shows the failure beside the list and reads again on Retry", async () => {
   const user = userEvent.setup();
   views([], { failFirst: "Beehive is not reachable" });
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Beehive is not reachable",
   );
@@ -446,7 +477,7 @@ it("says live updates paused when the poll is refused, and keeps the list", asyn
   e.polls[0]?.fail(
     new EngineError("permission_denied", "your access changed", 403),
   );
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Live updates paused: your access changed",
   );
@@ -465,7 +496,7 @@ it("pauses after three failures in a row and clears the notice when a poll succe
   const user = userEvent.setup();
   const e = views([item()]);
   await screen.findByRole("img", { name: "1 item needs you" });
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   for (let failure = 1; failure <= 3; failure += 1) {
     await waitFor(() => expect(e.polls).toHaveLength(failure));
     expect(screen.queryByRole("alert")).toBeNull();
@@ -484,7 +515,7 @@ it("pauses after three failures in a row and clears the notice when a poll succe
 it("keeps the list and says the read failed when reading it again fails", async () => {
   const user = userEvent.setup();
   const e = views([item()]);
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   await screen.findByRole("list", { name: "Needs you" });
   await waitFor(() => expect(e.polls).toHaveLength(1));
   e.calls.listInbox.mockRejectedValueOnce(

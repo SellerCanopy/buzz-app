@@ -28,6 +28,7 @@ import {
   ListRunsResponseSchema,
   ListWorkflowsResponseSchema,
   GetSettingsResponseSchema,
+  GetUsageResponseSchema,
   GetStatusResponseSchema,
   RunSchema,
   RunStepSchema,
@@ -98,6 +99,7 @@ function engine(
       }),
     ),
     checkWorkflow: vi.fn(async () => create(CheckWorkflowResponseSchema, {})),
+    getUsage: vi.fn(async () => create(GetUsageResponseSchema, {})),
     getCard: vi.fn(async () => card({ body: "Line one\nLine two" })),
     createCard: vi.fn(async () => card()),
     startRun: vi.fn(async () => create(RunSchema, { id: "run-1", cardId: ID })),
@@ -361,7 +363,7 @@ it("says nothing is archived and offers no way to add a card there", async () =>
   await screen.findByText("No cards yet");
   // The header's button and the empty state's own.
   expect(screen.getAllByRole("button", { name: "New card" })).toHaveLength(2);
-  await userEvent.click(screen.getByRole("tab", { name: "Archive" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Archived" }));
   expect(await screen.findByText("Nothing archived")).toBeVisible();
   expect(
     screen.getByText("Cards you archive are kept here and can be restored."),
@@ -470,7 +472,7 @@ it("lists archived cards in the Archive view", async () => {
   const e = engine({ cards: [card({ archived: true })] });
   page(e.client);
   await screen.findByText("No cards yet");
-  await userEvent.click(screen.getByRole("tab", { name: "Archive" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Archived" }));
   expect(await screen.findByText("Fix the build")).toBeVisible();
   expect(e.calls.listCards).toHaveBeenLastCalledWith(true, expect.anything());
 });
@@ -479,13 +481,13 @@ it("lists the workflows from the Workflows view and returns to the board", async
   const e = engine({ cards: [card()] });
   page(e.client);
   await screen.findByText("Fix the build");
-  await userEvent.click(screen.getByRole("tab", { name: "Workflows" }));
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
   expect(await screen.findByRole("region", { name: "demo" })).toBeVisible();
   expect(screen.queryByText("Fix the build")).toBeNull();
   // Workflows keeps no poll open for a board nobody is looking at.
   await vi.waitFor(() => expect(e.polls).toHaveLength(1));
   expect(e.polls[0]?.signal?.aborted).toBe(true);
-  await userEvent.click(screen.getByRole("tab", { name: "Board" }));
+  await userEvent.click(screen.getByRole("button", { name: "Board" }));
   expect(await screen.findByText("Fix the build")).toBeVisible();
   // The board reads again on return and follows the log from the new read.
   expect(e.calls.listCards).toHaveBeenCalledTimes(2);
@@ -912,10 +914,8 @@ it("shows the Intake rules from the Intake tab to a person who can run, with a w
   page(e.client);
   await screen.findByText("No cards yet");
   await levelApplied(e);
-  await userEvent.click(screen.getByRole("tab", { name: "Intake" }));
-  expect(
-    await screen.findByRole("heading", { name: "Intake rules" }),
-  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Intake" }));
+  expect(await screen.findByRole("heading", { name: "Intake" })).toBeVisible();
   expect(e.calls.listIntakeRules).toHaveBeenCalledTimes(1);
   expect(
     (await screen.findAllByRole("button", { name: "New rule" })).length,
@@ -929,10 +929,8 @@ it("shows the Intake rules to a reader without a way to change them", async () =
   page(e.client);
   await screen.findByText("No cards yet");
   await levelApplied(e);
-  await userEvent.click(screen.getByRole("tab", { name: "Intake" }));
-  expect(
-    await screen.findByRole("heading", { name: "Intake rules" }),
-  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Intake" }));
+  expect(await screen.findByRole("heading", { name: "Intake" })).toBeVisible();
   await screen.findByText("No intake rules");
   expect(e.calls.listIntakeRules).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("button", { name: "New rule" })).toBeNull();
@@ -1395,7 +1393,9 @@ it("shows why a stage failed beside the stage", async () => {
 it("lets an admin pick the update channel in Settings", async () => {
   const e = engine({ role: "admin" });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const select = await screen.findByRole("combobox", {
     name: "Update channel",
   });
@@ -1418,7 +1418,9 @@ it("lets an admin pick the update channel in Settings", async () => {
 it("shows the saved channel and clears it with No channel", async () => {
   const e = engine({ role: "admin", updateChannel: CHANNEL });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const select = await screen.findByRole("combobox", {
     name: "Update channel",
   });
@@ -1441,7 +1443,9 @@ it("keeps the saved channel and shows the engine's answer when it refuses a chan
     new Error("add the Beehive account to this channel, then save again"),
   );
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const select = await screen.findByRole("combobox", {
     name: "Update channel",
   });
@@ -1459,7 +1463,9 @@ it("keeps the saved channel and shows the engine's answer when it refuses a chan
 it("shows the update channel to a person who is not an admin without a way to change it", async () => {
   const e = engine({ role: "run", updateChannel: CHANNEL });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const select = await screen.findByRole("combobox", {
     name: "Update channel",
   });
@@ -1495,7 +1501,9 @@ const access = () => [
 it("lists everyone's level for an admin and saves a change from the row", async () => {
   const e = engine({ role: "admin", access: access() });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const ben = await screen.findByRole("combobox", { name: "Level for Ben" });
   expect(ben).toHaveTextContent("Read");
   expect(
@@ -1525,7 +1533,9 @@ it("lists everyone's level for an admin and saves a change from the row", async 
 it("says the level saved when only the list read afterwards failed, and Retry reads the list again", async () => {
   const e = engine({ role: "admin", access: access() });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   await userEvent.click(
     await screen.findByRole("combobox", { name: "Level for Ben" }),
   );
@@ -1551,7 +1561,9 @@ it("says the level saved when only the list read afterwards failed, and Retry re
 it("does not offer an agent a level above its owner's", async () => {
   const e = engine({ role: "admin", access: access() });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   await userEvent.click(
     await screen.findByRole("combobox", { name: "Level for builder" }),
   );
@@ -1575,7 +1587,9 @@ it("shows the engine's answer beside the row when a change is refused", async ()
     new Error("agent builder is capped at read by its owner Ben"),
   );
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   await userEvent.click(
     await screen.findByRole("combobox", { name: "Level for Ben" }),
   );
@@ -1589,7 +1603,9 @@ it("shows the engine's answer beside the row when a change is refused", async ()
 it("gives a person who is not an admin no access list", async () => {
   const e = engine({ role: "run", access: access() });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   await screen.findByRole("combobox", { name: "Update channel" });
   expect(screen.queryByRole("combobox", { name: "Level for Ben" })).toBeNull();
   expect(e.calls.listAccess).not.toHaveBeenCalled();
@@ -1601,7 +1617,9 @@ it("says so when the settings cannot be read and Retry reads them again", async 
     new Error("Beehive is not reachable"),
   );
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Beehive is not reachable",
   );
@@ -1669,4 +1687,92 @@ it("hides the auto mode switch below Run and on an archived card, and still says
   await screen.findByRole("button", { name: "Restore" });
   await levelApplied(archived);
   expect(screen.queryByRole("switch", { name: "Auto mode" })).toBeNull();
+});
+
+it("chooses a view from a sidebar of Work and Manage, with a title on each", async () => {
+  page(engine().client);
+  await screen.findByText("No cards yet");
+  // The old segmented tab bar is gone: the views are the sidebar's rows.
+  expect(screen.queryByRole("tablist", { name: "View" })).toBeNull();
+  const nav = screen.getByRole("navigation", { name: "Beehive views" });
+  expect(
+    within(nav)
+      .getAllByRole("heading")
+      .map((heading) => heading.textContent),
+  ).toEqual(["Work", "Manage"]);
+  expect(
+    within(nav)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Board", "Needs you", "Intake", "Workflows", "Usage", "Settings"]);
+  expect(within(nav).getByRole("button", { name: "Board" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(screen.getByRole("heading", { name: "Board" })).toBeVisible();
+
+  const titles: [string, string | undefined][] = [
+    ["Needs you", "0 waiting. Oldest first."],
+    [
+      "Intake",
+      "Issues that match a rule become cards. Beehive reads GitHub with the team token.",
+    ],
+    ["Workflows", "The stages a card runs through."],
+    [
+      "Usage",
+      "Runs and cards for the last four weeks. Beehive does not track tokens or cost.",
+    ],
+    ["Settings", undefined],
+  ];
+  for (const [name, subtitle] of titles) {
+    await userEvent.click(within(nav).getByRole("button", { name }));
+    expect(
+      await screen.findByRole("heading", { level: 2, name }),
+    ).toBeVisible();
+    expect(within(nav).getByRole("button", { name })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    if (subtitle) expect(await screen.findByText(subtitle)).toBeVisible();
+  }
+});
+
+it("closes the open card when another view is chosen from the sidebar", async () => {
+  const nav = page(engine().client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(retire(cardView)).toBe(true);
+  expect(fallback).toEqual(board);
+});
+
+it("toggles the archived cards from the board and returns to live cards", async () => {
+  const e = engine({
+    cards: [
+      card({ id: "a", title: "Live one" }),
+      card({ id: "b", title: "Old one", archived: true }),
+    ],
+  });
+  page(e.client);
+  await screen.findByText("Live one");
+  const archived = screen.getByRole("tab", { name: "Archived" });
+  expect(archived).toHaveAttribute("aria-selected", "false");
+  await userEvent.click(archived);
+  expect(await screen.findByText("Old one")).toBeVisible();
+  expect(screen.queryByText("Live one")).toBeNull();
+  expect(screen.getByRole("tab", { name: "Archived" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await userEvent.click(screen.getByRole("tab", { name: "Archived" }));
+  expect(await screen.findByText("Live one")).toBeVisible();
+  // Choosing Board in the sidebar also lands on the live cards.
+  await userEvent.click(screen.getByRole("tab", { name: "Archived" }));
+  await screen.findByText("Old one");
+  await userEvent.click(screen.getByRole("button", { name: "Board" }));
+  expect(await screen.findByText("Live one")).toBeVisible();
 });
