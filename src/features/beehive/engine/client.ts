@@ -9,6 +9,7 @@ import {
   AcceptTicketProposalRequestSchema,
   AcceptTicketProposalResponseSchema,
   AccessEntrySchema,
+  AgentToolsChangeSchema,
   AddIssueRepoRequestSchema,
   AddNoteRequestSchema,
   AddNoteResponseSchema,
@@ -27,6 +28,8 @@ import {
   DeleteIntakeRuleResponseSchema,
   CreateTaskRequestSchema,
   GetCardRequestSchema,
+  GetHiveHealthRequestSchema,
+  GetHiveHealthResponseSchema,
   GetSettingsRequestSchema,
   GetSettingsResponseSchema,
   GetStatusRequestSchema,
@@ -103,6 +106,10 @@ import {
   ImportWorkflowRequestSchema,
   ListAgentsRequestSchema,
   ListAgentsResponseSchema,
+  ListAgentToolServersRequestSchema,
+  ListAgentToolServersResponseSchema,
+  RemoveAgentToolServerRequestSchema,
+  SetAgentToolServerRequestSchema,
   ListStageTemplatesRequestSchema,
   ListStageTemplatesResponseSchema,
   SaveWorkflowRequestSchema,
@@ -755,6 +762,64 @@ export function createClient(session: Session) {
         AcceptTicketProposalRequestSchema,
         AcceptTicketProposalResponseSchema,
         create(AcceptTicketProposalRequestSchema, { proposalId }),
+        signal,
+      ),
+    /**
+     * Every agent that has a folder on the host, each with the tool servers it starts. Needs
+     * Read. A server never holds a secret value.
+     */
+    listAgentToolServers: (signal?: AbortSignal) =>
+      unary(
+        "ListAgentToolServers",
+        ListAgentToolServersRequestSchema,
+        ListAgentToolServersResponseSchema,
+        create(ListAgentToolServersRequestSchema),
+        signal,
+      ),
+    /**
+     * Add a tool server to an agent, or replace the one with its name. `spec` is the whole entry:
+     * a command with args, or a url. The change is saved even when the host cannot apply it, and
+     * the reply says which happened. Needs Admin.
+     */
+    setAgentToolServer: (
+      agent: string,
+      server: { name: string; transport: string; spec: object },
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SetAgentToolServer",
+        SetAgentToolServerRequestSchema,
+        AgentToolsChangeSchema,
+        create(SetAgentToolServerRequestSchema, {
+          agent,
+          server: {
+            name: server.name,
+            transport: server.transport,
+            specJson: JSON.stringify(server.spec),
+          },
+        }),
+        signal,
+      ),
+    /** Take a tool server off an agent and apply the agent. Needs Admin. */
+    removeAgentToolServer: (
+      agent: string,
+      name: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "RemoveAgentToolServer",
+        RemoveAgentToolServerRequestSchema,
+        AgentToolsChangeSchema,
+        create(RemoveAgentToolServerRequestSchema, { agent, name }),
+        signal,
+      ),
+    /** What the engine reports about itself, including the agents that are not set up for stage threads. */
+    getHiveHealth: (signal?: AbortSignal) =>
+      unary(
+        "GetHiveHealth",
+        GetHiveHealthRequestSchema,
+        GetHiveHealthResponseSchema,
+        create(GetHiveHealthRequestSchema),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

@@ -30,9 +30,11 @@ import {
   ListWorkflowsResponseSchema,
   WorkflowSchema,
   GetSettingsResponseSchema,
+  GetHiveHealthResponseSchema,
   GetUsageResponseSchema,
   GetWorkflowDraftResponseSchema,
   ListAgentsResponseSchema,
+  ListAgentToolServersResponseSchema,
   ListStageTemplatesResponseSchema,
   GetStatusResponseSchema,
   InboxItemSchema,
@@ -212,6 +214,15 @@ function engine(
       if (entry) entry.level = level;
       return create(AccessEntrySchema, { pubkey, level });
     }),
+    listAgentToolServers: vi.fn(async () =>
+      create(ListAgentToolServersResponseSchema, {
+        agents: [
+          { agent: "builder", servers: [] },
+          { agent: "reviewer", servers: [] },
+        ],
+      }),
+    ),
+    getHiveHealth: vi.fn(async () => create(GetHiveHealthResponseSchema, {})),
     setCommunitySetting: vi.fn(async (key: string, valueJson: string) =>
       create(SettingSchema, { key, valueJson }),
     ),
@@ -2058,6 +2069,34 @@ it("gives a person who is not an admin no access list", async () => {
   await screen.findByRole("combobox", { name: "Update channel" });
   expect(screen.queryByRole("combobox", { name: "Level for Ben" })).toBeNull();
   expect(e.calls.listAccess).not.toHaveBeenCalled();
+});
+
+it("shows an admin the agent tools in Settings", async () => {
+  const e = engine({ role: "admin", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Add tool server" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Tool servers each agent can use during a stage."),
+  ).toBeVisible();
+  expect(e.calls.listAgentToolServers).toHaveBeenCalledTimes(1);
+});
+
+it("gives a person who is not an admin no agent tools and reads none", async () => {
+  const e = engine({ role: "run", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  await screen.findByRole("combobox", { name: "Update channel" });
+  expect(screen.queryByText("Agent tools")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add tool server" })).toBeNull();
+  expect(e.calls.listAgentToolServers).not.toHaveBeenCalled();
+  expect(e.calls.getHiveHealth).not.toHaveBeenCalled();
 });
 
 it("says so when the settings cannot be read and Retry reads them again", async () => {

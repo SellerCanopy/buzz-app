@@ -151,6 +151,41 @@ it("starts a chat in a thread and settles a proposal", async () => {
   });
 });
 
+it("sends a tool server as its name, transport and whole spec as JSON, and reads the apply result", async () => {
+  const { client, sent } = wire({
+    agent: { agent: "builder", servers: [] },
+    applied: true,
+    restarted: true,
+  });
+  const change = await client.setAgentToolServer("builder", {
+    name: "docs",
+    transport: "stdio",
+    spec: { command: "npx", args: ["docs-server"] },
+  });
+  expect(sent(0)).toEqual({
+    path: `${SERVICE}SetAgentToolServer`,
+    body: {
+      agent: "builder",
+      server: {
+        name: "docs",
+        transport: "stdio",
+        specJson: '{"command":"npx","args":["docs-server"]}',
+      },
+    },
+  });
+  expect(change.applied).toBe(true);
+  expect(change.restarted).toBe(true);
+  await client.removeAgentToolServer("builder", "docs");
+  expect(sent(1)).toEqual({
+    path: `${SERVICE}RemoveAgentToolServer`,
+    body: { agent: "builder", name: "docs" },
+  });
+  await client.listAgentToolServers();
+  expect(sent(2).path).toBe(`${SERVICE}ListAgentToolServers`);
+  await client.getHiveHealth();
+  expect(sent(3).path).toBe(`${SERVICE}GetHiveHealth`);
+});
+
 it("ignores a field of the reply that this app does not know, as an older app meets a newer engine", async () => {
   const { client } = wire({ headSeq: "12", addedByANewerEngine: { x: 1 } });
   const status = await client.getStatus();

@@ -8,6 +8,7 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import type { RelayData } from "../relay/service";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import { AccessSettings } from "./AccessSettings";
+import { AgentToolsSettings } from "./AgentToolsSettings";
 import type { Client } from "./engine/client";
 import {
   ASSISTANT_AGENT,
@@ -30,7 +31,7 @@ type Loaded =
 /**
  * Where Beehive posts a run's status and its stage tasks, and which agent answers in the
  * Assistant. Everyone reads them; only an admin changes them. An admin also sets what each
- * person and agent may do. The engine checks each setting on save, and its answer is shown
+ * person and agent may do, and which tool servers each agent starts. The engine checks each setting on save, and its answer is shown
  * beside the setting as it gives it.
  */
 export function SettingsPage({
@@ -144,6 +145,7 @@ export function SettingsPage({
         )}
       </LoadingRegion>
       {isAdmin && <AccessSettings client={client} me={me} />}
+      {isAdmin && <AgentToolsSettings client={client} />}
     </div>
   );
 }
