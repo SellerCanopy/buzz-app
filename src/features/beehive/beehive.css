@@ -55,6 +55,34 @@
   align-items: center;
   gap: var(--space-3);
 }
+/* A tab group keeps each label on one line and moves to the next row rather than shrink. */
+.beehive-filters .buzz-tabs {
+  flex: none;
+  max-inline-size: 100%;
+}
+.beehive-filters .buzz-tabs-tab {
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+/* The title keeps a readable width and the actions wrap below it in a narrow pane: a card
+   page, a gate's buttons under a long card title, and a view's own header. */
+.beehive-card-page .buzz-content-header,
+.beehive-inbox .buzz-content-header,
+.beehive-view > .buzz-content-header {
+  flex-wrap: wrap;
+}
+.beehive-card-page .buzz-content-header-copy,
+.beehive-inbox .buzz-content-header-copy,
+.beehive-view > .buzz-content-header > .buzz-content-header-copy {
+  flex: 1 1 12rem;
+}
+.beehive-card-page .buzz-content-header-actions,
+.beehive-inbox .buzz-content-header-actions,
+.beehive-view > .buzz-content-header > .buzz-content-header-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-inline-size: 100%;
+}
 @container (max-width: 40rem) {
   .beehive-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -79,10 +107,11 @@
 }
 .beehive-lanes {
   display: grid;
-  grid-template-columns: repeat(4, minmax(14rem, 1fr));
+  /* Four equal columns while each can keep 12rem; a narrower pane scrolls sideways
+     rather than squeezing a tile. */
+  grid-template-columns: repeat(4, minmax(12rem, 1fr));
   gap: var(--space-4);
   align-items: start;
-  /* A narrow pane scrolls the lanes sideways rather than squeezing a tile. */
   overflow-x: auto;
 }
 .beehive-lane {
@@ -279,19 +308,8 @@
   gap: var(--space-4);
 }
 /* A long title keeps a readable width and the actions wrap below it. */
-.beehive-card-page .buzz-content-header {
-  flex-wrap: wrap;
-}
-.beehive-card-page .buzz-content-header-copy {
-  flex: 1 1 12rem;
-}
 .beehive-card-page .buzz-content-header-title {
   overflow-wrap: anywhere;
-}
-.beehive-card-page .buzz-content-header-actions {
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  max-inline-size: 100%;
 }
 .beehive-details,
 .beehive-facts {
@@ -434,18 +452,6 @@
 }
 .beehive-inbox p {
   margin: var(--space-1) 0 0;
-}
-/* A gate's buttons wrap under a long card title at a narrow width. */
-.beehive-inbox .buzz-content-header {
-  flex-wrap: wrap;
-}
-.beehive-inbox .buzz-content-header-copy {
-  flex: 1 1 12rem;
-}
-.beehive-inbox .buzz-content-header-actions {
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  max-inline-size: 100%;
 }
 .beehive-activity > li {
   display: flex;
