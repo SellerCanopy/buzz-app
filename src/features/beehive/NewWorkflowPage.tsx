@@ -5,6 +5,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
 import type { AgentInfo, Workflow } from "./gen/kiln/engine/v1/engine_pb";
@@ -181,7 +182,7 @@ export function NewWorkflowPage({
         <ul className="wf-recipes">
           {RECIPES.map((recipe) => (
             <li key={recipe.id}>
-              <button
+              <SurfaceButton
                 type="button"
                 className="wf-recipe"
                 disabled={pending}
@@ -191,7 +192,7 @@ export function NewWorkflowPage({
                 <span className="text-body-sm text-subtle">
                   {recipe.description}
                 </span>
-              </button>
+              </SurfaceButton>
             </li>
           ))}
         </ul>

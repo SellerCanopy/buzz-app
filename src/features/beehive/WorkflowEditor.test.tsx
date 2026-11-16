@@ -21,6 +21,7 @@ import {
   SaveWorkflowResponseSchema,
   type Finding,
 } from "./gen/kiln/engine/v1/engine_pb";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { WorkflowEditor, type EditorDraft } from "./WorkflowEditor";
 
 afterEach(cleanup);
@@ -123,15 +124,17 @@ function open(
     onClose: vi.fn(),
   };
   render(
-    <WorkflowEditor
-      client={calls as unknown as Client}
-      name="release"
-      canRun={props.canRun ?? true}
-      isAdmin={false}
-      me={ME}
-      restored={props.restored}
-      {...handlers}
-    />,
+    <ToastProvider>
+      <WorkflowEditor
+        client={calls as unknown as Client}
+        name="release"
+        canRun={props.canRun ?? true}
+        isAdmin={false}
+        me={ME}
+        restored={props.restored}
+        {...handlers}
+      />
+    </ToastProvider>,
   );
   return handlers;
 }
@@ -217,6 +220,65 @@ it("saves the edited prompt against the hash it was opened at, then has nothing 
   );
   expect(handlers.onDraft).toHaveBeenLastCalledWith(undefined);
   expect(screen.getByRole("button", { name: "Save version" })).toBeDisabled();
+  // The save says which version it wrote.
+  expect(await screen.findByText("Saved version 4")).toBeVisible();
+});
+
+it("does not say a save worked when the engine refused it", async () => {
+  const user = userEvent.setup();
+  const calls = engine();
+  calls.saveWorkflow.mockRejectedValueOnce(
+    new EngineError("permission_denied", "You cannot save this workflow.", 403),
+  );
+  open(calls);
+  await user.click(
+    await screen.findByRole("button", { name: /^plan, Agent task/ }),
+  );
+  const panel = screen.getByRole("complementary", {
+    name: "Settings of stage plan",
+  });
+  await user.type(within(panel).getByRole("textbox", { name: "Prompt" }), "!");
+  await user.click(screen.getByRole("button", { name: "Save version" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "You cannot save this workflow.",
+  );
+  expect(screen.queryByText(/^Saved/)).toBeNull();
+});
+
+it("lets the starter prompt of a blank step be selected and replaced by typing", async () => {
+  const user = userEvent.setup();
+  const calls = engine();
+  const starter = "Describe the work this step does.\n\n# {{issue.title}}";
+  calls.getWorkflowDraft.mockResolvedValueOnce(
+    create(GetWorkflowDraftResponseSchema, {
+      hash: "h1",
+      textFiles: {
+        ...files(),
+        "workflow.yaml": JSON.stringify({
+          version: 2,
+          stages: [
+            { id: "step", kind: "prompt", agent: "mine", prompt: starter },
+          ],
+        }),
+      },
+    }),
+  );
+  open(calls);
+  await user.click(
+    await screen.findByRole("button", { name: /^step, Agent task/ }),
+  );
+  const prompt = within(
+    screen.getByRole("complementary", { name: "Settings of stage step" }),
+  ).getByRole("textbox", { name: "Prompt" }) as HTMLTextAreaElement;
+  expect(prompt).toHaveValue(starter);
+  // Select the first sentence only, then type over it.
+  prompt.focus();
+  prompt.setSelectionRange(0, "Describe the work this step does.".length);
+  await user.keyboard("Plan the work.");
+  expect(prompt).toHaveValue("Plan the work.\n\n# {{issue.title}}");
+  // Select everything and replace it.
+  await user.keyboard("{Control>}a{/Control}Fresh text");
+  expect(prompt).toHaveValue("Fresh text");
 });
 
 it("offers the agents a person may use, and puts the chosen one on the stage", async () => {

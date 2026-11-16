@@ -9,6 +9,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   MenuGroup,
   MenuGroupLabel,
@@ -140,6 +141,7 @@ export function WorkflowEditor({
   const [confirm, setConfirm] = useState<Confirm>();
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState<string>();
+  const notify = useToastNotification();
   const keep = useRef<HTMLButtonElement>(null);
   // The draft the page kept is used once, for the first read. Reload reads the engine again.
   const [initial] = useState(restored);
@@ -243,6 +245,11 @@ export function WorkflowEditor({
         );
         onDraft(undefined);
         onChanged();
+        const savedVersion = saved.workflow?.version;
+        notify(
+          savedVersion ? `Saved version ${savedVersion}` : "Saved",
+          "success",
+        );
       } catch (failure) {
         if (failure instanceof EngineError) {
           if (failure.code === "failed_precondition") setStale(true);

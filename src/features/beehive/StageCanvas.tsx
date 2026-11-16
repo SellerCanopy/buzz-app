@@ -5,6 +5,7 @@ import {
   TrashIcon,
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import type { DraftStage } from "./workflowDraft";
 
 /** What a stage is called on the canvas, by its kind. */
@@ -116,7 +117,7 @@ export function StageCanvas({
               data-mark={mark}
               style={{ width: NODE_WIDTH }}
             >
-              <button
+              <SurfaceButton
                 type="button"
                 className="wf-node-main"
                 aria-pressed={selected === index}
@@ -128,7 +129,7 @@ export function StageCanvas({
                 </span>
                 <span className="text-label">{label}</span>
                 {tag && <span className="beehive-tag">{tag}</span>}
-              </button>
+              </SurfaceButton>
               {selected === index && editable && (
                 <div className="wf-node-tools">
                   <IconButton
