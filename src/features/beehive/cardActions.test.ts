@@ -2,6 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { expect, it } from "vitest";
 import {
   canMerge,
+  canMove,
   canPause,
   canRetry,
   canStart,
@@ -19,6 +20,15 @@ it("starts only an idle card with a workflow that is on the board", () => {
   expect(canStart(card({ workflow: "" }))).toBe(false);
   expect(canStart(card({ state: "running" }))).toBe(false);
   expect(canStart(card({ archived: true }))).toBe(false);
+});
+
+it("moves only an idle card that is on the board and has not run", () => {
+  expect(canMove(card(), undefined)).toBe(true);
+  expect(canMove(card(), run("ended"))).toBe(false);
+  expect(canMove(card({ state: "running" }), undefined)).toBe(false);
+  expect(canMove(card({ archived: true }), undefined)).toBe(false);
+  // A state the app does not know is not one it may move.
+  expect(canMove(card({ state: "unheard-of" }), undefined)).toBe(false);
 });
 
 it("stops a run that has not ended and holds one that is working", () => {

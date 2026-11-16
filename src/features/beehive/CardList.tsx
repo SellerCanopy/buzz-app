@@ -22,7 +22,7 @@ import type {
   Run,
   Workflow,
 } from "./gen/kiln/engine/v1/engine_pb";
-import { canRetry, canStart } from "./cardActions";
+import { canMove, canRetry, canStart } from "./cardActions";
 import { MoveMenu } from "./MoveMenu";
 
 /** What a person can do to a card from the board, each as one call to the engine. */
@@ -153,14 +153,7 @@ function Tile({
   const issue = issueOf(card);
   const review = items.some((item) => item.kind === "approval");
   const answer = items.some((item) => item.kind === "question");
-  // A card sorts only while it is idle and has never run, which the engine also checks.
-  const canMove =
-    canRun &&
-    !!workflows &&
-    !!runs &&
-    card.state === "idle" &&
-    !run &&
-    !card.archived;
+  const movable = canRun && !!workflows && !!runs && canMove(card, run);
   return (
     <li
       className="beehive-tile"
@@ -260,7 +253,7 @@ function Tile({
               Start run
             </Button>
           )}
-          {canMove && (
+          {movable && (
             <MoveMenu
               label="Move"
               cardLabel={`Move ${card.title}`}

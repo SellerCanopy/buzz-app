@@ -275,6 +275,69 @@ it("reads everything again in place on refresh, and keeps the board with the fai
   expect(titles(ready(result.current.live)?.cards ?? [])).toEqual(["Newer"]);
 });
 
+it("follows the log again from the refresh's own read when the poll is already past it, so no event is lost", async () => {
+  const data = { cards: [existing], seq: 5n, runsSeq: 5n };
+  const { client, polls } = liveClient(data);
+  const { result } = renderHook(() => useLive(client));
+  await waitFor(() => expect(polls).toHaveLength(1));
+  await act(async () => {
+    polls[0]?.resolve({
+      events: [event("card.created", "b", { title: "New", state: "idle" })],
+      nextSeq: 12n,
+    });
+  });
+  await waitFor(() => expect(polls).toHaveLength(2));
+  expect(polls[1]?.after).toBe(12n);
+
+  // The refresh reads a snapshot older than what the poll has applied.
+  data.seq = 9n;
+  data.runsSeq = 9n;
+  await act(async () => result.current.refresh());
+  await waitFor(() => expect(polls).toHaveLength(3));
+  expect(polls[1]?.signal?.aborted).toBe(true);
+  expect(polls[2]?.after).toBe(9n);
+  // The snapshot replaced the list, and the replayed events put the newer card back.
+  expect(titles(ready(result.current.live)?.cards ?? [])).toEqual(["Old"]);
+  await act(async () => {
+    polls[2]?.resolve({
+      events: [event("card.created", "b", { title: "New", state: "idle" })],
+      nextSeq: 12n,
+    });
+  });
+  expect(titles(ready(result.current.live)?.cards ?? [])).toEqual([
+    "New",
+    "Old",
+  ]);
+});
+
+it("makes one more read, not one per call, when Refresh is pressed during a read", async () => {
+  const { client, calls, polls } = liveClient({ cards: [existing] });
+  const { result } = renderHook(() => useLive(client));
+  await waitFor(() => expect(polls).toHaveLength(1));
+  expect(calls.listCards).toHaveBeenCalledTimes(2);
+
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  calls.listCards.mockImplementation(async () => {
+    await gate;
+    return { cards: [existing], seq: 5n };
+  });
+  await act(async () => {
+    result.current.refresh();
+    result.current.refresh();
+    result.current.refresh();
+  });
+  // Only the first read has begun, and it is held.
+  expect(calls.listCards).toHaveBeenCalledTimes(4);
+  await act(async () => release());
+  // The calls made while it ran are answered by one read, which starts when it ends.
+  await waitFor(() => expect(calls.listCards).toHaveBeenCalledTimes(6));
+  await act(async () => {});
+  expect(calls.listCards).toHaveBeenCalledTimes(6);
+});
+
 it("says the read failed and reads again on retry", async () => {
   const { client, calls } = liveClient();
   calls.listCards.mockRejectedValueOnce(new Error("Beehive is not reachable"));

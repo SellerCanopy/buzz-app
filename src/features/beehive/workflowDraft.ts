@@ -148,9 +148,29 @@ export function removeStage(files: Files, index: number): Files {
   });
 }
 
-/** A stage of a kind the Add stage menu offers. */
+/**
+ * The kinds of stage, in the order the Add stage menu lists them. `label` is the editor's word for
+ * the kind, as the canvas and the menu show it; `listLabel` is the word the Workflows list uses.
+ */
+export const STAGE_KINDS = [
+  { kind: "prompt", label: "Agent task", listLabel: "Prompt" },
+  { kind: "approval", label: "Approval", listLabel: "Approval" },
+  { kind: "wait", label: "Wait", listLabel: "Wait" },
+  { kind: "action", label: "Automatic job", listLabel: "Action" },
+] as const;
+
+export type StageKind = (typeof STAGE_KINDS)[number]["kind"];
+
+/** What a kind of stage is called, in the editor or in the Workflows list. An unknown kind reads as it is. */
+export function kindLabel(kind: unknown, where: "editor" | "list" = "editor") {
+  const known = STAGE_KINDS.find((entry) => entry.kind === kind);
+  if (!known) return String(kind ?? "");
+  return where === "list" ? known.listLabel : known.label;
+}
+
+/** A stage of a kind the Add stage menu offers. Only a prompt stage uses `agent`. */
 export function newStage(
-  kind: "prompt" | "approval" | "wait" | "action",
+  kind: StageKind,
   agent: string,
 ): Record<string, unknown> {
   switch (kind) {
@@ -197,11 +217,6 @@ export function copyOf(files: Files, name: string, keepFiles: boolean): Files {
         ),
       );
   return { ...kept, [PACKAGE_FILE]: renamed };
-}
-
-/** The package file for a new workflow. */
-export function packageFile(name: string): string {
-  return JSON.stringify({ name, version: "1.0.0" }, null, 2);
 }
 
 /** What `kiln-package.yaml` says about the package, or an empty record when it cannot be read. */

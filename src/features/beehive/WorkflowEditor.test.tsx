@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -67,6 +69,7 @@ function engine(options: Options = {}) {
       create(ListAgentsResponseSchema, {
         agents: [
           { name: "mine", pubkey: "01", ownerPubkey: ME },
+          { name: "other-mine", pubkey: "03", ownerPubkey: ME },
           { name: "theirs", pubkey: "02", ownerPubkey: OTHER },
         ],
       }),
@@ -284,7 +287,7 @@ it("lets the starter prompt of a blank step be selected and replaced by typing",
 it("offers the agents a person may use, and puts the chosen one on the stage", async () => {
   const user = userEvent.setup();
   const calls = engine();
-  open(calls);
+  const handlers = open(calls);
   await user.click(
     await screen.findByRole("button", { name: /^plan, Agent task/ }),
   );
@@ -296,6 +299,18 @@ it("offers the agents a person may use, and puts the chosen one on the stage", a
   expect(await screen.findByRole("option", { name: "mine" })).toBeVisible();
   // `theirs` belongs to someone else, so it is not offered.
   expect(screen.queryByRole("option", { name: "theirs" })).toBeNull();
+
+  await user.click(screen.getByRole("option", { name: "other-mine" }));
+  const kept = handlers.onDraft.mock.lastCall?.[0] as EditorDraft;
+  expect(JSON.parse(kept.files["workflow.yaml"] ?? "").stages[0].agent).toBe(
+    "other-mine",
+  );
+  await user.click(screen.getByRole("button", { name: "Save version" }));
+  await waitFor(() => expect(calls.saveWorkflow).toHaveBeenCalledTimes(1));
+  const [saved] = savedBodies(calls);
+  expect(
+    JSON.parse(saved?.draft.files["workflow.yaml"] ?? "").stages[0].agent,
+  ).toBe("other-mine");
 });
 
 it("routes a result to another stage from the panel", async () => {
@@ -398,6 +413,19 @@ it("blocks a save made against an older version and reloads the current one", as
 it("shows what the engine refused a save for and runs the checks to say where", async () => {
   const user = userEvent.setup();
   const calls = engine();
+  // The checks that run as the draft changes find nothing. Only the one a refused save runs,
+  // which is made without a signal, finds the stage that is wrong.
+  calls.checkDraft.mockImplementation(async (_draft, signal) =>
+    create(CheckWorkflowResponseSchema, {
+      packages: [
+        {
+          name: "release",
+          path: "saved/release",
+          findings: signal ? [] : [finding()],
+        },
+      ],
+    }),
+  );
   calls.saveWorkflow.mockRejectedValueOnce(
     new EngineError(
       "invalid_argument",
@@ -413,10 +441,30 @@ it("shows what the engine refused a save for and runs the checks to say where", 
     name: "Settings of stage plan",
   });
   await user.type(within(panel).getByRole("textbox", { name: "Prompt" }), "!");
+  // Let the checks that follow the typing finish first, so what shows next is the save's.
+  await waitFor(() =>
+    expect(
+      calls.checkDraft.mock.calls.filter(([, signal]) => signal),
+    ).not.toHaveLength(0),
+  );
   await user.click(screen.getByRole("button", { name: "Save version" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "route_target_unknown",
   );
+  // The stage the finding is about is marked, and the finding is listed.
+  expect(
+    await screen.findByRole("button", {
+      name: "plan, Agent task, has an error",
+    }),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("region", { name: "Findings" })).getByText(
+      "route_target_unknown",
+    ),
+  ).toBeVisible();
+  expect(
+    calls.checkDraft.mock.calls.some(([, signal]) => signal === undefined),
+  ).toBe(true);
 });
 
 it("asks before closing a draft with unsaved changes, and keeps it when told to", async () => {
@@ -611,4 +659,212 @@ it("says so, with a way to try again, when the workflow cannot be read", async (
   expect(
     await screen.findByRole("button", { name: /^plan, Agent task/ }),
   ).toBeVisible();
+});
+
+it("saves again against the hash the first save returned, and is dirty only while there is something to save", async () => {
+  const user = userEvent.setup();
+  const calls = engine();
+  calls.saveWorkflow
+    .mockResolvedValueOnce(
+      create(SaveWorkflowResponseSchema, {
+        hash: "h2",
+        workflow: { name: "release", version: "4", own: true },
+      }),
+    )
+    .mockResolvedValueOnce(
+      create(SaveWorkflowResponseSchema, {
+        hash: "h3",
+        workflow: { name: "release", version: "5", own: true },
+      }),
+    );
+  const handlers = open(calls);
+  await user.click(
+    await screen.findByRole("button", { name: /^plan, Agent task/ }),
+  );
+  const prompt = () =>
+    within(
+      screen.getByRole("complementary", { name: "Settings of stage plan" }),
+    ).getByRole("textbox", { name: "Prompt" });
+  const save = screen.getByRole("button", { name: "Save version" });
+  expect(save).toBeDisabled();
+
+  await user.type(prompt(), " one");
+  expect(save).toBeEnabled();
+  await user.click(save);
+  await waitFor(() => expect(calls.saveWorkflow).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(save).toBeDisabled());
+  expect(await screen.findByText("Saved version 4")).toBeVisible();
+
+  await user.type(prompt(), " two");
+  expect(save).toBeEnabled();
+  await user.click(save);
+  await waitFor(() => expect(calls.saveWorkflow).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(save).toBeDisabled());
+  expect(await screen.findByText("Saved version 5")).toBeVisible();
+
+  expect(savedBodies(calls).map(({ base }) => base)).toEqual(["h1", "h2"]);
+  const second = savedBodies(calls)[1]?.draft.files["workflow.yaml"] ?? "";
+  expect(JSON.parse(second).stages[0].prompt).toBe("Plan it. one two");
+  expect(handlers.onChanged).toHaveBeenCalledTimes(2);
+});
+
+it("says the stages could not be read for a workflow.yaml that is not a workflow", async () => {
+  const calls = engine();
+  calls.getWorkflowDraft.mockResolvedValueOnce(
+    create(GetWorkflowDraftResponseSchema, {
+      hash: "h1",
+      textFiles: { ...files(), "workflow.yaml": "{ not a workflow" },
+    }),
+  );
+  open(calls);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This workflow's stages could not be read, so it cannot be edited here.",
+  );
+  expect(screen.queryByRole("list", { name: "Stages" })).toBeNull();
+});
+
+it("says so when a template cannot be read, and adds nothing", async () => {
+  const user = userEvent.setup();
+  const calls = engine();
+  calls.listStageTemplates.mockResolvedValue(
+    create(ListStageTemplatesResponseSchema, {
+      templates: [{ id: "broken", stageJson: "{ nope" }],
+    }),
+  );
+  const handlers = open(calls);
+  await user.click(await screen.findByRole("button", { name: "Add stage" }));
+  await user.click(await screen.findByRole("menuitem", { name: "broken" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "That template could not be read.",
+  );
+  expect(handlers.onDraft).not.toHaveBeenCalled();
+  expect(
+    within(screen.getByRole("list", { name: "Stages" })).getAllByRole(
+      "listitem",
+    ),
+  ).toHaveLength(2);
+});
+
+it("lists the kinds of stage by the words the canvas uses", async () => {
+  const user = userEvent.setup();
+  open(engine());
+  await user.click(await screen.findByRole("button", { name: "Add stage" }));
+  for (const label of ["Agent task", "Approval", "Wait", "Automatic job"])
+    expect(await screen.findByRole("menuitem", { name: label })).toBeVisible();
+});
+
+/** Runs what the clock would run, so a check that waits for a quiet moment can be observed. */
+async function settle(ms = 0) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+it("checks the draft once, a moment after the last change, and not on every edit", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const calls = engine();
+    open(calls);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /^plan, Agent task/ }));
+    const prompt = () =>
+      within(
+        screen.getByRole("complementary", { name: "Settings of stage plan" }),
+      ).getByRole("textbox", { name: "Prompt" });
+    // The draft as it opened has not been checked before the delay is over.
+    await settle(399);
+    expect(calls.checkDraft).not.toHaveBeenCalled();
+
+    // A change restarts the wait, so the opening check never runs.
+    fireEvent.change(prompt(), { target: { value: "One" } });
+    await settle(399);
+    expect(calls.checkDraft).not.toHaveBeenCalled();
+    fireEvent.change(prompt(), { target: { value: "Two" } });
+    await settle(399);
+    expect(calls.checkDraft).not.toHaveBeenCalled();
+    await settle(1);
+    expect(calls.checkDraft).toHaveBeenCalledTimes(1);
+    const checked = calls.checkDraft.mock.calls[0]?.[0] as {
+      files: Record<string, string>;
+    };
+    expect(
+      JSON.parse(checked.files["workflow.yaml"] ?? "").stages[0].prompt,
+    ).toBe("Two");
+    // Nothing more is pending.
+    await settle(5_000);
+    expect(calls.checkDraft).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("says the checks could not run, and drops the findings of the draft before", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const calls = engine({ findings: [finding()] });
+    open(calls);
+    // The workflow is read first, and the draft is checked a moment after that.
+    await settle();
+    await settle(400);
+    await settle();
+    expect(
+      screen.getByRole("button", { name: "plan, Agent task, has an error" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Checks could not run")).toBeNull();
+
+    calls.checkDraft.mockRejectedValue(new Error("Beehive is down"));
+    fireEvent.click(screen.getByRole("button", { name: /^plan, Agent task/ }));
+    fireEvent.change(
+      within(
+        screen.getByRole("complementary", { name: "Settings of stage plan" }),
+      ).getByRole("textbox", { name: "Prompt" }),
+      { target: { value: "Changed" } },
+    );
+    await settle(400);
+    await settle();
+    expect(screen.getByText("Checks could not run")).toBeVisible();
+    // The old finding is not shown as if it described the new draft.
+    expect(screen.queryByRole("button", { name: /has an error/ })).toBeNull();
+    expect(screen.queryByText("route_target_unknown")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps the address of an exported file alive until the browser has read it", async () => {
+  const created = vi.fn(() => "blob:release");
+  const revoke = vi.fn();
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, { createObjectURL: created, revokeObjectURL: revoke }),
+  );
+  const click = vi
+    .spyOn(HTMLAnchorElement.prototype, "click")
+    .mockImplementation(() => {});
+  try {
+    const user = userEvent.setup();
+    const calls = engine();
+    open(calls);
+    await user.click(
+      await screen.findByRole("button", { name: "More actions" }),
+    );
+    const item = await screen.findByRole("menuitem", { name: "Export as zip" });
+    // The clock is the subject only from here: the file is handed over and the wait begins.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fireEvent.click(item);
+    await settle();
+    expect(calls.exportWorkflow).toHaveBeenCalledWith("release");
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(created).toHaveBeenCalledTimes(1);
+    // Revoking at once would cancel the download in a browser that reads the file later.
+    expect(revoke).not.toHaveBeenCalled();
+    await settle(999);
+    expect(revoke).not.toHaveBeenCalled();
+    await settle(1);
+    expect(revoke).toHaveBeenCalledWith("blob:release");
+  } finally {
+    click.mockRestore();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  }
 });

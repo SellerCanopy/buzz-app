@@ -16,23 +16,47 @@ export const LANES = [
 export type Lane = (typeof LANES)[number]["key"];
 
 /**
+ * The states a card is in. The engine sends the state as free text, so this table is the one place
+ * the screens learn what each means: the words a person reads, the lane of a card with a
+ * workflow and the tone of its status. A state the table does not know reads as the card's raw
+ * state, in To do, with the Idle tone.
+ */
+export const CARD_STATES = {
+  idle: { label: "Idle", lane: "todo", tone: "neutral" },
+  running: { label: "Running", lane: "progress", tone: "info" },
+  waiting: { label: "Waiting", lane: "progress", tone: "warning" },
+  failed: { label: "Failed", lane: "progress", tone: "danger" },
+  stopped: { label: "Stopped", lane: "progress", tone: "neutral" },
+  done: { label: "Done", lane: "done", tone: "success" },
+} as const;
+
+export type CardState = keyof typeof CARD_STATES;
+
+function known(state: string): state is CardState {
+  return Object.hasOwn(CARD_STATES, state);
+}
+
+/** Whether a card is in one of `states`. */
+export function inState(card: Card, ...states: CardState[]): boolean {
+  return known(card.state) && states.includes(card.state);
+}
+
+/** The state of a card the engine has not said anything about yet. */
+export const NEW_CARD_STATE: CardState = "idle";
+
+/** The words a person reads for a card's state. */
+export function stateWords(state: string): string {
+  return known(state) ? CARD_STATES[state].label : state;
+}
+
+/**
  * The lane a card is in. Backlog has no workflow. A card with one waits in To do until a run
  * starts, is In progress while a run works, waits for a person or has stopped, and is Done when
  * it finished.
  */
 export function laneOf(card: Card): Lane {
   if (!card.workflow) return "backlog";
-  switch (card.state) {
-    case "running":
-    case "waiting":
-    case "failed":
-    case "stopped":
-      return "progress";
-    case "done":
-      return "done";
-    default:
-      return "todo";
-  }
+  return known(card.state) ? CARD_STATES[card.state].lane : "todo";
 }
 
 /** The repo a card's issue lives in as `owner/name`, or empty when the card has no issue. */
@@ -152,20 +176,11 @@ export function statusOf(card: Card, waitingOn: InboxItem[]): Status {
     return { label: "Ready for review", tone: "warning" };
   if (open.some((item) => item.kind === "question"))
     return { label: "Question for you", tone: "warning" };
-  if (open.length > 0 || card.state === "failed")
+  if (open.length > 0 || inState(card, "failed"))
     return { label: "Needs you", tone: "danger" };
-  switch (card.state) {
-    case "running":
-      return { label: "Running", tone: "info" };
-    case "waiting":
-      return { label: "Waiting", tone: "warning" };
-    case "stopped":
-      return { label: "Stopped", tone: "neutral" };
-    case "done":
-      return { label: "Done", tone: "success" };
-    default:
-      return { label: "Idle", tone: "neutral" };
-  }
+  const { label, tone } =
+    CARD_STATES[known(card.state) ? card.state : NEW_CARD_STATE];
+  return { label, tone };
 }
 
 /** The open inbox items of each card. */
@@ -178,14 +193,9 @@ export function waitingByCard(items: InboxItem[]): Map<string, InboxItem[]> {
   return byCard;
 }
 
-export const STATE_FILTERS = [
-  { value: "idle", label: "Idle" },
-  { value: "running", label: "Running" },
-  { value: "waiting", label: "Waiting" },
-  { value: "failed", label: "Failed" },
-  { value: "stopped", label: "Stopped" },
-  { value: "done", label: "Done" },
-] as const;
+export const STATE_FILTERS = Object.entries(CARD_STATES).map(
+  ([value, { label }]) => ({ value, label }),
+);
 
 /** The value of a filter that lets every card through. */
 export const ALL = "all";

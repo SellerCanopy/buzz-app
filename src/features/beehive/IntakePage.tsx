@@ -140,9 +140,13 @@ export function IntakePage({
     run(async () => {
       const reply = await client.refreshIntake(rule?.id ?? "");
       const added = reply.addedCardIds.length;
-      return added === 0
-        ? "Nothing new."
-        : `Added ${added} ${added === 1 ? "card" : "cards"}.`;
+      const result =
+        added === 0
+          ? "Nothing new."
+          : `Added ${added} ${added === 1 ? "card" : "cards"}.`;
+      return reply.truncated
+        ? `${result} GitHub returned only part of the matches.`
+        : result;
     });
   const toggle = (rule: IntakeRule, enabled: boolean) =>
     run(async () => {

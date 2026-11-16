@@ -13,9 +13,9 @@ import { AssistantTicket } from "./AssistantTicket";
 import type { Client } from "./engine/client";
 import { feedOf } from "./engine/feed";
 import { pollErrorHandler } from "./engine/poll";
+import { beehiveSettings } from "./engine/settings";
 import { errorMessage } from "./engine/transport";
 import type { Event, OpenProposal } from "./gen/kiln/engine/v1/engine_pb";
-import { channelOf } from "./SettingsPage";
 import { useReadableChannel } from "./useReadableChannel";
 
 const PROMPTS = [
@@ -124,6 +124,7 @@ export function AssistantPanel({
   const [session, setSession] = useState(restored);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string>();
   const [paused, setPaused] = useState<string>();
   const latest = useRef(session);
@@ -159,13 +160,7 @@ export function AssistantPanel({
     ])
       .then(([settings]) => {
         if (abort.signal.aborted) return;
-        const value = (key: string) =>
-          channelOf(settings.settings.find((s) => s.key === key)?.valueJson);
-        setSetup({
-          status: "ready",
-          channel: value("update_channel"),
-          agent: value("assistant_agent"),
-        });
+        setSetup({ status: "ready", ...beehiveSettings(settings) });
       })
       .catch((failure: unknown) => {
         if (!abort.signal.aborted)
@@ -189,7 +184,12 @@ export function AssistantPanel({
       onEvents: (events) => {
         const { next, offered } = applyEvents(latest.current, events);
         change(next);
-        if (offered) void readProposals().catch(() => undefined);
+        if (offered)
+          void readProposals().catch((failure: unknown) =>
+            setError(
+              `The assistant offered a change, but it could not be loaded. ${errorMessage(failure)}`,
+            ),
+          );
       },
       onError: pollErrorHandler("Beehive assistant updates failed", setPaused),
       onRecover: () => setPaused(undefined),
@@ -198,7 +198,7 @@ export function AssistantPanel({
 
   const ask = async (message: string) => {
     const body = message.trim();
-    if (!body || sending || latest.current.job) return;
+    if (!body || sending || stopping || latest.current.job) return;
     setSending(true);
     setError(undefined);
     try {
@@ -221,13 +221,18 @@ export function AssistantPanel({
 
   const stop = async () => {
     const running = latest.current.job;
-    if (!running) return;
+    if (!running || stopping) return;
+    setStopping(true);
     setError(undefined);
     try {
       await client.cancelJob(running);
-      change({ ...latest.current, job: undefined });
+      // Its result may have arrived, and a newer job started, while the cancel was in flight.
+      if (latest.current.job === running)
+        change({ ...latest.current, job: undefined });
     } catch (failure) {
       setError(errorMessage(failure));
+    } finally {
+      setStopping(false);
     }
   };
 
@@ -293,7 +298,10 @@ export function AssistantPanel({
       }
       actions={
         <>
-          <Button disabled={!session.job} onClick={() => void stop()}>
+          <Button
+            disabled={!session.job || stopping}
+            onClick={() => void stop()}
+          >
             Stop
           </Button>
           <Button variant="prominent" onClick={onClose}>
@@ -393,7 +401,7 @@ export function AssistantPanel({
             onValueChange={setText}
             onSubmit={() => void ask(text)}
             sending={sending}
-            disabled={!!session.job}
+            disabled={!!session.job || stopping}
           />
         )}
       </div>

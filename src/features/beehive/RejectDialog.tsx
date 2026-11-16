@@ -4,44 +4,26 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 
-/** The answers that ask for words in a dialog: a reason for sending an approval back. */
-export const WITH_TEXT = new Set(["reject"]);
-
-const FORM = "beehive-answer";
-
-/** The words of the dialog, and how its submit button looks. */
-function copyOf(subject: string) {
-  return {
-    title: subject ? `Reject the ${subject}` : "Reject",
-    action: "Reject",
-    label: "Reason",
-    help: "Say what to change. The agent reads your reason on the next try.",
-    placeholder:
-      "Add a rollback step and split the scan from the review hand-off.",
-  };
-}
+const FORM = "beehive-reject";
 
 /**
  * Asks for the reason an approval is sent back with. The submit button waits for some words.
  * `subject` names what is rejected, as `plan`. The dialog is a transient surface, so it has no
  * history visit.
  */
-export function TextDialog({
-  kind,
+export function RejectDialog({
   subject = "",
   pending,
   error,
   onClose,
   onSubmit,
 }: {
-  kind: string;
   subject?: string;
   pending: boolean;
   error: string | undefined;
   onClose(): void;
   onSubmit(text: string): Promise<void>;
 }) {
-  const copy = copyOf(subject);
   const field = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState("");
   const ready = text.trim().length > 0;
@@ -49,12 +31,11 @@ export function TextDialog({
     event.preventDefault();
     if (ready && !pending) void onSubmit(text.trim());
   };
-  if (!WITH_TEXT.has(kind)) return null;
   return (
     <Dialog
       open
       size="compact"
-      title={copy.title}
+      title={subject ? `Reject the ${subject}` : "Reject"}
       initialFocus={field}
       dismissOnOutsideClick={false}
       preventClose={pending}
@@ -71,18 +52,21 @@ export function TextDialog({
             loading={pending}
             disabled={!ready || pending}
           >
-            {copy.action}
+            Reject
           </Button>
         </>
       }
     >
       <form id={FORM} onSubmit={submit} noValidate className="beehive-form">
-        <Field label={copy.label} description={copy.help}>
+        <Field
+          label="Reason"
+          description="Say what to change. The agent reads your reason on the next try."
+        >
           <Textarea
             ref={field}
             rows={4}
             value={text}
-            placeholder={copy.placeholder}
+            placeholder="Add a rollback step and split the scan from the review hand-off."
             disabled={pending}
             onChange={(event) => setText(event.target.value)}
           />

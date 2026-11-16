@@ -6,6 +6,7 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
+import { kindLabel } from "./workflowDraft";
 import { Findings } from "./Findings";
 import type {
   Finding,
@@ -16,7 +17,13 @@ import type {
 
 type Loaded =
   | { status: "loading" }
-  | { status: "ready"; workflows: Workflow[]; checks: PackageCheck[] }
+  | {
+      status: "ready";
+      workflows: Workflow[];
+      checks: PackageCheck[];
+      /** Why the checks could not run; the list shows without their findings. */
+      checkError?: string;
+    }
   | { status: "error"; message: string };
 
 /**
@@ -35,15 +42,18 @@ function useWorkflows(client: Client, revision: number) {
     setLoaded({ status: "loading" });
     Promise.all([
       client.listWorkflows(abort.signal),
-      client.checkWorkflow(abort.signal),
+      // The checks are the heavier read and only decorate the list, so their failure keeps it.
+      client.checkWorkflow(abort.signal).then(
+        (check) => ({ checks: check.packages }),
+        (error: unknown) => ({
+          checks: [] as PackageCheck[],
+          checkError: errorMessage(error),
+        }),
+      ),
     ])
       .then(([list, check]) => {
         if (abort.signal.aborted) return;
-        setLoaded({
-          status: "ready",
-          workflows: list.workflows,
-          checks: check.packages,
-        });
+        setLoaded({ status: "ready", workflows: list.workflows, ...check });
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
@@ -54,20 +64,13 @@ function useWorkflows(client: Client, revision: number) {
   return { loaded, retry };
 }
 
-const KINDS: Record<string, string> = {
-  prompt: "Prompt",
-  approval: "Approval",
-  wait: "Wait",
-  action: "Action",
-};
-
 /**
  * What a stage does, in a line: its kind, the agent a prompt runs on, and who it waits for. An
  * approval waits for a person by its nature; any stage may also hold a card until a person
  * starts it.
  */
 export function stageSummary(stage: WorkflowStage): string {
-  const parts = [KINDS[stage.kind] ?? stage.kind];
+  const parts = [kindLabel(stage.kind, "list")];
   if (stage.agent) parts.push(`agent ${stage.agent}`);
   if (stage.pause) parts.push("waits for a person to start it");
   else if (stage.kind === "approval") parts.push("waits for a person");
@@ -126,6 +129,11 @@ export function WorkflowsPage({
       )}
       {loaded.status === "ready" && !empty && (
         <div className="beehive-workflows">
+          {loaded.checkError && (
+            <p role="alert" className="text-body-sm text-danger">
+              {`Checks could not run. ${loaded.checkError}`}
+            </p>
+          )}
           {workflows.map((workflow) => (
             <WorkflowSection
               key={workflow.name}

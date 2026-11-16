@@ -261,3 +261,22 @@ it("reads the workflows again when a workflow was saved", async () => {
     expect(e.calls.listWorkflows).toHaveBeenCalledTimes(2),
   );
 });
+
+it("keeps the list and says the checks could not run when only the checks fail", async () => {
+  const e = engine([demo], []);
+  e.calls.checkWorkflow.mockRejectedValueOnce(new Error("Beehive is down"));
+  render(<WorkflowsPage client={e.client} />);
+  const section = await screen.findByRole("region", { name: "demo" });
+  expect(within(section).getByText("A small workflow.")).toBeVisible();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Checks could not run. Beehive is down",
+  );
+});
+
+it("still fails the page when the workflows themselves cannot be read", async () => {
+  const e = engine([demo], []);
+  e.calls.listWorkflows.mockRejectedValueOnce(new Error("no workflows"));
+  render(<WorkflowsPage client={e.client} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("no workflows");
+  expect(screen.queryByRole("region", { name: "demo" })).toBeNull();
+});

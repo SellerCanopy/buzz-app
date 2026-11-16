@@ -9,6 +9,7 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import type { AgentInfo } from "./gen/kiln/engine/v1/engine_pb";
 import { RESULTS } from "./StageCanvas";
 import {
+  kindLabel,
   packageInfo,
   PACKAGE_FILE,
   renameStage,
@@ -19,13 +20,6 @@ import {
   type DraftStage,
   type Files,
 } from "./workflowDraft";
-
-const KINDS: Record<string, string> = {
-  prompt: "Agent task",
-  approval: "Approval",
-  wait: "Wait",
-  action: "Automatic job",
-};
 
 /** The words for a result the engine routes on, as a question the route answers. */
 const ROUTE_LABELS: Record<string, { label: string; unset: string }> = {
@@ -151,22 +145,9 @@ export function StagePanel({
               }
             />
           </Field>
-          <Select
-            variant="field"
-            label="Type of stage"
-            value={String(stage.kind ?? "")}
-            disabled
-            groups={[
-              {
-                label: "Types",
-                options: Object.entries(KINDS).map(([value, label]) => ({
-                  value,
-                  label,
-                })),
-              },
-            ]}
-            onValueChange={() => undefined}
-          />
+          <Field label="Type of stage">
+            <Input value={kindLabel(stage.kind)} disabled readOnly />
+          </Field>
           <Field label="Notes" optional>
             <Textarea
               rows={3}

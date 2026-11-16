@@ -335,9 +335,9 @@ it("selects cards, moves them together, archives them and clears the choice", as
   const user = userEvent.setup();
   const b = board({
     cards: [
-      card({ id: "a", title: "One" }),
-      card({ id: "b", title: "Two" }),
-      card({ id: "c", title: "Three" }),
+      card({ id: "a", title: "One", state: "idle" }),
+      card({ id: "b", title: "Two", state: "idle" }),
+      card({ id: "c", title: "Three", state: "idle" }),
     ],
   });
   await loaded();
@@ -376,6 +376,97 @@ it("selects cards, moves them together, archives them and clears the choice", as
   await user.click(select);
   expect(screen.queryByRole("toolbar", { name: "Selected cards" })).toBeNull();
   expect(screen.queryByRole("checkbox")).toBeNull();
+});
+
+it("acts only on the selected cards a filter still shows", async () => {
+  const user = userEvent.setup();
+  const b = board({
+    cards: [
+      card({ id: "a", title: "Login bug", state: "idle" }),
+      card({ id: "b", title: "Docs fix", state: "idle" }),
+    ],
+  });
+  await loaded();
+  await user.click(screen.getByRole("button", { name: "Select" }));
+  await user.click(screen.getByRole("checkbox", { name: "Select Login bug" }));
+  await user.click(screen.getByRole("checkbox", { name: "Select Docs fix" }));
+  const bar = screen.getByRole("toolbar", { name: "Selected cards" });
+  expect(within(bar).getByText("2 selected")).toBeVisible();
+
+  // A search hides one of them, and the count follows what is shown.
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search cards" }),
+    "login",
+  );
+  expect(await within(bar).findByText("1 selected")).toBeVisible();
+  await user.click(within(bar).getByRole("button", { name: "Move to" }));
+  await user.click(await screen.findByRole("menuitem", { name: "rpi" }));
+  expect(b.calls.setCardWorkflow).toHaveBeenCalledWith([
+    { cardId: "a", workflow: "rpi" },
+  ]);
+
+  await user.click(screen.getByRole("checkbox", { name: "Select Login bug" }));
+  await user.click(within(bar).getByRole("button", { name: "Move to" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
+  expect(b.calls.archiveCards).toHaveBeenCalledWith(["a"]);
+});
+
+it("moves only the selected cards that have not started, and says the others stayed", async () => {
+  const user = userEvent.setup();
+  const b = board({
+    cards: [
+      card({ id: "a", title: "Idle one", state: "idle" }),
+      card({
+        id: "b",
+        title: "Running one",
+        workflow: "task",
+        state: "running",
+      }),
+    ],
+    runs: [create(RunSchema, { id: "r1", cardId: "b", state: "running" })],
+  });
+  await loaded();
+  await user.click(screen.getByRole("button", { name: "Select" }));
+  await user.click(screen.getByRole("checkbox", { name: "Select Idle one" }));
+  await user.click(
+    screen.getByRole("checkbox", { name: "Select Running one" }),
+  );
+  const bar = screen.getByRole("toolbar", { name: "Selected cards" });
+  await user.click(within(bar).getByRole("button", { name: "Move to" }));
+  await user.click(await screen.findByRole("menuitem", { name: "rpi" }));
+  // The engine refuses a whole batch with a started card, so only the idle one is sent.
+  expect(b.calls.setCardWorkflow).toHaveBeenCalledWith([
+    { cardId: "a", workflow: "rpi" },
+  ]);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Cards that have started cannot move, so they were left where they are.",
+  );
+});
+
+it("sends nothing and says why when none of the selected cards can move", async () => {
+  const user = userEvent.setup();
+  const b = board({
+    cards: [
+      card({
+        id: "b",
+        title: "Running one",
+        workflow: "task",
+        state: "running",
+      }),
+    ],
+    runs: [create(RunSchema, { id: "r1", cardId: "b", state: "running" })],
+  });
+  await loaded();
+  await user.click(screen.getByRole("button", { name: "Select" }));
+  await user.click(
+    screen.getByRole("checkbox", { name: "Select Running one" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Move to" }));
+  await user.click(await screen.findByRole("menuitem", { name: "rpi" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Cards that have started cannot move",
+  );
+  expect(b.calls.setCardWorkflow).not.toHaveBeenCalled();
 });
 
 it("keeps the selection and shows the engine's refusal when a move fails", async () => {

@@ -28,6 +28,7 @@ import {
   ListIssueCommentsResponseSchema,
   ListRunsResponseSchema,
   ListWorkflowsResponseSchema,
+  WorkflowSchema,
   GetSettingsResponseSchema,
   GetUsageResponseSchema,
   GetWorkflowDraftResponseSchema,
@@ -107,6 +108,9 @@ function engine(
       }),
     ),
     checkWorkflow: vi.fn(async () => create(CheckWorkflowResponseSchema, {})),
+    duplicateWorkflow: vi.fn(async (_source: string, name: string) =>
+      create(WorkflowSchema, { name }),
+    ),
     checkDraft: vi.fn(async () => create(CheckWorkflowResponseSchema, {})),
     getWorkflowDraft: vi.fn(async () =>
       create(GetWorkflowDraftResponseSchema, {
@@ -297,6 +301,10 @@ function shell(target: OpenTarget = board) {
       setCurrent(next);
       return {};
     });
+    // Ending visits leaves the page on the target that replaces them.
+    mock.dismiss.mockImplementation((_retire: unknown, next: OpenTarget) =>
+      setCurrent(next),
+    );
     return children({
       navigator: mock as unknown as Navigation,
       navigation: { entryId: "visit-1", target: current, signal } as never,
@@ -544,16 +552,16 @@ it("lists the workflows from the Workflows view and returns to the board", async
   await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
   expect(await screen.findByRole("region", { name: "demo" })).toBeVisible();
   expect(screen.queryByText("Fix the build")).toBeNull();
-  // Workflows keeps no poll open for a board nobody is looking at.
+  // The page's other readers keep the one shared poll open while the board is not shown.
   await vi.waitFor(() => expect(e.polls).toHaveLength(1));
-  expect(e.polls[0]?.signal?.aborted).toBe(true);
+  expect(e.polls[0]?.signal?.aborted).toBe(false);
   await userEvent.click(screen.getByRole("button", { name: "Board" }));
   expect(await screen.findByText("Fix the build")).toBeVisible();
-  // The board reads again on return (the board and the archive) and follows the log from
-  // the new read.
+  // The board reads again on return (the board and the archive) and joins the shared poll,
+  // which has not passed that read, so it carries on without a second request.
   expect(e.calls.listCards).toHaveBeenCalledTimes(4);
-  await vi.waitFor(() => expect(e.polls).toHaveLength(2));
-  expect(e.polls[1]?.signal?.aborted).toBe(false);
+  expect(e.polls).toHaveLength(1);
+  expect(e.polls[0]?.signal?.aborted).toBe(false);
 });
 
 const editorView: OpenTarget = {
@@ -659,6 +667,79 @@ it("shows the new workflow page when its visit is shown, and Cancel retires it",
   expect(retire(newWorkflowView)).toBe(true);
   expect(retire(editorView)).toBe(false);
   expect(fallback).toEqual(board);
+});
+
+it("opens the copy in the editor in place of the New workflow page, and ends only that page's visits", async () => {
+  const e = engine();
+  const nav = page(e.client, newWorkflowView);
+  await levelApplied(e);
+  await userEvent.type(
+    await screen.findByRole("textbox", { name: "Name" }),
+    "mine",
+  );
+  await userEvent.click(
+    await screen.findByRole("combobox", { name: "Workflow to copy" }),
+  );
+  await userEvent.click(await screen.findByRole("option", { name: "demo" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Start from a copy" }),
+  );
+
+  await vi.waitFor(() =>
+    expect(e.calls.duplicateWorkflow).toHaveBeenCalledWith("demo", "mine"),
+  );
+  await vi.waitFor(() => expect(nav.dismiss).toHaveBeenCalledTimes(1));
+  const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(retire(newWorkflowView)).toBe(true);
+  // No editor was open, so another workflow's visit is not this page's to end.
+  expect(retire(editorView)).toBe(false);
+  expect(retire(board)).toBe(false);
+  expect(retire(cardView)).toBe(false);
+  expect(fallback).toEqual({
+    ...board,
+    route: { version: 1, params: { workflow: "mine" } },
+  });
+  // The visit it fell back to is the new workflow's editor.
+  expect(await screen.findByRole("heading", { name: "mine" })).toBeVisible();
+  expect(e.calls.getWorkflowDraft).toHaveBeenCalledWith(
+    "mine",
+    expect.anything(),
+  );
+});
+
+it("keeps what was typed in the editor when another view is chosen, and returns it when the workflow is opened again", async () => {
+  const e = engine();
+  const nav = page(e.client, editorView);
+  await levelApplied(e);
+  await userEvent.click(
+    await screen.findByRole("button", { name: /^plan, Agent task/ }),
+  );
+  const prompt = () =>
+    within(
+      screen.getByRole("complementary", { name: "Settings of stage plan" }),
+    ).getByRole("textbox", { name: "Prompt" });
+  await userEvent.type(prompt(), " and more");
+  expect(prompt()).toHaveValue("p and more");
+
+  // Choosing a view leaves the editor, which ends its visits.
+  await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("heading", { name: "demo" })).toBeNull(),
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Edit demo" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: /^plan, Agent task/ }),
+  );
+  // The text is back, though nothing was saved.
+  expect(prompt()).toHaveValue("p and more");
 });
 
 it("offers New card only to someone who can run", async () => {
@@ -1104,8 +1185,6 @@ it("shows the Intake rules from the Intake tab to a person who can run, with a w
   expect(
     (await screen.findAllByRole("button", { name: "New rule" })).length,
   ).toBeGreaterThan(0);
-  // Intake keeps no poll open for a board nobody is looking at.
-  await vi.waitFor(() => expect(e.polls[0]?.signal?.aborted).toBe(true));
 });
 
 it("shows the Intake rules to a reader without a way to change them", async () => {

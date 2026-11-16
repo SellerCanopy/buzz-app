@@ -1,8 +1,18 @@
+import { inState } from "./boardModel";
 import type { Card, Run } from "./gen/kiln/engine/v1/engine_pb";
 
 /** A card with a workflow and no run in flight can start one. */
 export function canStart(card: Card): boolean {
-  return !card.archived && !!card.workflow && card.state === "idle";
+  return !card.archived && !!card.workflow && inState(card, "idle");
+}
+
+/**
+ * A card that is idle and has never run can be sorted into a workflow, one at a time or with
+ * others. The engine also checks this and is the authority: it refuses a batch with a card that
+ * cannot move.
+ */
+export function canMove(card: Card, run: Run | undefined): boolean {
+  return !card.archived && inState(card, "idle") && !run;
 }
 
 /** A run that has not ended can be stopped. */
@@ -21,7 +31,7 @@ export function canRetry(card: Card, run: Run | undefined): run is Run {
     !!run &&
     !card.archived &&
     run.state === "ended" &&
-    (card.state === "failed" || card.state === "stopped")
+    inState(card, "failed", "stopped")
   );
 }
 

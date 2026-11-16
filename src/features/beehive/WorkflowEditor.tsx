@@ -41,6 +41,7 @@ import {
   removeStage,
   sameFiles,
   stageFromTemplate,
+  STAGE_KINDS,
   stagesOf,
   summary,
   type Files,
@@ -82,6 +83,8 @@ function templateLabel(template: StageTemplate): string {
   }
 }
 
+const REVOKE_DELAY_MS = 1000;
+
 /** Hands the browser a file to save. */
 function download(name: string, bytes: Uint8Array) {
   const url = URL.createObjectURL(
@@ -91,7 +94,8 @@ function download(name: string, bytes: Uint8Array) {
   link.href = url;
   link.download = name;
   link.click();
-  URL.revokeObjectURL(url);
+  // The browser reads the blob after the click returns, so the address outlives it a moment.
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
 }
 
 const CHECK_DELAY_MS = 400;
@@ -134,6 +138,7 @@ export function WorkflowEditor({
   const [draft, setDraft] = useState<EditorDraft>();
   const [attempt, setAttempt] = useState(0);
   const [findings, setFindings] = useState<Finding[]>();
+  const [checkFailed, setCheckFailed] = useState(false);
   const [selected, setSelected] = useState<number>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -192,11 +197,16 @@ export function WorkflowEditor({
       client
         .checkDraft({ name, files }, abort.signal)
         .then((checked) => {
-          if (!abort.signal.aborted) {
-            setFindings(checked.packages.flatMap((entry) => entry.findings));
-          }
+          if (abort.signal.aborted) return;
+          setFindings(checked.packages.flatMap((entry) => entry.findings));
+          setCheckFailed(false);
         })
-        .catch(() => undefined);
+        .catch(() => {
+          if (abort.signal.aborted) return;
+          // Findings of an older draft no longer describe this one.
+          setFindings(undefined);
+          setCheckFailed(true);
+        });
     }, CHECK_DELAY_MS);
     return () => {
       clearTimeout(timer);
@@ -387,6 +397,11 @@ export function WorkflowEditor({
         subtitle={subtitle}
         actions={
           <>
+            {checkFailed && (
+              <span className="beehive-status text-body-sm" data-tone="warning">
+                Checks could not run
+              </span>
+            )}
             {findings && (
               <span
                 className="beehive-status text-body-sm"
@@ -506,20 +521,14 @@ export function WorkflowEditor({
                     <MenuPopup>
                       <MenuGroup>
                         <MenuGroupLabel>Add a stage</MenuGroupLabel>
-                        <MenuItem
-                          onClick={() => add(newStage("prompt", agentFor()))}
-                        >
-                          Agent task
-                        </MenuItem>
-                        <MenuItem onClick={() => add(newStage("approval", ""))}>
-                          Approval
-                        </MenuItem>
-                        <MenuItem onClick={() => add(newStage("wait", ""))}>
-                          Wait
-                        </MenuItem>
-                        <MenuItem onClick={() => add(newStage("action", ""))}>
-                          Automatic job
-                        </MenuItem>
+                        {STAGE_KINDS.map(({ kind, label }) => (
+                          <MenuItem
+                            key={kind}
+                            onClick={() => add(newStage(kind, agentFor()))}
+                          >
+                            {label}
+                          </MenuItem>
+                        ))}
                       </MenuGroup>
                       {templates.length > 0 && (
                         <MenuGroup>

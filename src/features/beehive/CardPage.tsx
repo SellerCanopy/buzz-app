@@ -1,36 +1,20 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { CaretLeftIcon, DotsThreeIcon } from "../../shared/design-system/icons";
+import { useState, type ReactNode } from "react";
+import { CaretLeftIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import {
-  MenuGroup,
-  MenuGroupLabel,
-  MenuItem,
-  MenuLinkItem,
-  MenuPopup,
-  MenuRoot,
-  MenuSeparator,
-  MenuTrigger,
-} from "../../shared/design-system/ui/Menu";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs, type TabItem } from "../../shared/design-system/ui/Tabs";
-import type {
-  Card,
-  InboxItem,
-  Run,
-  Workflow,
-} from "./gen/kiln/engine/v1/engine_pb";
+import type { InboxItem, Run } from "./gen/kiln/engine/v1/engine_pb";
 import type { EmbeddedThreadProps } from "../conversation/EmbeddedThread";
 import type { Navigation } from "../navigation/controller";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
-import { errorMessage } from "./engine/transport";
-import { TextDialog } from "./AnswerDialog";
 import { ActivityTab } from "./ActivityTab";
+import { ApprovalCallout } from "./ApprovalCallout";
 import {
   currentStage,
+  inState,
   issueOf,
   progressOf,
   statusOf,
@@ -38,22 +22,19 @@ import {
   type Progress,
 } from "./boardModel";
 import { Callout } from "./Callout";
-import { CardConfirm, type Confirm } from "./CardConfirm";
+import { CardConfirm } from "./CardConfirm";
+import { CardMenu } from "./CardMenu";
 import { canPause, canRetry, canStart, canStop, isWebUrl } from "./cardActions";
 import { Details, pullState } from "./CardDetails";
 import { FilesTab } from "./FilesTab";
 import { stepStatus, subjectOf } from "./labels";
 import { IssueTab } from "./IssueTab";
 import { LiveTab } from "./LiveTab";
+import { RejectDialog } from "./RejectDialog";
 import { ReposTab } from "./ReposTab";
 import type { CardTab } from "./routes";
 import { StageStrip } from "./StageStrip";
-
-type Loaded =
-  | { status: "loading" }
-  /** `stale` says the last read after an action failed, so what shows may be out of date. */
-  | { status: "ready"; card: Card; run: Run | undefined; stale?: string }
-  | { status: "error"; message: string };
+import { useCard, useCardActions } from "./useCard";
 
 /**
  * One card: a way back to the board, its facts and the stages of its workflow above the tabs. The
@@ -93,108 +74,24 @@ export function CardPage({
   onTab(tab: CardTab): void;
   onClose(): void;
 }) {
-  const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
-  const [workflows, setWorkflows] = useState<Workflow[]>();
-  const [attempt, setAttempt] = useState(0);
-  const [pending, setPending] = useState(false);
-  const [actionError, setActionError] = useState<string>();
-  // Stopping, merging, resetting and removing ask first, and a reject asks for its reason. These
-  // are transient surfaces, so none has a history visit.
-  const [confirm, setConfirm] = useState<Confirm>();
+  const { loaded, setLoaded, workflows, reload } = useCard(client, id);
+  const {
+    pending,
+    error: actionError,
+    clearError,
+    confirm,
+    setConfirm,
+    confirmed,
+    act,
+    toggleArchive,
+    startRun,
+    pause,
+    resume,
+    setAutoMode,
+    answer,
+  } = useCardActions(client, reload, onAnswered, onClose);
+  // A reject asks for its reason, which is a transient surface too and has no history visit.
   const [rejecting, setRejecting] = useState(false);
-
-  useEffect(() => {
-    // `attempt` re-reads the card after a failure or an action.
-    void attempt;
-    const abort = new AbortController();
-    Promise.all([
-      client.getCard(id, abort.signal),
-      client.listRuns(id, abort.signal),
-    ])
-      // The newest run is first.
-      .then(([card, runs]) => {
-        if (abort.signal.aborted) return;
-        setLoaded({ status: "ready", card, run: runs.runs[0] });
-      })
-      .catch((error: unknown) => {
-        if (abort.signal.aborted) return;
-        const message = errorMessage(error);
-        // A card already on screen stays, with the failure said beside it.
-        setLoaded((current) =>
-          current.status === "ready"
-            ? { ...current, stale: message }
-            : { status: "error", message },
-        );
-      });
-    return () => abort.abort();
-  }, [client, id, attempt]);
-
-  // The stage strip needs the workflow's stages. Without them the page reads the same without
-  // the strip, so a failed read says nothing.
-  useEffect(() => {
-    const abort = new AbortController();
-    void Promise.resolve()
-      .then(() => client.listWorkflows(abort.signal))
-      .then(
-        (reply) => !abort.signal.aborted && setWorkflows(reply.workflows),
-        () => undefined,
-      );
-    return () => abort.abort();
-  }, [client]);
-
-  /**
-   * Run one action on the card, then read it again unless `reload` is off. A refusal shows as
-   * the engine words it. Reports whether the action went through.
-   */
-  const act = async (
-    action: () => Promise<unknown>,
-    reload = true,
-  ): Promise<boolean> => {
-    if (pending) return false;
-    setPending(true);
-    setActionError(undefined);
-    try {
-      await action();
-      if (reload) setAttempt((n) => n + 1);
-      return true;
-    } catch (error) {
-      setActionError(errorMessage(error));
-      return false;
-    } finally {
-      setPending(false);
-    }
-  };
-  const toggleArchive = (card: Card) =>
-    act(() =>
-      card.archived
-        ? client.restoreCard(card.id)
-        : client.archiveCards([card.id]),
-    );
-  const startRun = (card: Card) => act(() => client.startRun(card.id));
-  const pause = (card: Card) => act(() => client.pauseCard(card.id));
-  const resume = (card: Card) => act(() => client.resumeCard(card.id));
-  const setAutoMode = (current: Card, enabled: boolean) =>
-    act(() => client.setAutoMode(current.id, enabled));
-  const answer = (item: InboxItem, choice: string, text = "") =>
-    act(async () => {
-      await client.answerInbox(item.id, choice, text);
-      onAnswered();
-    });
-  /** Runs what the open confirmation asked for, then closes it. */
-  const confirmed = async (card: Card, run: Run | undefined) => {
-    const done = await (confirm === "stop" && run
-      ? act(() => client.stopRun(run.id))
-      : confirm === "merge"
-        ? act(() => client.mergeCard(card.id))
-        : confirm === "reset"
-          ? act(() => client.resetCard(card.id))
-          : confirm === "remove"
-            ? act(() => client.removeCard(card.id), false)
-            : Promise.resolve(false));
-    setConfirm(undefined);
-    // A removed card has no page to read again.
-    if (done && confirm === "remove") onClose();
-  };
 
   const card = loaded.status === "ready" ? loaded.card : undefined;
   const run = loaded.status === "ready" ? loaded.run : undefined;
@@ -217,7 +114,7 @@ export function CardPage({
   // A card with an issue or repos has repos to show. One written by hand and not yet run has none
   // yet and takes its first here. One that has run and has none, such as a failed fault card, has
   // no tab.
-  if (card && (card.issue || card.repos.length > 0 || card.state === "idle"))
+  if (card && (card.issue || card.repos.length > 0 || inState(card, "idle")))
     sections.push({ value: "repos", label: "Repos" });
   sections.push({ value: "details", label: "Details" });
   const fallback: CardTab = card?.stages.length ? "live" : "details";
@@ -329,55 +226,13 @@ export function CardPage({
               </Button>
             )}
             {card && hasMenu && (
-              <MenuRoot>
-                <MenuTrigger
-                  render={
-                    <IconButton
-                      aria-label="More actions"
-                      icon={<DotsThreeIcon size="1rem" />}
-                    />
-                  }
-                />
-                <MenuPopup>
-                  {(issueLink || pullLink) && (
-                    <MenuGroup>
-                      <MenuGroupLabel>Open from this card</MenuGroupLabel>
-                      {issueLink && (
-                        <MenuLinkItem
-                          href={issueLink}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Open issue
-                        </MenuLinkItem>
-                      )}
-                      {pullLink && (
-                        <MenuLinkItem
-                          href={pullLink}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Open pull request
-                        </MenuLinkItem>
-                      )}
-                    </MenuGroup>
-                  )}
-                  {(issueLink || pullLink) && canRun && <MenuSeparator />}
-                  {canReset && (
-                    <MenuItem onClick={() => setConfirm("reset")}>
-                      Reset this card
-                    </MenuItem>
-                  )}
-                  {canRun && (
-                    <MenuItem
-                      tone="danger"
-                      onClick={() => setConfirm("remove")}
-                    >
-                      Remove this card
-                    </MenuItem>
-                  )}
-                </MenuPopup>
-              </MenuRoot>
+              <CardMenu
+                issueLink={issueLink}
+                pullLink={pullLink}
+                canReset={canReset}
+                canRun={canRun}
+                onConfirm={setConfirm}
+              />
             )}
           </>
         }
@@ -416,14 +271,13 @@ export function CardPage({
         />
       )}
       {rejecting && approval && (
-        <TextDialog
-          kind="reject"
+        <RejectDialog
           subject={subject}
           pending={pending}
           error={actionError}
           onClose={() => {
             setRejecting(false);
-            setActionError(undefined);
+            clearError();
           }}
           onSubmit={async (text) => {
             if (await answer(approval, "reject", text)) setRejecting(false);
@@ -440,7 +294,7 @@ export function CardPage({
           <p role="alert" className="text-danger">
             {`The card may be out of date. ${loaded.stale}`}
           </p>
-          <Button onClick={() => setAttempt((n) => n + 1)}>Retry</Button>
+          <Button onClick={() => reload()}>Retry</Button>
         </div>
       )}
       <LoadingRegion
@@ -452,7 +306,7 @@ export function CardPage({
               <p role="alert" className="text-danger">
                 {loaded.message}
               </p>
-              <Button onClick={() => setAttempt((n) => n + 1)}>Retry</Button>
+              <Button onClick={() => reload()}>Retry</Button>
             </div>
           ) : undefined
         }
@@ -468,33 +322,13 @@ export function CardPage({
               value === "live" && run ? (
                 <>
                   {approval && (
-                    <Callout
-                      tone="warning"
-                      title="Waiting for your approval"
-                      actions={
-                        canRun ? (
-                          <>
-                            <Button
-                              disabled={pending}
-                              onClick={() => setRejecting(true)}
-                            >
-                              Reject
-                            </Button>
-                            <Button
-                              variant="prominent"
-                              disabled={pending}
-                              onClick={() => void answer(approval, "approve")}
-                            >
-                              Approve
-                            </Button>
-                          </>
-                        ) : undefined
-                      }
-                    >
-                      {subject
-                        ? `Review the ${subject}, then approve it or send it back with a note.`
-                        : "Review it, then approve it or send it back with a note."}
-                    </Callout>
+                    <ApprovalCallout
+                      subject={subject}
+                      canRun={canRun}
+                      pending={pending}
+                      onReject={() => setRejecting(true)}
+                      onApprove={() => void answer(approval, "approve")}
+                    />
                   )}
                   <LiveTab
                     card={card}

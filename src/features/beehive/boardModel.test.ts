@@ -5,7 +5,10 @@ import {
   ALL,
   NO_FILTERS,
   chipsOf,
+  CARD_STATES,
   currentStage,
+  inState,
+  stateWords,
   laneOf,
   latestRuns,
   matchesText,
@@ -256,4 +259,36 @@ it("names the last stage reached when the run has ended", () => {
   const strip = stripOf(run, workflow);
   expect(strip[1]?.status).toBe("failed");
   expect(currentStage(run, strip)).toBe(1);
+});
+
+it("owns each state's label, lane and tone in one table, and reads an unknown state as To do", () => {
+  expect(Object.keys(CARD_STATES)).toEqual([
+    "idle",
+    "running",
+    "waiting",
+    "failed",
+    "stopped",
+    "done",
+  ]);
+  for (const state of Object.keys(CARD_STATES)) {
+    const placed = card("rpi", state);
+    expect(laneOf(placed)).toBe(
+      CARD_STATES[state as keyof typeof CARD_STATES].lane,
+    );
+    // A failed card reads as one that needs the person.
+    if (state !== "failed")
+      expect(statusOf(placed, [])).toMatchObject({
+        label: CARD_STATES[state as keyof typeof CARD_STATES].label,
+      });
+    expect(stateWords(state)).toBe(
+      CARD_STATES[state as keyof typeof CARD_STATES].label,
+    );
+    expect(inState(placed, state as keyof typeof CARD_STATES)).toBe(true);
+  }
+  const odd = card("rpi", "unheard-of");
+  expect(laneOf(odd)).toBe("todo");
+  expect(inState(odd, "idle", "running")).toBe(false);
+  // Names that sit on Object.prototype are not states.
+  expect(inState(card("rpi", "constructor"), "idle")).toBe(false);
+  expect(stateWords("constructor")).toBe("constructor");
 });

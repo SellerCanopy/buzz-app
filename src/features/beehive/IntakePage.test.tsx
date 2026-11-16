@@ -354,6 +354,33 @@ it("says Nothing new when a refresh added no card, and Added 1 card for one", as
   expect(await screen.findByText("Added 1 card.")).toBeVisible();
 });
 
+it("says GitHub returned only part of the matches when the refresh was cut short", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  e.calls.refreshIntake.mockResolvedValueOnce(
+    create(RefreshIntakeResponseSchema, { addedCardIds: [], truncated: true }),
+  );
+  e.calls.refreshIntake.mockResolvedValueOnce(
+    create(RefreshIntakeResponseSchema, {
+      addedCardIds: ["a", "b"],
+      truncated: true,
+    }),
+  );
+  render(<IntakePage client={e.client} canRun />);
+  await user.click(await screen.findByRole("button", { name: "Refresh all" }));
+  expect(
+    await screen.findByText(
+      "Nothing new. GitHub returned only part of the matches.",
+    ),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Refresh all" }));
+  expect(
+    await screen.findByText(
+      "Added 2 cards. GitHub returned only part of the matches.",
+    ),
+  ).toBeVisible();
+});
+
 it("ignores a second action while one is running", async () => {
   const user = userEvent.setup();
   const e = engine();

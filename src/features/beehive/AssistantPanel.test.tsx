@@ -9,6 +9,7 @@ import { AssistantPanel, type AssistantSession } from "./AssistantPanel";
 import type { Client } from "./engine/client";
 import { EngineError } from "./engine/transport";
 import { fakeRelay } from "./fake-relay";
+import type { RelayData } from "../relay/service";
 import {
   CheckWorkflowResponseSchema,
   EventSchema,
@@ -75,7 +76,7 @@ function engine(options: { agent?: string; proposals?: OpenProposal[] } = {}) {
   const polls: {
     after: bigint;
     answer(events: Event[]): void;
-    drop(): void;
+    drop(code?: string): void;
   }[] = [];
   let open = options.proposals ?? [];
   const calls = {
@@ -142,8 +143,8 @@ function engine(options: { agent?: string; proposals?: OpenProposal[] } = {}) {
                   nextSeq: events.at(-1)?.seq ?? after,
                 }),
               ),
-            drop: () =>
-              reject(new EngineError("unavailable", "Beehive is down", 503)),
+            drop: (code = "unavailable") =>
+              reject(new EngineError(code, "Beehive is down", 503)),
           });
           signal?.addEventListener("abort", () => reject(new Error("aborted")));
         }),
@@ -168,7 +169,12 @@ const Thread = (props: { channelId: string; messageId: string }) => (
 
 function open(
   e: ReturnType<typeof engine>,
-  props: { restored?: AssistantSession; canRun?: boolean } = {},
+  props: {
+    restored?: AssistantSession;
+    canRun?: boolean;
+    isAdmin?: boolean;
+    relay?: RelayData;
+  } = {},
 ) {
   const handlers = {
     onSession: vi.fn(),
@@ -179,10 +185,10 @@ function open(
     <ToastProvider>
       <AssistantPanel
         client={e.calls as unknown as Client}
-        relay={fakeRelay([{ id: CHANNEL, name: "updates" }])}
+        relay={props.relay ?? fakeRelay([{ id: CHANNEL, name: "updates" }])}
         Thread={Thread as never}
         canRun={props.canRun ?? true}
-        isAdmin={false}
+        isAdmin={props.isAdmin ?? false}
         restored={props.restored ?? idle}
         {...handlers}
       />
@@ -257,6 +263,90 @@ it("shows the engine's words when the workflow changed since the proposal, and k
   expect(handlers.onSaved).not.toHaveBeenCalled();
   // Still there, and Apply can be tried again.
   expect(within(proposed).getByRole("button", { name: "Apply" })).toBeEnabled();
+});
+
+it("still counts a proposal as applied when only recording the decision fails, because the version is saved", async () => {
+  const e = engine({ proposals: [proposal()] });
+  e.calls.resolveProposal.mockRejectedValue(new Error("gone"));
+  const handlers = open(e);
+  const proposed = await card();
+  await userEvent.click(
+    within(proposed).getByRole("button", { name: "Apply" }),
+  );
+  await vi.waitFor(() => expect(handlers.onSaved).toHaveBeenCalledTimes(1));
+  expect(e.calls.saveWorkflow).toHaveBeenCalledTimes(1);
+  expect(
+    screen.queryByRole("region", { name: "Proposed edit to rpi" }),
+  ).toBeNull();
+});
+
+it("shows the engine's words when Discard fails, and keeps the proposal", async () => {
+  const e = engine({ proposals: [proposal()] });
+  e.calls.resolveProposal.mockRejectedValue(new Error("the proposal is gone"));
+  open(e);
+  const proposed = await card();
+  await userEvent.click(
+    within(proposed).getByRole("button", { name: "Discard" }),
+  );
+  expect(await within(proposed).findByRole("alert")).toHaveTextContent(
+    "the proposal is gone",
+  );
+  expect(
+    within(proposed).getByRole("button", { name: "Discard" }),
+  ).toBeEnabled();
+});
+
+it("compares a proposal for a package that is not saved yet with nothing", async () => {
+  const e = engine({ proposals: [proposal()] });
+  e.calls.getWorkflowDraft.mockRejectedValue(
+    new EngineError("not_found", "no workflow rpi", 404),
+  );
+  open(e);
+  const proposed = await card();
+  // Both files are new.
+  expect(
+    await within(proposed).findByText("Proposed edit: 2 files changed"),
+  ).toBeVisible();
+  await userEvent.click(
+    within(proposed).getByRole("button", { name: "Show changes" }),
+  );
+  expect(
+    within(proposed).getAllByText("Not in the current version"),
+  ).toHaveLength(2);
+});
+
+it("says so when a proposal cannot be compared with the saved version", async () => {
+  const e = engine({ proposals: [proposal()] });
+  e.calls.getWorkflowDraft.mockRejectedValue(
+    new EngineError("unavailable", "Beehive is down", 503),
+  );
+  open(e);
+  const proposed = await card();
+  expect(await within(proposed).findByRole("alert")).toHaveTextContent(
+    "Could not compare it with the saved version. Beehive is down",
+  );
+});
+
+it("lists the problems the checks found in a proposal", async () => {
+  const e = engine({ proposals: [proposal()] });
+  e.calls.checkDraft.mockResolvedValue(
+    create(CheckWorkflowResponseSchema, {
+      packages: [
+        {
+          name: "rpi",
+          findings: [
+            { severity: "error", message: "stage review has no route" },
+          ],
+        },
+      ],
+    }),
+  );
+  open(e);
+  const proposed = await card();
+  expect(
+    await within(proposed).findByText(/stage review has no route/),
+  ).toBeVisible();
+  expect(within(proposed).queryByText("Checks pass")).toBeNull();
 });
 
 it("discards a proposal without saving anything", async () => {
@@ -551,6 +641,137 @@ it("says so when no assistant agent is chosen, and offers no way to ask", async 
   expect(await screen.findByText("No assistant agent")).toBeVisible();
   expect(screen.queryByRole("textbox", { name: "Ask anything..." })).toBeNull();
   expect(screen.queryByRole("button", { name: /^Ask / })).toBeNull();
+});
+
+it("tells an admin where to choose the assistant agent, and anyone else to ask one", async () => {
+  open(engine({ agent: "" }), { isAdmin: true });
+  expect(
+    await screen.findByText("Choose one under Assistant agent in Settings."),
+  ).toBeVisible();
+  cleanup();
+  open(engine({ agent: "" }));
+  expect(
+    await screen.findByText(
+      "An admin chooses the assistant agent in Settings.",
+    ),
+  ).toBeVisible();
+});
+
+it("shows why the settings could not be read and reads them again on Retry", async () => {
+  const e = engine();
+  e.calls.getCommunitySettings.mockRejectedValueOnce(
+    new EngineError("unavailable", "Beehive is down", 503),
+  );
+  open(e);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Beehive is down");
+  expect(screen.queryByText("What can I help with?")).toBeNull();
+
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("What can I help with?")).toBeVisible();
+  expect(e.calls.getCommunitySettings).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+/** A relay whose channel list has not answered, so the thread cannot be shown yet. */
+function waitingRelay(): RelayData {
+  const relay = fakeRelay([{ id: CHANNEL, name: "updates" }]);
+  const snapshot = relay.snapshot() as unknown as {
+    session: { channels: { list: () => { status: string } } };
+  };
+  const loading = { status: "loading" };
+  snapshot.session.channels.list = () => loading;
+  return relay;
+}
+
+it("says it is connecting while the channel list has not answered", async () => {
+  open(engine(), {
+    restored: running({ job: undefined }),
+    relay: waitingRelay(),
+  });
+  expect(await screen.findByText("Connecting to the community…")).toBeVisible();
+  expect(screen.queryByTestId("thread")).toBeNull();
+});
+
+it("says so when the person is not in the channel the assistant answers in", async () => {
+  open(engine(), {
+    restored: running({ job: undefined }),
+    relay: fakeRelay([]),
+  });
+  expect(await screen.findByText("No access to the channel")).toBeVisible();
+  expect(screen.queryByTestId("thread")).toBeNull();
+});
+
+it("pauses when updates cannot be followed and follows again from the saved cursor on Retry", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const e = engine();
+  const handlers = open(e, { restored: running({ cursor: 7n }) });
+  await vi.waitFor(() => expect(e.polls).toHaveLength(1));
+  // A failure retrying cannot cure ends the follow and says why.
+  e.polls[0]?.drop("permission_denied");
+  expect(await screen.findByText(/^Live updates paused/)).toBeVisible();
+  expect(e.polls).toHaveLength(1);
+
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await vi.waitFor(() => expect(e.polls).toHaveLength(2));
+  expect(e.polls[1]?.after).toBe(7n);
+  expect(screen.queryByText(/^Live updates paused/)).toBeNull();
+  e.polls[1]?.answer([
+    event(8n, "job.result", { job_id: "job-1", state: "done" }),
+  ]);
+  expect(await screen.findByText("Ready")).toBeVisible();
+  expect(lastSession(handlers).job).toBeUndefined();
+});
+
+it("keeps the proposal off the list but tells the person when it could not be read after the job offered it", async () => {
+  const e = engine();
+  open(e, { restored: running() });
+  await vi.waitFor(() => expect(e.polls).toHaveLength(1));
+  e.calls.listProposals.mockRejectedValueOnce(
+    new EngineError("unavailable", "Beehive is down", 503),
+  );
+  e.polls[0]?.answer([
+    event(8n, "job.result", {
+      job_id: "job-1",
+      state: "done",
+      proposal_id: 5,
+    }),
+  ]);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The assistant offered a change, but it could not be loaded. Beehive is down",
+  );
+});
+
+it("ignores a second Stop while the first is in flight, and keeps a newer job a late cancel would have cleared", async () => {
+  const e = engine();
+  let release: () => void = () => {};
+  e.calls.cancelJob.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve({});
+      }),
+  );
+  const handlers = open(e, { restored: running() });
+  await vi.waitFor(() => expect(e.polls).toHaveLength(1));
+  const stop = screen.getByRole("button", { name: "Stop" });
+  await userEvent.click(stop);
+  await vi.waitFor(() => expect(e.calls.cancelJob).toHaveBeenCalledTimes(1));
+  // While it is in flight Stop and the box are off, so nothing else can start or stop.
+  expect(stop).toBeDisabled();
+  expect(
+    screen.getByRole("textbox", { name: "Ask anything..." }),
+  ).toBeDisabled();
+
+  // The job's own result arrives first, so the cancel has nothing left to clear.
+  e.polls[0]?.answer([
+    event(8n, "job.result", { job_id: "job-1", state: "done" }),
+  ]);
+  await vi.waitFor(() => expect(lastSession(handlers).job).toBeUndefined());
+  release();
+  await vi.waitFor(() => expect(stop).toBeDisabled());
+  expect(e.calls.cancelJob).toHaveBeenCalledTimes(1);
+  expect(lastSession(handlers)).toEqual(
+    expect.objectContaining({ job: undefined, cursor: 8n }),
+  );
 });
 
 it("starts a new thread with New, and closes with Done", async () => {

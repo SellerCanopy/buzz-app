@@ -6,15 +6,7 @@ import {
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
-import type { DraftStage } from "./workflowDraft";
-
-/** What a stage is called on the canvas, by its kind. */
-const KIND_LABELS: Record<string, string> = {
-  prompt: "Agent task",
-  approval: "Approval",
-  wait: "Wait",
-  action: "Automatic job",
-};
+import { kindLabel, type DraftStage } from "./workflowDraft";
 
 /** The line a stage's tag shows: the agent, the documents to approve, or what the job does. */
 function tagOf(stage: DraftStage): string {
@@ -121,11 +113,11 @@ export function StageCanvas({
                 type="button"
                 className="wf-node-main"
                 aria-pressed={selected === index}
-                aria-label={`${stage.id}, ${KIND_LABELS[String(stage.kind)] ?? stage.kind}${mark ? `, has ${mark === "error" ? "an error" : "a warning"}` : ""}`}
+                aria-label={`${stage.id}, ${kindLabel(stage.kind)}${mark ? `, has ${mark === "error" ? "an error" : "a warning"}` : ""}`}
                 onClick={() => onSelect(index)}
               >
                 <span className="text-body-sm text-subtle">
-                  {KIND_LABELS[String(stage.kind)] ?? String(stage.kind)}
+                  {kindLabel(stage.kind)}
                 </span>
                 <span className="text-label">{label}</span>
                 {tag && <span className="beehive-tag">{tag}</span>}

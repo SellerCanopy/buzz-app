@@ -9,10 +9,12 @@ import type { RelayData } from "../relay/service";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import { AccessSettings } from "./AccessSettings";
 import type { Client } from "./engine/client";
+import {
+  ASSISTANT_AGENT,
+  UPDATE_CHANNEL,
+  beehiveSettings,
+} from "./engine/settings";
 import { errorMessage } from "./engine/transport";
-
-const UPDATE_CHANNEL = "update_channel";
-const ASSISTANT_AGENT = "assistant_agent";
 
 type Loaded =
   | { status: "loading" }
@@ -24,17 +26,6 @@ type Loaded =
       agents: string[];
     }
   | { status: "error"; message: string };
-
-/** The channel id inside a stored setting value, or "" when none is set. */
-export function channelOf(valueJson: string | undefined): string {
-  if (!valueJson) return "";
-  try {
-    const value: unknown = JSON.parse(valueJson);
-    return typeof value === "string" ? value : "";
-  } catch {
-    return "";
-  }
-}
 
 /**
  * Where Beehive posts a run's status and its stage tasks, and which agent answers in the
@@ -72,12 +63,9 @@ export function SettingsPage({
     ])
       .then(([reply, agents]) => {
         if (abort.signal.aborted) return;
-        const value = (key: string) =>
-          channelOf(reply.settings.find((s) => s.key === key)?.valueJson);
         setLoaded({
           status: "ready",
-          channel: value(UPDATE_CHANNEL),
-          agent: value(ASSISTANT_AGENT),
+          ...beehiveSettings(reply),
           agents: agents.agents.map((agent) => agent.name),
         });
       })

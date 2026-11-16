@@ -94,7 +94,8 @@ export function routeTab(value: JsonValue | undefined): CardTab | undefined {
   return CARD_TABS.find((known) => known === tab);
 }
 
-function isBeehive(target: OpenTarget): target is PageTarget {
+/** True for a visit of the Beehive page. */
+export function isBeehivePage(target: OpenTarget): target is PageTarget {
   return (
     target.kind === "page" &&
     target.pluginId === PLUGIN_ID &&
@@ -104,27 +105,29 @@ function isBeehive(target: OpenTarget): target is PageTarget {
 
 /** The card a visit shows, or undefined for the board. */
 export function visitedCard(target: OpenTarget): string | undefined {
-  return isBeehive(target) ? routeCard(target.route?.params) : undefined;
+  return isBeehivePage(target) ? routeCard(target.route?.params) : undefined;
 }
 
 /** The tab a visit shows, or undefined for the card's own default. */
 export function visitedTab(target: OpenTarget): CardTab | undefined {
-  return isBeehive(target) ? routeTab(target.route?.params) : undefined;
+  return isBeehivePage(target) ? routeTab(target.route?.params) : undefined;
 }
 
 /** The workflow a visit edits, or undefined when it edits none. */
 export function visitedWorkflow(target: OpenTarget): string | undefined {
-  return isBeehive(target) ? routeWorkflow(target.route?.params) : undefined;
+  return isBeehivePage(target)
+    ? routeWorkflow(target.route?.params)
+    : undefined;
 }
 
 /** True when a visit shows the page that adds a workflow. */
 export function visitedNewWorkflow(target: OpenTarget): boolean {
-  return isBeehive(target) && routeNewWorkflow(target.route?.params);
+  return isBeehivePage(target) && routeNewWorkflow(target.route?.params);
 }
 
 /** True when a visit shows the assistant panel over the view a person chose. */
 export function visitedAssistant(target: OpenTarget): boolean {
-  return isBeehive(target) && routeAssistant(target.route?.params);
+  return isBeehivePage(target) && routeAssistant(target.route?.params);
 }
 
 /** The same page opened on the assistant panel. */
@@ -158,8 +161,4 @@ export function cardTarget(
 export function boardTarget(target: PageTarget): OpenTarget {
   const { route: _route, ...board } = target;
   return board;
-}
-
-export function isBeehivePage(target: OpenTarget): target is PageTarget {
-  return isBeehive(target);
 }

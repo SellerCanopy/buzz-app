@@ -12,12 +12,16 @@ import {
   type Lane,
 } from "./boardModel";
 import { BoardFilters } from "./BoardFilters";
+import { canMove } from "./cardActions";
 import { ArchivedRows, Lanes, type TileActions } from "./CardList";
 import type { Client } from "./engine/client";
 import { useLive } from "./engine/useLive";
 import { errorMessage } from "./engine/transport";
 import type { InboxItem } from "./gen/kiln/engine/v1/engine_pb";
 import { MoveMenu } from "./MoveMenu";
+
+const NOT_MOVED =
+  "Cards that have started cannot move, so they were left where they are.";
 
 /**
  * The Board view: the cards in four lanes, or the archive, with the search and filters, the
@@ -67,8 +71,11 @@ export function Board({
   );
   const byCard = useMemo(() => waitingByCard(waiting), [waiting]);
   const needing = board.filter((card) => byCard.has(card.id));
-  // A card that left the board while selected (archived, say) is no longer chosen.
-  const chosen = board.filter((card) => selected.has(card.id)).map((c) => c.id);
+  // A bulk action acts on the cards a person can see: one that left the board while selected
+  // (archived, say) or that a filter now hides is left alone.
+  const chosen = board.filter(
+    (card) => selected.has(card.id) && passes(card, filters),
+  );
   const workflows = ready?.workflows;
   const problem =
     live.status === "error" ? live.message : (ready?.paused ?? ready?.stale);
@@ -101,11 +108,19 @@ export function Board({
     setSelected(new Set());
   };
   const moveSelected = async (workflow: string) => {
-    const moves = chosen.map((cardId) => ({ cardId, workflow }));
-    if (await act(() => client.setCardWorkflow(moves))) setSelected(new Set());
+    // The engine refuses a whole batch with a card that cannot move, so only those that can go.
+    const movable = chosen.filter((card) => canMove(card, runs?.get(card.id)));
+    const skipped = movable.length < chosen.length;
+    if (movable.length === 0) return setActionError(NOT_MOVED);
+    const moves = movable.map((card) => ({ cardId: card.id, workflow }));
+    if (await act(() => client.setCardWorkflow(moves))) {
+      setSelected(new Set());
+      if (skipped) setActionError(NOT_MOVED);
+    }
   };
   const archiveSelected = async () => {
-    if (await act(() => client.archiveCards(chosen))) setSelected(new Set());
+    const ids = chosen.map((card) => card.id);
+    if (await act(() => client.archiveCards(ids))) setSelected(new Set());
   };
 
   const empty = ready && board.length === 0 && archive.length === 0;

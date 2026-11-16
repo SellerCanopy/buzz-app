@@ -95,65 +95,63 @@ export function BeehivePage({
   // What a person typed in an editor stays while they go Back and Forward, by workflow.
   const drafts = useRef(new Map<string, EditorDraft>());
   const [workflowsRevision, setWorkflowsRevision] = useState(0);
-  const live = !!navigator && !!navigation && !navigation.signal.aborted;
+  // What every handler needs: navigation that is still alive and a visit of this page.
+  const page =
+    navigator && navigation && !navigation.signal.aborted && target
+      ? isBeehivePage(target)
+        ? { navigator, target }
+        : undefined
+      : undefined;
 
   const openCard = (card: string) => {
-    if (!live || !target || !isBeehivePage(target)) return;
-    void navigator.open(cardTarget(target, card));
+    if (page) void page.navigator.open(cardTarget(page.target, card));
   };
   // A tab is its own visit, so Back returns to the tab a person left.
   const openTab = (tab: CardTab) => {
-    if (!live || !target || !isBeehivePage(target) || !open) return;
-    void navigator.open(cardTarget(target, open, tab));
+    if (page && open)
+      void page.navigator.open(cardTarget(page.target, open, tab));
   };
   const closeCard = () => {
-    if (!live || !target || !isBeehivePage(target)) return;
     // Close ends this card's visits, so Back does not stop on it again.
-    navigator.dismiss(
+    page?.navigator.dismiss(
       (visit) => visitedCard(visit) === open,
-      boardTarget(target),
+      boardTarget(page.target),
     );
   };
   const openWorkflow = (name: string) => {
-    if (!live || !target || !isBeehivePage(target)) return;
-    void navigator.open(workflowTarget(target, name));
+    if (page) void page.navigator.open(workflowTarget(page.target, name));
   };
   const openNewWorkflow = () => {
-    if (!live || !target || !isBeehivePage(target)) return;
-    void navigator.open(newWorkflowTarget(target));
+    if (page) void page.navigator.open(newWorkflowTarget(page.target));
   };
   // Close ends the editor's visits, so Back does not stop on it again.
   const closeWorkflow = () => {
-    if (!live || !target || !isBeehivePage(target)) return;
-    navigator.dismiss(
+    page?.navigator.dismiss(
       (visit) => visitedWorkflow(visit) === editing,
-      boardTarget(target),
+      boardTarget(page.target),
     );
   };
   const closeNewWorkflow = () => {
-    if (!live || !target || !isBeehivePage(target)) return;
-    navigator.dismiss(visitedNewWorkflow, boardTarget(target));
+    page?.navigator.dismiss(visitedNewWorkflow, boardTarget(page.target));
   };
   // A workflow that was just added or copied opens in the editor in the place of the page
-  // that made it.
+  // that made it. Only that page's own visits end: the editor clause needs an editor.
   const openCreated = (name: string) => {
     setWorkflowsRevision((n) => n + 1);
-    if (!live || !target || !isBeehivePage(target)) return;
-    navigator.dismiss(
+    page?.navigator.dismiss(
       (visit) =>
-        visitedNewWorkflow(visit) || visitedWorkflow(visit) === editing,
-      workflowTarget(target, name),
+        visitedNewWorkflow(visit) ||
+        (editing !== undefined && visitedWorkflow(visit) === editing),
+      workflowTarget(page.target, name),
     );
   };
   const openAssistant = () => {
-    if (!live || !target || !isBeehivePage(target)) return;
-    void navigator.open(assistantTarget(target));
+    if (page) void page.navigator.open(assistantTarget(page.target));
   };
   // Done and Close end the panel's visits, so Back does not stop on it again. The view under
   // it was never left, so it shows as it was.
   const closeAssistant = () => {
-    if (!live || !target || !isBeehivePage(target)) return;
-    navigator.dismiss(visitedAssistant, boardTarget(target));
+    page?.navigator.dismiss(visitedAssistant, boardTarget(page.target));
   };
   // Choosing a view in the sidebar leaves whichever page is open. An editor's unsaved text
   // stays in `drafts`, so opening the workflow again returns to it.

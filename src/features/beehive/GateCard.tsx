@@ -6,7 +6,7 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { errorMessage } from "./engine/transport";
 import type { InboxItem } from "./gen/kiln/engine/v1/engine_pb";
-import { TextDialog, WITH_TEXT } from "./AnswerDialog";
+import { RejectDialog } from "./RejectDialog";
 import {
   artifactsOf,
   CHOICES,
@@ -40,7 +40,7 @@ export function GateCard({
   /** Sends the answer; it rejects with the engine's refusal. */
   onAnswer(item: InboxItem, choice: string, text: string): Promise<void>;
 }) {
-  const [asking, setAsking] = useState<string>();
+  const [rejecting, setRejecting] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -74,7 +74,7 @@ export function GateCard({
   };
 
   const choose = (choice: string) => {
-    if (WITH_TEXT.has(choice)) setAsking(choice);
+    if (choice === "reject") setRejecting(true);
     else if (choice === "stop") setConfirmStop(true);
     else void send(choice);
   };
@@ -144,23 +144,22 @@ export function GateCard({
           </div>
         </form>
       )}
-      {error && !asking && !confirmStop && (
+      {error && !rejecting && !confirmStop && (
         <p role="alert" className="text-body-sm text-danger">
           {error}
         </p>
       )}
-      {asking && (
-        <TextDialog
-          kind={asking}
+      {rejecting && (
+        <RejectDialog
           subject={subjectOf(item.detailJson)}
           pending={pending}
           error={error}
           onClose={() => {
-            setAsking(undefined);
+            setRejecting(false);
             setError(undefined);
           }}
           onSubmit={async (text) => {
-            if (await send(asking, text)) setAsking(undefined);
+            if (await send("reject", text)) setRejecting(false);
           }}
         />
       )}
