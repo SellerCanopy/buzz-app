@@ -53,15 +53,36 @@ export function stepStatus(step: RunStep, run: Run, latest: boolean): string {
 const INBOX_KINDS: Record<string, string> = {
   approval: "Approval",
   question: "Question",
-  route: "Decision",
+  route: "Route",
   no_result: "No result",
   missing_output: "Missing output",
-  failure: "Failed",
+  failure: "Failure",
 };
+
+/** The kinds the engine raises, in the order the Needs you tabs list them. */
+export const INBOX_KIND_ORDER = Object.keys(INBOX_KINDS);
 
 /** What kind of wait an inbox item is, in the words a person reads. */
 export function inboxKindLabel(kind: string): string {
   return INBOX_KINDS[kind] ?? words(kind);
+}
+
+/**
+ * How long an item has waited, as `waiting 40m`. Under a minute reads `waiting under 1m`; an
+ * item with no time says nothing. `now` is milliseconds since the epoch.
+ */
+export function waitedLabel(
+  openedAt: { seconds: bigint } | undefined,
+  now: number,
+): string {
+  if (!openedAt) return "";
+  const minutes = Math.floor((now / 1000 - Number(openedAt.seconds)) / 60);
+  if (minutes < 1) return "waiting under 1m";
+  if (minutes < 60) return `waiting ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24
+    ? `waiting ${hours}h`
+    : `waiting ${Math.floor(hours / 24)}d`;
 }
 
 /** The button for one answer an item takes. */
@@ -79,8 +100,18 @@ export const CHOICES: Record<
 };
 
 /**
+ * The button for one answer of an item of `kind`. A failure's Retry starts the run again; on a
+ * stage that ended without a result or an output it runs the stage again.
+ */
+export function choiceLabel(kind: string, choice: string): string {
+  if (choice === "retry")
+    return kind === "failure" ? "Retry run" : "Retry stage";
+  return CHOICES[choice]?.label ?? choice;
+}
+
+/**
  * The artifacts an approval item lists. The engine lists names, as `plan`; an entry that also
- * carries a version reads as `plan (version 2)`.
+ * carries a version reads as `plan v2`.
  */
 export function artifactsOf(detailJson: string): string[] {
   try {
@@ -94,9 +125,7 @@ export function artifactsOf(detailJson: string): string[] {
         version?: unknown;
       };
       if (typeof name !== "string") return [];
-      return [
-        typeof version === "number" ? `${name} (version ${version})` : name,
-      ];
+      return [typeof version === "number" ? `${name} v${version}` : name];
     });
   } catch {
     return [];
@@ -107,7 +136,5 @@ export function artifactsOf(detailJson: string): string[] {
 export function subjectOf(detailJson: string): string {
   const listed = artifactsOf(detailJson);
   const [only] = listed;
-  return listed.length === 1 && only
-    ? only.replace(/ \(version \d+\)$/, "")
-    : "";
+  return listed.length === 1 && only ? only.replace(/ v\d+$/, "") : "";
 }

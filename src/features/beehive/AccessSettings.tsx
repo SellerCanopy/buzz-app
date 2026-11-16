@@ -143,7 +143,7 @@ export function AccessSettings({
         subtitle={
           <>
             {entry.kind === "agent"
-              ? `Agent owned by ${owner ? nameOf(owner) : shortKey(entry.ownerPubkey)}, never above its owner's level.`
+              ? `Agent owned by ${owner ? nameOf(owner) : shortKey(entry.ownerPubkey)}, capped at ${LABELS[ownerLevel]} by its owner.`
               : shortKey(entry.pubkey)}
             {problem && (
               <span role="alert" className="text-danger">
@@ -174,7 +174,10 @@ export function AccessSettings({
 
   return (
     <>
-      <InlineHeader title="Access" />
+      <InlineHeader
+        title="Access"
+        subtitle="Who can see and change cards. An agent never has more access than its owner."
+      />
       <LoadingRegion
         pending={loaded.status === "loading"}
         label="Loading access…"

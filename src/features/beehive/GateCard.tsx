@@ -1,25 +1,40 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Field } from "../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { errorMessage } from "./engine/transport";
 import type { InboxItem } from "./gen/kiln/engine/v1/engine_pb";
 import { TextDialog, WITH_TEXT } from "./AnswerDialog";
-import { artifactsOf, CHOICES, inboxKindLabel, subjectOf } from "./labels";
+import {
+  artifactsOf,
+  CHOICES,
+  choiceLabel,
+  inboxKindLabel,
+  subjectOf,
+  waitedLabel,
+} from "./labels";
 
 /**
  * One thing that waits for a person: the card it belongs to, what it waits for and a button for
- * each answer it takes. Reject and Reply ask for words first, and the button stays off until
- * there are some. Stop run asks first. Both questions are transient, so neither has a history
- * visit.
+ * each answer it takes. Reject asks for a reason in a dialog, and a question's reply is typed
+ * in the card itself; the button for either stays off until there are words. Stop run asks
+ * first. Both questions are transient, so neither has a history visit.
  */
 export function GateCard({
   item,
+  workflow = "",
+  now = Date.now(),
   canRun,
   onOpenCard,
   onAnswer,
 }: {
   item: InboxItem;
+  /** The card's workflow, when it is known. */
+  workflow?: string;
+  /** The moment waiting is counted to, in milliseconds. */
+  now?: number;
   canRun: boolean;
   onOpenCard(card: string): void;
   /** Sends the answer; it rejects with the engine's refusal. */
@@ -29,6 +44,7 @@ export function GateCard({
   const [confirmStop, setConfirmStop] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const [reply, setReply] = useState("");
   const cancelStop = useRef<HTMLButtonElement>(null);
   const artifacts = artifactsOf(item.detailJson);
 
@@ -48,6 +64,15 @@ export function GateCard({
     }
   };
 
+  const replies = item.choices.includes("reply");
+  const sendReply = async (event: FormEvent) => {
+    event.preventDefault();
+    const text = reply.trim();
+    if (!text) return;
+    // On a refusal the words stay, with the reason under them.
+    if (await send("reply", text)) setReply("");
+  };
+
   const choose = (choice: string) => {
     if (WITH_TEXT.has(choice)) setAsking(choice);
     else if (choice === "stop") setConfirmStop(true);
@@ -59,30 +84,65 @@ export function GateCard({
       <InlineHeader
         title={item.cardTitle || "Card"}
         subtitle={item.title}
-        eyebrow={`${inboxKindLabel(item.kind)}, stage ${item.stage}`}
+        eyebrow={[
+          `${inboxKindLabel(item.kind)}, stage ${item.stage}`,
+          workflow,
+          waitedLabel(item.createdAt, now),
+        ]
+          .filter(Boolean)
+          .join(", ")}
         actions={
           <>
-            <Button onClick={() => onOpenCard(item.cardId)}>Open card</Button>
+            <Button variant="ghost" onClick={() => onOpenCard(item.cardId)}>
+              Open card
+            </Button>
             {canRun &&
-              item.choices.map((choice) => (
-                <Button
-                  key={choice}
-                  {...(CHOICES[choice]?.variant
-                    ? { variant: CHOICES[choice].variant }
-                    : {})}
-                  disabled={pending}
-                  onClick={() => choose(choice)}
-                >
-                  {CHOICES[choice]?.label ?? choice}
-                </Button>
-              ))}
+              item.choices
+                // A question's reply has its own field and button below.
+                .filter((choice) => choice !== "reply")
+                .map((choice) => (
+                  <Button
+                    key={choice}
+                    {...(CHOICES[choice]?.variant
+                      ? { variant: CHOICES[choice].variant }
+                      : {})}
+                    disabled={pending}
+                    onClick={() => choose(choice)}
+                  >
+                    {choiceLabel(item.kind, choice)}
+                  </Button>
+                ))}
           </>
         }
       />
       {artifacts.length > 0 && (
-        <p className="text-body-sm text-subtle">
-          {`To approve: ${artifacts.join(", ")}`}
+        <p>
+          <span className="beehive-chip text-body-sm">
+            {`To approve: ${artifacts.join(", ")}`}
+          </span>
         </p>
+      )}
+      {canRun && replies && (
+        <form onSubmit={sendReply} noValidate className="beehive-form">
+          <Field label="Your answer">
+            <Textarea
+              rows={3}
+              value={reply}
+              placeholder="Add a note"
+              disabled={pending}
+              onChange={(event) => setReply(event.target.value)}
+            />
+          </Field>
+          <div>
+            <Button
+              type="submit"
+              variant="prominent"
+              disabled={!reply.trim() || pending}
+            >
+              Send answer
+            </Button>
+          </div>
+        </form>
       )}
       {error && !asking && !confirmStop && (
         <p role="alert" className="text-body-sm text-danger">

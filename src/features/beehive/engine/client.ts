@@ -39,6 +39,7 @@ import {
   ListCardsRequestSchema,
   ListCardsResponseSchema,
   IntakeRuleSchema,
+  type IntakeSchema,
   ListInboxRequestSchema,
   ListInboxResponseSchema,
   ListIntakeRulesRequestSchema,
@@ -54,6 +55,8 @@ import {
   MergeCardRequestSchema,
   PauseCardRequestSchema,
   PollEventsRequestSchema,
+  PreviewIntakeRequestSchema,
+  PreviewIntakeResponseSchema,
   PollEventsResponseSchema,
   ReadArtifactRequestSchema,
   RemoveCardRequestSchema,
@@ -475,6 +478,21 @@ export function createClient(session: Session) {
         RefreshIntakeRequestSchema,
         RefreshIntakeResponseSchema,
         create(RefreshIntakeRequestSchema, { ruleId }),
+        signal,
+      ),
+    /**
+     * The issues on the first page of a rule's search that the rule would take. Nothing is
+     * stored and no card is added.
+     */
+    previewIntake: (
+      rule: MessageInitShape<typeof IntakeSchema>,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "PreviewIntake",
+        PreviewIntakeRequestSchema,
+        PreviewIntakeResponseSchema,
+        create(PreviewIntakeRequestSchema, { rule }),
         signal,
       ),
     /** The repos the team's token reaches on github.com, as "owner/name". */

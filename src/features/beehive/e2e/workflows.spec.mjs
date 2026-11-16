@@ -76,7 +76,7 @@ test("a broken package shows its finding, and a nameless folder shows its own", 
   const pane = page.getByRole("region", { name: "Beehive" });
   await pane.getByRole("button", { name: "Workflows" }).click();
   const broken = pane.getByRole("region", { name: "broken" });
-  await expect(broken.getByText("Has errors")).toBeVisible();
+  await expect(broken.getByText("Has problems")).toBeVisible();
   await expect(
     broken.getByRole("list", { name: "Findings for broken" }),
   ).toContainText("route_target_unknown");

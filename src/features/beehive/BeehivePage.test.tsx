@@ -1572,6 +1572,23 @@ it("lists everyone's level for an admin and saves a change from the row", async 
   expect(e.calls.listAccess.mock.calls.length).toBeGreaterThanOrEqual(2);
 });
 
+it("explains Access and says what caps each agent", async () => {
+  const e = engine({ role: "admin", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  await screen.findByRole("combobox", { name: "Level for builder" });
+  expect(
+    screen.getByText(
+      "Who can see and change cards. An agent never has more access than its owner.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Agent owned by Ben, capped at Read by its owner."),
+  ).toBeVisible();
+});
+
 it("says the level saved when only the list read afterwards failed, and Retry reads the list again", async () => {
   const e = engine({ role: "admin", access: access() });
   page(e.client, undefined, channels);

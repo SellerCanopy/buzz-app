@@ -62,15 +62,23 @@ const SEVERITIES: Record<string, { label: string; tone: string }> = {
   note: { label: "Note", tone: "text-subtle" },
 };
 
-/** What a stage does, in a line: its kind, the agent a prompt runs on, and a pause. */
+/**
+ * What a stage does, in a line: its kind, the agent a prompt runs on, and who it waits for. An
+ * approval waits for a person by its nature; any stage may also hold a card until a person
+ * starts it.
+ */
 export function stageSummary(stage: WorkflowStage): string {
   const parts = [KINDS[stage.kind] ?? stage.kind];
   if (stage.agent) parts.push(`agent ${stage.agent}`);
   if (stage.pause) parts.push("waits for a person to start it");
+  else if (stage.kind === "approval") parts.push("waits for a person");
   return parts.join(", ");
 }
 
-/** Every package the engine loaded with its stages and findings, and the folders that did not load. Read only. */
+/**
+ * Every package the engine loaded with its stages and findings, and the folders that did not
+ * load. Read only: creating, importing and editing a workflow come with Phase 19.
+ */
 export function WorkflowsPage({ client }: { client: Client }) {
   const { loaded, retry } = useWorkflows(client);
   const failed = loaded.status === "error";
@@ -123,7 +131,10 @@ export function WorkflowsPage({ client }: { client: Client }) {
               <InlineHeader title="Packages that did not load" />
               {unloaded.map((check) => (
                 <div key={check.path}>
-                  <p className="text-body-sm text-subtle">{check.path}</p>
+                  <p className="text-body-sm text-subtle">
+                    <span>{check.path}</span>{" "}
+                    <span className="text-danger">Not loaded</span>
+                  </p>
                   <Findings label={check.path} findings={check.findings} />
                 </div>
               ))}
@@ -142,10 +153,14 @@ function WorkflowSection({
   workflow: Workflow;
   findings: Finding[];
 }) {
-  const details = [
-    workflow.builtin ? "Built in" : undefined,
-    workflow.version ? `Version ${workflow.version}` : undefined,
-  ].filter(Boolean);
+  // `Built in, version 0.1.0.` for a package every build ships, `Version 1` for the rest.
+  const details = workflow.builtin
+    ? ["Built in", workflow.version && `version ${workflow.version}`]
+        .filter(Boolean)
+        .join(", ")
+    : workflow.version
+      ? `Version ${workflow.version}`
+      : "";
   return (
     <section aria-label={workflow.name} className="beehive-workflow">
       <InlineHeader
@@ -155,13 +170,11 @@ function WorkflowSection({
           <span
             className={`text-body-sm ${workflow.ok ? "text-subtle" : "text-danger"}`}
           >
-            {workflow.ok ? "Ready" : "Has errors"}
+            {workflow.ok ? "Ready" : "Has problems"}
           </span>
         }
       />
-      {details.length > 0 && (
-        <p className="text-body-sm text-subtle">{details.join(", ")}</p>
-      )}
+      {details && <p className="text-body-sm text-subtle">{details}</p>}
       {workflow.stages.length > 0 && (
         <ol
           className="beehive-stages"
@@ -199,10 +212,7 @@ function Findings({ label, findings }: { label: string; findings: Finding[] }) {
             <code className="text-mono-sm">{finding.code}</code>{" "}
             {finding.message}
             {finding.path && (
-              <span className="text-body-sm text-subtle">
-                {" "}
-                ({finding.path})
-              </span>
+              <span className="text-body-sm text-subtle"> {finding.path}</span>
             )}
           </li>
         );

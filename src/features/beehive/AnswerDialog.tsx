@@ -4,37 +4,27 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 
-/** The answers that carry words: a reason for the agent, or a reply to it. */
-export const WITH_TEXT = new Set(["reject", "reply"]);
+/** The answers that ask for words in a dialog: a reason for sending an approval back. */
+export const WITH_TEXT = new Set(["reject"]);
 
 const FORM = "beehive-answer";
 
-/** The words of a dialog that asks for text, and how its submit button looks. */
-function copyOf(kind: string, subject: string) {
-  if (kind === "reject")
-    return {
-      title: subject ? `Reject the ${subject}` : "Reject",
-      action: "Reject",
-      destructive: true,
-      label: "Reason",
-      help: "Say what to change. The agent reads your reason on the next try.",
-      placeholder:
-        "Add a rollback step and split the scan from the review hand-off.",
-    };
+/** The words of the dialog, and how its submit button looks. */
+function copyOf(subject: string) {
   return {
-    title: "Reply",
-    action: "Reply",
-    destructive: false,
-    label: "Reply",
-    help: "The agent receives this reply in the stage's thread.",
-    placeholder: undefined,
+    title: subject ? `Reject the ${subject}` : "Reject",
+    action: "Reject",
+    label: "Reason",
+    help: "Say what to change. The agent reads your reason on the next try.",
+    placeholder:
+      "Add a rollback step and split the scan from the review hand-off.",
   };
 }
 
 /**
- * Asks for the words an answer carries: the reason for a reject or the reply to a question. The
- * submit button waits for some. `subject` names what is rejected, as `plan`. The dialog is a
- * transient surface, so it has no history visit.
+ * Asks for the reason an approval is sent back with. The submit button waits for some words.
+ * `subject` names what is rejected, as `plan`. The dialog is a transient surface, so it has no
+ * history visit.
  */
 export function TextDialog({
   kind,
@@ -51,7 +41,7 @@ export function TextDialog({
   onClose(): void;
   onSubmit(text: string): Promise<void>;
 }) {
-  const copy = copyOf(kind, subject);
+  const copy = copyOf(subject);
   const field = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState("");
   const ready = text.trim().length > 0;
@@ -77,7 +67,7 @@ export function TextDialog({
           <Button
             type="submit"
             form={FORM}
-            variant={copy.destructive ? "destructive" : "prominent"}
+            variant="destructive"
             loading={pending}
             disabled={!ready || pending}
           >
