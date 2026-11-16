@@ -696,9 +696,9 @@ export type CardRepo = Message<"kiln.engine.v1.CardRepo"> & {
 
   /**
    * Why RemoveIssueRepo will refuse to remove the repo now, in plain words,
-   * or empty when nothing the card holds is in the way: the issue's own repo
-   * and an open pull request. The issue's front matter and a running stage
-   * are checked by RemoveIssueRepo itself, which reads the issue again.
+   * or empty when nothing the card holds is in the way: the issue's own repo,
+   * the repo the card runs in while others remain, and an open pull request.
+   * An active run is checked by RemoveIssueRepo itself.
    *
    * @generated from field: string remove_refusal = 11;
    */
@@ -10548,12 +10548,16 @@ export const EngineService: GenService<{
     output: typeof ReportUsageResponseSchema;
   },
   /**
-   * AddIssueRepo adds a repo on the issue's host to the card's issue, after
-   * checking the person's token can read it. A repo name that is not
-   * owner/name, or a base that is not a branch name, is InvalidArgument. A
-   * local issue is FailedPrecondition, a repo already on the issue is
-   * AlreadyExists, a repo that does not exist or cannot be read is NotFound,
-   * and a card with an active run is FailedPrecondition.
+   * AddIssueRepo adds a repo to the card, after checking the team's GitHub token
+   * can read it.
+   *
+   * Beehive: only a person may add one. A repo name that is not owner/name, or
+   * a base that is not a branch name, is InvalidArgument. A card with no issue
+   * is allowed; its first repo is the repo it runs in. A repo already on the
+   * card is AlreadyExists, a repo that does not exist or cannot be read is
+   * NotFound, and a card with an active run, or one already holding 10 repos,
+   * is FailedPrecondition. base is checked and not stored: the card's branch is
+   * made from the repo's default branch.
    *
    * @generated from rpc kiln.engine.v1.EngineService.AddIssueRepo
    */
@@ -10563,10 +10567,13 @@ export const EngineService: GenService<{
     output: typeof CardSchema;
   },
   /**
-   * RemoveIssueRepo takes an extra repo off the card's issue and removes
-   * its worktree. It is FailedPrecondition for the main repo, a repo with
-   * an open pull request, a repo the issue's front matter still lists, and
-   * a card with an active run. A repo that is not on the issue is NotFound.
+   * RemoveIssueRepo takes a repo off the card.
+   *
+   * Beehive: only a person may remove one. There is no worktree and no issue
+   * front matter to change. It is FailedPrecondition for a card with an active
+   * run, the repo of the card's issue, the repo the card runs in while others
+   * remain, and a repo with an open pull request. A repo that is not on the
+   * card is NotFound.
    *
    * @generated from rpc kiln.engine.v1.EngineService.RemoveIssueRepo
    */
@@ -10621,6 +10628,8 @@ export const EngineService: GenService<{
   /**
    * ListProposals returns the caller's open proposals, oldest first: the
    * workflows the assistant, or an agent that could not save, offered.
+   * Beehive: an agent acting for a person is PermissionDenied; only the person
+   * reads their proposals.
    *
    * @generated from rpc kiln.engine.v1.EngineService.ListProposals
    */
@@ -10674,7 +10683,8 @@ export const EngineService: GenService<{
   /**
    * ResolveProposal records what the person did with a proposal, and takes
    * it off ListProposals. It acts on nothing: the app already ran the action
-   * through its own call. Only the person the proposal is for may resolve it.
+   * through its own call. Only the person the proposal is for may resolve it;
+   * an agent acting for them is PermissionDenied.
    *
    * @generated from rpc kiln.engine.v1.EngineService.ResolveProposal
    */
@@ -10684,9 +10694,14 @@ export const EngineService: GenService<{
     output: typeof ResolveProposalResponseSchema;
   },
   /**
-   * AcceptTicketProposal files a ticket proposal: it opens the issue or
-   * writes the Kiln task, adds the card, and records the card on the
-   * proposal. A repeat returns the same card and opens nothing new.
+   * AcceptTicketProposal files a ticket proposal: it opens the GitHub issue on
+   * the proposal's repo, imports it as a Backlog card, and closes the proposal.
+   *
+   * Beehive: only the person the proposal is for may accept it. A non-empty
+   * title or body replaces the draft's. A proposal that was accepted is not
+   * found again, so a repeat after success is NotFound. When opening the issue
+   * fails the proposal stays open; a retry finds an issue the first try opened
+   * and makes no second.
    *
    * @generated from rpc kiln.engine.v1.EngineService.AcceptTicketProposal
    */
