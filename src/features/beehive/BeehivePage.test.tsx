@@ -23,6 +23,8 @@ import {
   ListArtifactVersionsResponseSchema,
   ListCardsResponseSchema,
   ListInboxResponseSchema,
+  ListIntakeRulesResponseSchema,
+  ListIssueCommentsResponseSchema,
   ListRunsResponseSchema,
   ListWorkflowsResponseSchema,
   GetSettingsResponseSchema,
@@ -162,6 +164,13 @@ function engine(
     ),
     archiveCards: vi.fn(async () => ({})),
     restoreCard: vi.fn(async () => card()),
+    mergeCard: vi.fn(async () => card()),
+    listIntakeRules: vi.fn(async () =>
+      create(ListIntakeRulesResponseSchema, { rules: [] }),
+    ),
+    listIssueComments: vi.fn(async () =>
+      create(ListIssueCommentsResponseSchema, { comments: [] }),
+    ),
     setAutoMode: vi.fn(async () => card({ autoMode: true })),
     pollEvents: vi.fn(
       (after: bigint, _wait?: number, signal?: AbortSignal) =>
@@ -737,6 +746,93 @@ it("offers Archive and Restore only to a person who can run", async () => {
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
 });
 
+const openPull = (fields: Record<string, unknown> = {}) => ({
+  number: 12,
+  url: "https://github.example.org/example-org/api/pull/12",
+  state: "open",
+  draft: false,
+  checks: "passing",
+  ...fields,
+});
+
+it("merges the card's pull request and reads the card again", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ pullRequest: openPull() }));
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+  await vi.waitFor(() => expect(e.calls.mergeCard).toHaveBeenCalledWith(ID));
+  await vi.waitFor(() => expect(e.calls.getCard).toHaveBeenCalledTimes(2));
+});
+
+it("offers Merge only to a person who can run, for a pull request that can be merged", async () => {
+  const reader = engine({ role: "read" });
+  reader.calls.getCard.mockResolvedValue(card({ pullRequest: openPull() }));
+  page(reader.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  await levelApplied(reader);
+  expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+  cleanup();
+
+  for (const pull of [
+    openPull({ draft: true }),
+    openPull({ checks: "failing" }),
+    openPull({ checks: "pending" }),
+    openPull({ state: "merged" }),
+    openPull({ state: "closed" }),
+  ]) {
+    const e = engine();
+    e.calls.getCard.mockResolvedValue(card({ pullRequest: pull }));
+    page(e.client, cardView);
+    await screen.findByRole("tab", { name: "Details" });
+    await levelApplied(e);
+    await screen.findByRole("button", { name: "Archive" });
+    expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+    cleanup();
+  }
+
+  const none = engine();
+  page(none.client, cardView);
+  await screen.findByRole("button", { name: "Archive" });
+  expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+});
+
+it("shows the engine's refusal to merge", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ pullRequest: openPull() }));
+  e.calls.mergeCard.mockRejectedValueOnce(
+    new Error("the pull request has failing checks"),
+  );
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "the pull request has failing checks",
+  );
+});
+
+it("shows what a wait stage is waiting for on the Steps tab", async () => {
+  const e = engine({
+    runs: [
+      run({
+        state: "running",
+        steps: [
+          step({
+            stage: "validate",
+            summary: "waiting for the checks build, lint to pass",
+          }),
+        ],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(card({ workflow: "demo" }));
+  page(e.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "steps" } },
+  } as OpenTarget);
+  expect(
+    await screen.findByText("waiting for the checks build, lint to pass"),
+  ).toBeVisible();
+});
+
 it("shows the engine's refusal to archive and lets the person try again", async () => {
   const e = engine();
   e.calls.archiveCards.mockRejectedValueOnce(new Error("the card is running"));
@@ -802,6 +898,72 @@ it("opens Details when the visit names a tab the card does not have", async () =
     "true",
   );
   expect(screen.queryByRole("tab", { name: "Live" })).toBeNull();
+});
+
+const ISSUE = {
+  host: "github.com",
+  owner: "example-org",
+  repo: "api",
+  number: 42,
+};
+
+it("shows the Intake rules from the Intake tab to a person who can run, with a way to add one", async () => {
+  const e = engine({ role: "run" });
+  page(e.client);
+  await screen.findByText("No cards yet");
+  await levelApplied(e);
+  await userEvent.click(screen.getByRole("tab", { name: "Intake" }));
+  expect(
+    await screen.findByRole("heading", { name: "Intake rules" }),
+  ).toBeVisible();
+  expect(e.calls.listIntakeRules).toHaveBeenCalledTimes(1);
+  expect(
+    (await screen.findAllByRole("button", { name: "New rule" })).length,
+  ).toBeGreaterThan(0);
+  // Intake keeps no poll open for a board nobody is looking at.
+  await vi.waitFor(() => expect(e.polls[0]?.signal?.aborted).toBe(true));
+});
+
+it("shows the Intake rules to a reader without a way to change them", async () => {
+  const e = engine({ role: "read" });
+  page(e.client);
+  await screen.findByText("No cards yet");
+  await levelApplied(e);
+  await userEvent.click(screen.getByRole("tab", { name: "Intake" }));
+  expect(
+    await screen.findByRole("heading", { name: "Intake rules" }),
+  ).toBeVisible();
+  await screen.findByText("No intake rules");
+  expect(e.calls.listIntakeRules).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button", { name: "New rule" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refresh all" })).toBeNull();
+});
+
+it("has an Issue tab for a card made from an issue, and choosing it is a visit", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ issue: ISSUE, body: "Steps" }));
+  const nav = page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("tab", { name: "Issue" }));
+  expect(nav.open).toHaveBeenCalledWith({
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "issue" } },
+  });
+  expect(await screen.findByText("example-org/api#42")).toBeVisible();
+  expect(e.calls.listIssueComments).toHaveBeenCalledWith(ID, expect.anything());
+});
+
+it("has no Issue tab for a card written by hand, and a visit that names it opens Details", async () => {
+  const e = engine();
+  page(e.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "issue" } },
+  } as OpenTarget);
+  expect(await screen.findByRole("tab", { name: "Details" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByRole("tab", { name: "Issue" })).toBeNull();
+  expect(e.calls.listIssueComments).not.toHaveBeenCalled();
 });
 
 it("says the card may be out of date when reading it again fails after an action", async () => {

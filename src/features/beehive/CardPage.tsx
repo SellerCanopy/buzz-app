@@ -16,6 +16,7 @@ import { errorMessage } from "./engine/transport";
 import { ActivityTab } from "./ActivityTab";
 import { FilesTab } from "./FilesTab";
 import { stateLabel, stepStatus } from "./labels";
+import { IssueTab } from "./IssueTab";
 import { LiveTab } from "./LiveTab";
 import type { CardTab } from "./routes";
 
@@ -27,7 +28,7 @@ type Loaded =
 
 /**
  * One card: the current stage's thread, the stages its latest run went through, the files they
- * saved, what happened on it and its details, and Start run, Resume, Stop run, Retry run, Archive and Restore for a
+ * saved, what happened on it and its details, and Start run, Resume, Stop run, Retry run, Merge, Archive and Restore for a
  * person who can run. A person who can run also turns auto mode on and off: while it is on the
  * engine answers the card's approval gates, failed runs and silent stages by rule.
  * The tab is part of the page's route, so Back returns to the tab a person left.
@@ -112,6 +113,7 @@ export function CardPage({
   const resume = (card: Card) => act(() => client.resumeCard(card.id));
   const stop = (current: Run) => act(() => client.stopRun(current.id));
   const retry = (current: Run) => act(() => client.retryRun(current.id));
+  const merge = (card: Card) => act(() => client.mergeCard(card.id));
   const setAutoMode = (current: Card, enabled: boolean) =>
     act(() => client.setAutoMode(current.id, enabled));
 
@@ -124,6 +126,8 @@ export function CardPage({
   if (hasSteps) sections.push({ value: "steps", label: "Steps" });
   if (run) sections.push({ value: "files", label: "Files" });
   sections.push({ value: "activity", label: "Activity" });
+  // A card made from an issue also shows the issue, as the host last returned it.
+  if (card?.issue) sections.push({ value: "issue", label: "Issue" });
   sections.push({ value: "details", label: "Details" });
   const fallback: CardTab = card?.stages.length ? "live" : "details";
   const section = tab && sections.some((s) => s.value === tab) ? tab : fallback;
@@ -167,6 +171,15 @@ export function CardPage({
                 onClick={() => void retry(run)}
               >
                 Retry run
+              </Button>
+            )}
+            {card && canRun && canMerge(card) && (
+              <Button
+                variant="prominent"
+                disabled={pending}
+                onClick={() => void merge(card)}
+              >
+                Merge
               </Button>
             )}
             {card && canRun && !card.archived && (
@@ -269,6 +282,8 @@ export function CardPage({
                 <FilesTab client={client} relay={relay} cardId={card.id} />
               ) : value === "activity" ? (
                 <ActivityTab client={client} cardId={card.id} />
+              ) : value === "issue" && card.issue ? (
+                <IssueTab client={client} card={card} />
               ) : (
                 <Details card={card} />
               )
@@ -299,13 +314,66 @@ function canRetry(card: Card, run: Run): boolean {
   );
 }
 
-function Details({ card }: { card: Card }) {
+/**
+ * A card whose pull request is open, out of draft and not failing or waiting on checks can be
+ * merged. The engine reads the host again and refuses what it finds not ready, so this only
+ * keeps the button off a card that plainly cannot be merged.
+ */
+function canMerge(card: Card): boolean {
+  const pull = card.pullRequest;
+  return (
+    !card.archived &&
+    !!pull &&
+    pull.state === "open" &&
+    !pull.draft &&
+    pull.checks !== "failing" &&
+    pull.checks !== "pending"
+  );
+}
+
+/** A pull request address is shown as a link only when it is a web address. */
+function isWebUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
+export function Details({ card }: { card: Card }) {
+  const pull = card.pullRequest;
   return (
     <dl className="beehive-details">
       <div>
         <dt className="text-label text-subtle">State</dt>
         <dd>{card.archived ? "Archived" : stateLabel(card)}</dd>
       </div>
+      {card.branch && (
+        <div>
+          <dt className="text-label text-subtle">Branch</dt>
+          <dd>
+            <code>{card.branch}</code>
+          </dd>
+        </div>
+      )}
+      {pull && (
+        <div>
+          <dt className="text-label text-subtle">Pull request</dt>
+          <dd>
+            {isWebUrl(pull.url) ? (
+              <Button
+                variant="link"
+                size="text"
+                role="link"
+                nativeButton={false}
+                render={<a href={pull.url} target="_blank" rel="noreferrer" />}
+              >
+                {`#${pull.number}`}
+              </Button>
+            ) : (
+              `#${pull.number}`
+            )}
+            {` ${pullState(pull.state, pull.draft)}`}
+            {pull.checks && ` · checks ${pull.checks}`}
+          </dd>
+        </div>
+      )}
       {card.workflow && (
         <div>
           <dt className="text-label text-subtle">Workflow</dt>
@@ -326,6 +394,11 @@ function Details({ card }: { card: Card }) {
       </div>
     </dl>
   );
+}
+
+/** Where a pull request stands: a draft that is still open says so. */
+function pullState(state: string, draft: boolean): string {
+  return draft && state === "open" ? "draft" : state;
 }
 
 /** The stages the run entered, oldest first, each with where it stands. */

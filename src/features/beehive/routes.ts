@@ -13,6 +13,7 @@ export const CARD_TABS = [
   "steps",
   "files",
   "activity",
+  "issue",
   "details",
 ] as const;
 export type CardTab = (typeof CARD_TABS)[number];

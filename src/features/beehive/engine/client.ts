@@ -18,6 +18,8 @@ import {
   CheckWorkflowRequestSchema,
   CheckWorkflowResponseSchema,
   CreateCardRequestSchema,
+  DeleteIntakeRuleRequestSchema,
+  DeleteIntakeRuleResponseSchema,
   CreateTaskRequestSchema,
   GetCardRequestSchema,
   GetSettingsRequestSchema,
@@ -36,19 +38,32 @@ import {
   ListArtifactVersionsResponseSchema,
   ListCardsRequestSchema,
   ListCardsResponseSchema,
+  IntakeRuleSchema,
   ListInboxRequestSchema,
   ListInboxResponseSchema,
+  ListIntakeRulesRequestSchema,
+  ListIntakeRulesResponseSchema,
+  ListIssueCommentsRequestSchema,
+  ListIssueCommentsResponseSchema,
+  ListReposRequestSchema,
+  ListReposResponseSchema,
   ListRunsRequestSchema,
   ListRunsResponseSchema,
   ListWorkflowsRequestSchema,
   ListWorkflowsResponseSchema,
+  MergeCardRequestSchema,
   PollEventsRequestSchema,
   PollEventsResponseSchema,
   ReadArtifactRequestSchema,
+  RefreshIntakeRequestSchema,
+  RefreshIntakeResponseSchema,
   ResumeCardRequestSchema,
   RestoreCardRequestSchema,
   RetryRunRequestSchema,
   RunSchema,
+  SaveIntakeRuleRequestSchema,
+  SearchIssuesRequestSchema,
+  SearchIssuesResponseSchema,
   SetAccessLevelRequestSchema,
   SetAutoModeRequestSchema,
   SetSettingRequestSchema,
@@ -58,6 +73,7 @@ import {
   WhoAmIRequestSchema,
   WhoAmIResponseSchema,
 } from "../gen/kiln/engine/v1/engine_pb";
+import type { MessageInitShape } from "@bufbuild/protobuf";
 import type { Session } from "./session";
 
 const SERVICE = "/kiln.engine.v1.EngineService/";
@@ -97,14 +113,23 @@ export function createClient(session: Session) {
         signal,
       ),
     createCard: (
-      input: { title: string; description?: string; workflow?: string },
+      input: {
+        title?: string;
+        description?: string;
+        workflow?: string;
+        /** An issue on github.com: the card takes its title and body from it. */
+        issue?: { owner: string; repo: string; number: number };
+      },
       signal?: AbortSignal,
     ) =>
       unary(
         "CreateCard",
         CreateCardRequestSchema,
         CardSchema,
-        create(CreateCardRequestSchema, input),
+        create(CreateCardRequestSchema, {
+          ...input,
+          issue: input.issue && { host: "github.com", ...input.issue },
+        }),
         signal,
       ),
     createTask: (
@@ -132,6 +157,19 @@ export function createClient(session: Session) {
         RestoreCardRequestSchema,
         CardSchema,
         create(RestoreCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /**
+     * Merge the card's pull request. Only a person can: the engine refuses an agent, a draft, a
+     * pull request with failing or unfinished checks and a card that has a stage working on it.
+     * The reply is the card as `getCard` reads it.
+     */
+    mergeCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "MergeCard",
+        MergeCardRequestSchema,
+        CardSchema,
+        create(MergeCardRequestSchema, { cardId }),
         signal,
       ),
     /** Turn auto mode on or off for a card. The reply is the card as `getCard` reads it. */
@@ -351,6 +389,81 @@ export function createClient(session: Session) {
         SetAccessLevelRequestSchema,
         AccessEntrySchema,
         create(SetAccessLevelRequestSchema, { pubkey, level }),
+        signal,
+      ),
+    /** The intake rules, which any reader may see. */
+    listIntakeRules: (signal?: AbortSignal) =>
+      unary(
+        "ListIntakeRules",
+        ListIntakeRulesRequestSchema,
+        ListIntakeRulesResponseSchema,
+        create(ListIntakeRulesRequestSchema),
+        signal,
+      ),
+    /** Save a rule. An empty `id` adds one; the reply is the rule as stored. */
+    saveIntakeRule: (
+      rule: MessageInitShape<typeof IntakeRuleSchema>,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SaveIntakeRule",
+        SaveIntakeRuleRequestSchema,
+        IntakeRuleSchema,
+        create(SaveIntakeRuleRequestSchema, { rule }),
+        signal,
+      ),
+    deleteIntakeRule: (id: string, signal?: AbortSignal) =>
+      unary(
+        "DeleteIntakeRule",
+        DeleteIntakeRuleRequestSchema,
+        DeleteIntakeRuleResponseSchema,
+        create(DeleteIntakeRuleRequestSchema, { id }),
+        signal,
+      ),
+    /** Read the host now for one rule, or for every rule when `ruleId` is empty. */
+    refreshIntake: (ruleId = "", signal?: AbortSignal) =>
+      unary(
+        "RefreshIntake",
+        RefreshIntakeRequestSchema,
+        RefreshIntakeResponseSchema,
+        create(RefreshIntakeRequestSchema, { ruleId }),
+        signal,
+      ),
+    /** The repos the team's token reaches on github.com, as "owner/name". */
+    listRepos: (signal?: AbortSignal) =>
+      unary(
+        "ListRepos",
+        ListReposRequestSchema,
+        ListReposResponseSchema,
+        create(ListReposRequestSchema, { host: "github.com" }),
+        signal,
+      ),
+    /** Open issues of one repo, narrowed by text. */
+    searchIssues: (
+      input: { repo: string; text?: string },
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SearchIssues",
+        SearchIssuesRequestSchema,
+        SearchIssuesResponseSchema,
+        create(SearchIssuesRequestSchema, {
+          host: "github.com",
+          filter: {
+            repos: [input.repo],
+            text: input.text ?? "",
+            state: "open",
+          },
+        }),
+        signal,
+      ),
+    /** The newest comments on a card's issue. Their text is from outside the team. */
+    listIssueComments: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "ListIssueComments",
+        ListIssueCommentsRequestSchema,
+        ListIssueCommentsResponseSchema,
+        create(ListIssueCommentsRequestSchema, { cardId }),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>
