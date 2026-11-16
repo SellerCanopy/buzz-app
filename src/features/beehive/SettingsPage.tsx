@@ -16,6 +16,7 @@ import {
   beehiveSettings,
 } from "./engine/settings";
 import { errorMessage } from "./engine/transport";
+import { SecretsSettings } from "./SecretsSettings";
 
 type Loaded =
   | { status: "loading" }
@@ -31,8 +32,9 @@ type Loaded =
 /**
  * Where Beehive posts a run's status and its stage tasks, and which agent answers in the
  * Assistant. Everyone reads them; only an admin changes them. An admin also sets what each
- * person and agent may do, and which tool servers each agent starts. The engine checks each setting on save, and its answer is shown
- * beside the setting as it gives it.
+ * person and agent may do, which tool servers each agent starts, and the secrets agents run
+ * with. The engine checks each setting on save, and its answer is shown beside the setting as
+ * it gives it.
  */
 export function SettingsPage({
   client,
@@ -146,6 +148,7 @@ export function SettingsPage({
       </LoadingRegion>
       {isAdmin && <AccessSettings client={client} me={me} />}
       {isAdmin && <AgentToolsSettings client={client} />}
+      {isAdmin && <SecretsSettings client={client} />}
     </div>
   );
 }

@@ -186,6 +186,35 @@ it("sends a tool server as its name, transport and whole spec as JSON, and reads
   expect(sent(3).path).toBe(`${SERVICE}GetHiveHealth`);
 });
 
+it("sends a secret's value only in the request of the call that sets it, and lists names", async () => {
+  const { client, sent } = wire({
+    applied: [{ agent: "builder", applied: true }],
+  });
+  const change = await client.setTeamSecret("GH_TOKEN", "v-1");
+  expect(sent(0)).toEqual({
+    path: `${SERVICE}SetTeamSecret`,
+    body: { name: "GH_TOKEN", value: "v-1" },
+  });
+  expect(change.applied[0]?.agent).toBe("builder");
+  await client.setAgentSecret("builder", "DOCS_KEY", "v-2");
+  expect(sent(1)).toEqual({
+    path: `${SERVICE}SetAgentSecret`,
+    body: { agent: "builder", name: "DOCS_KEY", value: "v-2" },
+  });
+  await client.grantTeamSecret("builder", "GH_TOKEN");
+  expect(sent(2)).toEqual({
+    path: `${SERVICE}GrantTeamSecret`,
+    body: { agent: "builder", name: "GH_TOKEN" },
+  });
+  await client.revokeTeamSecret("builder", "GH_TOKEN");
+  expect(sent(3)).toEqual({
+    path: `${SERVICE}RevokeTeamSecret`,
+    body: { agent: "builder", name: "GH_TOKEN" },
+  });
+  await client.listSecretNames();
+  expect(sent(4).path).toBe(`${SERVICE}ListSecretNames`);
+});
+
 it("ignores a field of the reply that this app does not know, as an older app meets a newer engine", async () => {
   const { client } = wire({ headSeq: "12", addedByANewerEngine: { x: 1 } });
   const status = await client.getStatus();

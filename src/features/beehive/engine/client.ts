@@ -108,6 +108,13 @@ import {
   ListAgentsResponseSchema,
   ListAgentToolServersRequestSchema,
   ListAgentToolServersResponseSchema,
+  GrantTeamSecretRequestSchema,
+  ListSecretNamesRequestSchema,
+  ListSecretNamesResponseSchema,
+  RevokeTeamSecretRequestSchema,
+  SecretChangeSchema,
+  SetAgentSecretRequestSchema,
+  SetTeamSecretRequestSchema,
   RemoveAgentToolServerRequestSchema,
   SetAgentToolServerRequestSchema,
   ListStageTemplatesRequestSchema,
@@ -811,6 +818,59 @@ export function createClient(session: Session) {
         RemoveAgentToolServerRequestSchema,
         AgentToolsChangeSchema,
         create(RemoveAgentToolServerRequestSchema, { agent, name }),
+        signal,
+      ),
+    /** Every secret's name and which agents hold it. Never a value. Needs Admin. */
+    listSecretNames: (signal?: AbortSignal) =>
+      unary(
+        "ListSecretNames",
+        ListSecretNamesRequestSchema,
+        ListSecretNamesResponseSchema,
+        create(ListSecretNamesRequestSchema),
+        signal,
+      ),
+    /**
+     * Set or replace a team secret. The value is write only: it goes to the secret store and is
+     * never returned. Agents that hold a replaced secret restart. Needs Admin.
+     */
+    setTeamSecret: (name: string, value: string, signal?: AbortSignal) =>
+      unary(
+        "SetTeamSecret",
+        SetTeamSecretRequestSchema,
+        SecretChangeSchema,
+        create(SetTeamSecretRequestSchema, { name, value }),
+        signal,
+      ),
+    /** Set or replace one agent's own secret, which wins over a team secret of the same name. */
+    setAgentSecret: (
+      agent: string,
+      name: string,
+      value: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SetAgentSecret",
+        SetAgentSecretRequestSchema,
+        SecretChangeSchema,
+        create(SetAgentSecretRequestSchema, { agent, name, value }),
+        signal,
+      ),
+    /** Give an agent a team secret by name. An agent has none until it is granted one. */
+    grantTeamSecret: (agent: string, name: string, signal?: AbortSignal) =>
+      unary(
+        "GrantTeamSecret",
+        GrantTeamSecretRequestSchema,
+        SecretChangeSchema,
+        create(GrantTeamSecretRequestSchema, { agent, name }),
+        signal,
+      ),
+    /** Take a team secret from an agent. The value stays for the agents that still hold it. */
+    revokeTeamSecret: (agent: string, name: string, signal?: AbortSignal) =>
+      unary(
+        "RevokeTeamSecret",
+        RevokeTeamSecretRequestSchema,
+        SecretChangeSchema,
+        create(RevokeTeamSecretRequestSchema, { agent, name }),
         signal,
       ),
     /** What the engine reports about itself, including the agents that are not set up for stage threads. */

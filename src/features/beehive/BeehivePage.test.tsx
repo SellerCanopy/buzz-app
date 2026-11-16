@@ -35,6 +35,7 @@ import {
   GetWorkflowDraftResponseSchema,
   ListAgentsResponseSchema,
   ListAgentToolServersResponseSchema,
+  ListSecretNamesResponseSchema,
   ListStageTemplatesResponseSchema,
   GetStatusResponseSchema,
   InboxItemSchema,
@@ -223,6 +224,9 @@ function engine(
       }),
     ),
     getHiveHealth: vi.fn(async () => create(GetHiveHealthResponseSchema, {})),
+    listSecretNames: vi.fn(async () =>
+      create(ListSecretNamesResponseSchema, {}),
+    ),
     setCommunitySetting: vi.fn(async (key: string, valueJson: string) =>
       create(SettingSchema, { key, valueJson }),
     ),
@@ -2083,7 +2087,34 @@ it("shows an admin the agent tools in Settings", async () => {
   expect(
     screen.getByText("Tool servers each agent can use during a stage."),
   ).toBeVisible();
-  expect(e.calls.listAgentToolServers).toHaveBeenCalledTimes(1);
+  expect(e.calls.listAgentToolServers).toHaveBeenCalled();
+});
+
+it("shows an admin the secrets in Settings, by name, with no value to read", async () => {
+  const e = engine({ role: "admin", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Add team secret" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/A value cannot be read back, only replaced\./),
+  ).toBeVisible();
+  expect(e.calls.listSecretNames).toHaveBeenCalledTimes(1);
+});
+
+it("gives a person who is not an admin no secrets and reads none", async () => {
+  const e = engine({ role: "run", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  await screen.findByRole("combobox", { name: "Update channel" });
+  expect(screen.queryByText("Secrets")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add team secret" })).toBeNull();
+  expect(e.calls.listSecretNames).not.toHaveBeenCalled();
 });
 
 it("gives a person who is not an admin no agent tools and reads none", async () => {
