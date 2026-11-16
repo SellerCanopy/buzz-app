@@ -1,8 +1,8 @@
 {
   "source": "crates/buzz-hive-api/proto in the Buzz repository",
-  "sourceCommit": "b1a9fd6ed079f99fba0fec6196b48da04091b0d3+uncommitted",
-  "protoSha256": "9c69e2e614660fad552d72844a6cc962ba0642ca2ba4a7bc20ed6be25b0a18eb",
+  "sourceCommit": "57a959bcf6d487a48ba2ba5ff780adaecc8ac249+uncommitted",
+  "protoSha256": "0f236a2dfc6f280099da82fc7c13565ed651a894e39dd77a3dc84e25fe1180ac",
   "files": {
-    "kiln/engine/v1/engine_pb.ts": "e9654744033afdc5d7ec74641026fe2d236924d4019d06fa42b85184c81e8f32"
+    "kiln/engine/v1/engine_pb.ts": "cb95032e0d1398b5c61a9768b0bf4d624b04880869da072b716d0a1ab598463d"
   }
 }

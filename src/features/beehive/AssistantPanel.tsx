@@ -9,6 +9,7 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import type { EmbeddedThreadProps } from "../conversation/EmbeddedThread";
 import type { RelayData } from "../relay/service";
 import { AssistantProposal } from "./AssistantProposal";
+import { AssistantTicket } from "./AssistantTicket";
 import type { Client } from "./engine/client";
 import { feedOf } from "./engine/feed";
 import { pollErrorHandler } from "./engine/poll";
@@ -92,7 +93,8 @@ function applyEvents(
 /**
  * The assistant: a Buzz agent answers in a thread of the update channel, which is shown here as
  * Channels shows it. Each message starts a job, and the job's result arrives on the event log. A
- * workflow the assistant offers is a card to apply or discard; nothing changes until it is applied.
+ * workflow the assistant offers is a card to apply or discard; nothing changes until it is applied. A
+ * ticket an agent offered is a card too, and opening its issue is the person's.
  */
 export function AssistantPanel({
   client,
@@ -366,15 +368,18 @@ export function AssistantPanel({
             {session.failure}
           </p>
         )}
-        {proposals.map((proposal) => (
-          <AssistantProposal
-            key={String(proposal.id)}
-            client={client}
-            proposal={proposal}
-            canRun={canRun}
-            onDecided={decided}
-          />
-        ))}
+        {proposals.map((proposal) => {
+          const Offer = proposal.ticket ? AssistantTicket : AssistantProposal;
+          return (
+            <Offer
+              key={String(proposal.id)}
+              client={client}
+              proposal={proposal}
+              canRun={canRun}
+              onDecided={decided}
+            />
+          );
+        })}
         {error && (
           <p role="alert" className="text-danger">
             {error}

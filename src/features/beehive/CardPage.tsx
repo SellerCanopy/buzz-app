@@ -45,6 +45,7 @@ import { FilesTab } from "./FilesTab";
 import { stepStatus, subjectOf } from "./labels";
 import { IssueTab } from "./IssueTab";
 import { LiveTab } from "./LiveTab";
+import { ReposTab } from "./ReposTab";
 import type { CardTab } from "./routes";
 import { StageStrip } from "./StageStrip";
 
@@ -57,9 +58,10 @@ type Loaded =
 /**
  * One card: a way back to the board, its facts and the stages of its workflow above the tabs. The
  * tabs are the issue, the current stage's thread, the stages its latest run went through, the
- * files they saved, what happened on it and its details. A person who can run starts, holds,
- * stops and retries the run from the header, merges and archives from Details, and approves or
- * sends back the card's approval wherever it shows. A person who can run also turns auto mode on
+ * files they saved, what happened on it, the repos it works in and its details. A person who can
+ * run starts, holds, stops and retries the run from the header, merges and archives from Details,
+ * adds and removes repos on the Repos tab, and approves or sends back the card's approval wherever
+ * it shows. A person who can run also turns auto mode on
  * and off: while it is on the engine answers the card's approval gates, failed runs and silent
  * stages by rule. The tab is part of the page's route, so Back returns to the tab a person left.
  */
@@ -212,6 +214,11 @@ export function CardPage({
   if (hasSteps) sections.push({ value: "steps", label: "Steps" });
   if (run) sections.push({ value: "files", label: "Files" });
   sections.push({ value: "activity", label: "Activity" });
+  // A card with an issue or repos has repos to show. One written by hand and not yet run has none
+  // yet and takes its first here. One that has run and has none, such as a failed fault card, has
+  // no tab.
+  if (card && (card.issue || card.repos.length > 0 || card.state === "idle"))
+    sections.push({ value: "repos", label: "Repos" });
   sections.push({ value: "details", label: "Details" });
   const fallback: CardTab = card?.stages.length ? "live" : "details";
   const section = tab && sections.some((s) => s.value === tab) ? tab : fallback;
@@ -509,6 +516,19 @@ export function CardPage({
                 <ActivityTab client={client} cardId={card.id} />
               ) : value === "issue" && card.issue ? (
                 <IssueTab client={client} card={card} />
+              ) : value === "repos" ? (
+                <ReposTab
+                  client={client}
+                  card={card}
+                  canRun={canRun}
+                  onChanged={(next) =>
+                    setLoaded((current) =>
+                      current.status === "ready"
+                        ? { ...current, card: next }
+                        : current,
+                    )
+                  }
+                />
               ) : (
                 <Details
                   card={card}

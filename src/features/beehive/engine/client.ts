@@ -6,7 +6,10 @@ import {
   type MessageShape,
 } from "@bufbuild/protobuf";
 import {
+  AcceptTicketProposalRequestSchema,
+  AcceptTicketProposalResponseSchema,
   AccessEntrySchema,
+  AddIssueRepoRequestSchema,
   AddNoteRequestSchema,
   AddNoteResponseSchema,
   ArtifactVersionSchema,
@@ -64,6 +67,7 @@ import {
   PollEventsResponseSchema,
   ReadArtifactRequestSchema,
   RemoveCardRequestSchema,
+  RemoveIssueRepoRequestSchema,
   RemoveCardResponseSchema,
   RefreshIntakeRequestSchema,
   RefreshIntakeResponseSchema,
@@ -326,6 +330,31 @@ export function createClient(session: Session) {
         RemoveCardRequestSchema,
         RemoveCardResponseSchema,
         create(RemoveCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /**
+     * Add an `owner/name` repo to the card. The reply is the card with its repos. The engine
+     * refuses a repo it cannot read, one the card has, and a card whose run is active.
+     */
+    addIssueRepo: (cardId: string, repo: string, signal?: AbortSignal) =>
+      unary(
+        "AddIssueRepo",
+        AddIssueRepoRequestSchema,
+        CardSchema,
+        create(AddIssueRepoRequestSchema, { cardId, repo }),
+        signal,
+      ),
+    /**
+     * Take an extra repo off the card. The reply is the card with its repos. The engine refuses
+     * the repo the card runs in while others remain, one with an open pull request, and a card
+     * whose run is active.
+     */
+    removeIssueRepo: (cardId: string, repo: string, signal?: AbortSignal) =>
+      unary(
+        "RemoveIssueRepo",
+        RemoveIssueRepoRequestSchema,
+        CardSchema,
+        create(RemoveIssueRepoRequestSchema, { cardId, repo }),
         signal,
       ),
     /** Let a held card carry on: a stage held before it started posts its task. */
@@ -717,6 +746,15 @@ export function createClient(session: Session) {
         ResolveProposalRequestSchema,
         ResolveProposalResponseSchema,
         create(ResolveProposalRequestSchema, { proposalId, accepted }),
+        signal,
+      ),
+    /** File a ticket an agent proposed: the engine opens its issue and adds the card. */
+    acceptTicketProposal: (proposalId: bigint, signal?: AbortSignal) =>
+      unary(
+        "AcceptTicketProposal",
+        AcceptTicketProposalRequestSchema,
+        AcceptTicketProposalResponseSchema,
+        create(AcceptTicketProposalRequestSchema, { proposalId }),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

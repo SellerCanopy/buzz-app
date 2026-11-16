@@ -36,6 +36,7 @@ it("accepts only a route naming one card by its uuid and, optionally, a known ta
   expect(routeCard({ card: ID, tab: "live" })).toBe(ID);
   expect(routeCard({ card: ID, tab: "activity" })).toBe(ID);
   expect(routeCard({ card: ID, tab: "issue" })).toBe(ID);
+  expect(routeCard({ card: ID, tab: "repos" })).toBe(ID);
   expect(routeCard({ card: ID, tab: "nope" })).toBeUndefined();
   expect(routeCard({ tab: "live" })).toBeUndefined();
   expect(routeCard({ card: "7" })).toBeUndefined();

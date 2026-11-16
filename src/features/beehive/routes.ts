@@ -14,6 +14,7 @@ export const CARD_TABS = [
   "files",
   "activity",
   "issue",
+  "repos",
   "details",
 ] as const;
 export type CardTab = (typeof CARD_TABS)[number];

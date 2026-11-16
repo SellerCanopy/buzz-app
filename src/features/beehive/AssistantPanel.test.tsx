@@ -119,6 +119,10 @@ function engine(options: { agent?: string; proposals?: OpenProposal[] } = {}) {
       open = open.filter((p) => p.id !== id);
       return {};
     }),
+    acceptTicketProposal: vi.fn(async (id: bigint) => {
+      open = open.filter((p) => p.id !== id);
+      return {};
+    }),
     getStatus: vi.fn(async () =>
       create(GetStatusResponseSchema, { headSeq: HEAD }),
     ),
@@ -270,6 +274,85 @@ it("discards a proposal without saving anything", async () => {
   expect(e.calls.resolveProposal).toHaveBeenCalledWith(5n, false);
   expect(e.calls.saveWorkflow).not.toHaveBeenCalled();
   expect(handlers.onSaved).not.toHaveBeenCalled();
+});
+
+const ticket = (): OpenProposal =>
+  create(OpenProposalSchema, {
+    id: 8n,
+    ticket: {
+      title: "Uploads time out over 50 MB",
+      body: "The gateway drops the connection after 30 seconds.",
+      repo: "example-org/upload-api",
+    },
+  });
+const offered = () =>
+  screen.findByRole("region", {
+    name: "Proposed ticket: Uploads time out over 50 MB",
+  });
+
+it("shows a ticket an agent proposed and opens its issue when the person accepts", async () => {
+  const e = engine({ proposals: [ticket()] });
+  const handlers = open(e);
+  const proposed = await offered();
+  expect(within(proposed).getByText("example-org/upload-api")).toBeVisible();
+  expect(
+    within(proposed).getByText(
+      "The gateway drops the connection after 30 seconds.",
+    ),
+  ).toBeVisible();
+  // It is not a workflow, so nothing is compared or checked.
+  expect(e.calls.getWorkflowDraft).not.toHaveBeenCalled();
+
+  await userEvent.click(
+    within(proposed).getByRole("button", { name: "Open issue" }),
+  );
+
+  await vi.waitFor(() =>
+    expect(e.calls.acceptTicketProposal).toHaveBeenCalledWith(8n),
+  );
+  await vi.waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: /^Proposed ticket/ }),
+    ).toBeNull(),
+  );
+  // No workflow was saved, so the workflow list is not read again.
+  expect(handlers.onSaved).not.toHaveBeenCalled();
+  expect(e.calls.saveWorkflow).not.toHaveBeenCalled();
+  expect(e.calls.resolveProposal).not.toHaveBeenCalled();
+});
+
+it("shows the engine's words when a ticket cannot be filed, and keeps it", async () => {
+  const e = engine({ proposals: [ticket()] });
+  e.calls.acceptTicketProposal.mockRejectedValue(
+    new EngineError("not_found", "proposal 8 is not open", 404),
+  );
+  open(e);
+  const proposed = await offered();
+  await userEvent.click(
+    within(proposed).getByRole("button", { name: "Open issue" }),
+  );
+  expect(await within(proposed).findByRole("alert")).toHaveTextContent(
+    "proposal 8 is not open",
+  );
+  expect(
+    within(proposed).getByRole("button", { name: "Open issue" }),
+  ).toBeEnabled();
+});
+
+it("discards a ticket without opening an issue, and keeps Open issue off for a person who cannot run", async () => {
+  const e = engine({ proposals: [ticket()] });
+  open(e, { canRun: false });
+  const proposed = await offered();
+  expect(
+    within(proposed).getByRole("button", { name: "Open issue" }),
+  ).toBeDisabled();
+  await userEvent.click(
+    within(proposed).getByRole("button", { name: "Discard" }),
+  );
+  await vi.waitFor(() =>
+    expect(e.calls.resolveProposal).toHaveBeenCalledWith(8n, false),
+  );
+  expect(e.calls.acceptTicketProposal).not.toHaveBeenCalled();
 });
 
 it("offers no Apply to a person who cannot run", async () => {

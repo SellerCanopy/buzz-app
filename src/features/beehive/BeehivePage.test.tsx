@@ -1148,6 +1148,88 @@ it("has no Issue tab for a card written by hand, and a visit that names it opens
   expect(e.calls.listIssueComments).not.toHaveBeenCalled();
 });
 
+it("has a Repos tab for a card with an issue, and choosing it is a visit", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ issue: ISSUE }));
+  const nav = page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("tab", { name: "Repos" }));
+  expect(nav.open).toHaveBeenCalledWith({
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "repos" } },
+  });
+  const rows = await screen.findAllByRole("listitem");
+  expect(rows[0]).toHaveTextContent("1. example-org/api");
+});
+
+it("shows the card the engine returns after a repo is added, without reading the card again", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ issue: ISSUE }));
+  const addIssueRepo = vi.fn(async () =>
+    card({
+      issue: ISSUE,
+      repos: [
+        { repo: ISSUE, main: true },
+        { repo: { ...ISSUE, repo: "web", number: 0 }, mergeOrder: 2 },
+      ],
+    }),
+  );
+  Object.assign(e.calls, { addIssueRepo });
+  page(e.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "repos" } },
+  } as OpenTarget);
+  await levelApplied(e);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Add repo" }),
+  );
+  await userEvent.type(screen.getByLabelText("Repo"), "example-org/web");
+  await userEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Add repo",
+    }),
+  );
+  expect(addIssueRepo).toHaveBeenCalledWith(ID, "example-org/web");
+  await screen.findByText("2. example-org/web");
+  expect(e.calls.getCard).toHaveBeenCalledTimes(1);
+});
+
+it("gives a reader the Repos tab without the buttons that change it", async () => {
+  const e = engine({ role: "read" });
+  e.calls.getCard.mockResolvedValue(card({ issue: ISSUE }));
+  page(e.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "repos" } },
+  } as OpenTarget);
+  await levelApplied(e);
+  await screen.findByRole("list", { name: "Repos of the card" });
+  expect(screen.queryByRole("button", { name: "Add repo" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Remove/ })).toBeNull();
+});
+
+it("has a Repos tab for a card written by hand that has not run, and none for one that failed", async () => {
+  const idle = engine();
+  idle.calls.getCard.mockResolvedValue(card({ state: "idle" }));
+  page(idle.client, cardView);
+  expect(await screen.findByRole("tab", { name: "Repos" })).toBeVisible();
+  cleanup();
+
+  // The mock's failed card has no issue and no repos: no Issue tab and no Repos tab.
+  const failed = engine();
+  failed.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "failed" }),
+  );
+  page(failed.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "repos" } },
+  } as OpenTarget);
+  expect(await screen.findByRole("tab", { name: "Details" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByRole("tab", { name: "Repos" })).toBeNull();
+  expect(screen.queryByRole("tab", { name: "Issue" })).toBeNull();
+});
+
 it("says the card may be out of date when reading it again fails after an action", async () => {
   const e = engine();
   e.calls.getCard
@@ -2147,13 +2229,14 @@ it("shows the card's facts, its stage strip and where the card is", async () => 
     "https://github.example.org/example-org/api/pull/12",
   );
   expect(screen.getByText("Workflow demo")).toBeVisible();
-  // The tabs run Issue, Live, Steps, Files, Activity, Details.
+  // The tabs run Issue, Live, Steps, Files, Activity, Repos, Details.
   expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
     "Issue",
     "Live",
     "Steps",
     "Files",
     "Activity",
+    "Repos",
     "Details",
   ]);
 });
