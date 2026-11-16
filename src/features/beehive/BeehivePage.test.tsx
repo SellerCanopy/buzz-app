@@ -23,6 +23,7 @@ import {
   ListArtifactVersionsResponseSchema,
   ListCardsResponseSchema,
   ListInboxResponseSchema,
+  ListProposalsResponseSchema,
   ListIntakeRulesResponseSchema,
   ListIssueCommentsResponseSchema,
   ListRunsResponseSchema,
@@ -46,7 +47,7 @@ import {
   type Run,
 } from "./gen/kiln/engine/v1/engine_pb";
 import { createLevelStore, type LevelStore } from "./level";
-import { PAGE_ID, PLUGIN_ID } from "./routes";
+import { assistantTarget, PAGE_ID, PLUGIN_ID } from "./routes";
 
 afterEach(cleanup);
 
@@ -69,6 +70,9 @@ function engine(
     seq?: bigint;
     /** The channel id the update_channel setting holds, or none. */
     updateChannel?: string;
+    /** The assistant_agent setting, and the agents the community lists. */
+    assistantAgent?: string;
+    agents?: string[];
     /** Who the access list shows, each with the level they act at. */
     access?: AccessEntry[];
     /** What the card's stages saved, every version of each, oldest first. */
@@ -116,7 +120,11 @@ function engine(
         },
       }),
     ),
-    listAgents: vi.fn(async () => create(ListAgentsResponseSchema, {})),
+    listAgents: vi.fn(async () =>
+      create(ListAgentsResponseSchema, {
+        agents: (options.agents ?? []).map((name) => ({ name })),
+      }),
+    ),
     listStageTemplates: vi.fn(async () =>
       create(ListStageTemplatesResponseSchema, {}),
     ),
@@ -180,8 +188,17 @@ function engine(
               ? JSON.stringify(options.updateChannel)
               : "null",
           }),
+          create(SettingSchema, {
+            key: "assistant_agent",
+            valueJson: options.assistantAgent
+              ? JSON.stringify(options.assistantAgent)
+              : "null",
+          }),
         ],
       }),
+    ),
+    listProposals: vi.fn(async () =>
+      create(ListProposalsResponseSchema, { proposals: [] }),
     ),
     listAccess: vi.fn(async () =>
       create(ListAccessResponseSchema, { entries: options.access ?? [] }),
@@ -1638,6 +1655,93 @@ it("shows the update channel to a person who is not an admin without a way to ch
   });
   await vi.waitFor(() => expect(select).toHaveTextContent("# updates"));
   expect(select).toBeDisabled();
+});
+
+it("lets an admin choose the assistant agent in Settings", async () => {
+  const e = engine({ role: "admin", agents: ["builder", "reviewer"] });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  expect(
+    await screen.findByText("The agent that answers in the Assistant."),
+  ).toBeVisible();
+  const select = await screen.findByRole("combobox", {
+    name: "Assistant agent",
+  });
+  expect(select).toHaveTextContent("No agent");
+  await userEvent.click(select);
+  await userEvent.click(await screen.findByRole("option", { name: "builder" }));
+  await vi.waitFor(() =>
+    expect(e.calls.setCommunitySetting).toHaveBeenCalledWith(
+      "assistant_agent",
+      JSON.stringify("builder"),
+    ),
+  );
+  await vi.waitFor(() => expect(select).toHaveTextContent("builder"));
+});
+
+it("shows the assistant agent to a person who is not an admin without a way to change it", async () => {
+  const e = engine({
+    role: "run",
+    assistantAgent: "builder",
+    agents: ["builder"],
+  });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  const select = await screen.findByRole("combobox", {
+    name: "Assistant agent",
+  });
+  await vi.waitFor(() => expect(select).toHaveTextContent("builder"));
+  expect(select).toBeDisabled();
+});
+
+it("opens the assistant from the Board and from Workflows as a visit of its own, and closes it by dismissing that visit", async () => {
+  const e = engine({
+    role: "read",
+    assistantAgent: "builder",
+    updateChannel: CHANNEL,
+  });
+  const nav = page(e.client, undefined, channels);
+  await boardLoaded();
+  // Asking needs no more than reading.
+  await userEvent.click(
+    screen.getByRole("button", { name: "Ask the assistant" }),
+  );
+  expect(nav.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      route: { version: 1, params: { assistant: true } },
+    }),
+  );
+  const panel = await screen.findByRole("dialog", { name: "Assistant" });
+  expect(within(panel).getByText("What can I help with?")).toBeVisible();
+  await userEvent.click(within(panel).getByRole("button", { name: "Done" }));
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  const [matches, fallback] = nav.dismiss.mock.calls[0] as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(matches(assistantTarget(board as never))).toBe(true);
+  expect(matches(board)).toBe(false);
+  expect(fallback).toEqual(board);
+});
+
+it("offers the assistant on Workflows", async () => {
+  const e = engine({ role: "read" });
+  const nav = page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Workflows" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "With the assistant" }),
+  );
+  expect(nav.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      route: { version: 1, params: { assistant: true } },
+    }),
+  );
 });
 
 const ADA = "a".repeat(64);

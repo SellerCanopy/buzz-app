@@ -76,6 +76,7 @@ export function BeehiveViews({
   onOpen,
   onNew,
   onNewFromIssue,
+  onAskAssistant,
   onEditWorkflow,
   onNewWorkflow,
   onWorkflowsChanged,
@@ -105,6 +106,8 @@ export function BeehiveViews({
   onNew(): void;
   /** Opens the new card form on its From an issue tab. */
   onNewFromIssue(): void;
+  /** Opens the assistant over the view. */
+  onAskAssistant(): void;
   onEditWorkflow(name: string): void;
   onNewWorkflow(): void;
   onWorkflowsChanged(): void;
@@ -198,6 +201,7 @@ export function BeehiveViews({
               onOpen={onOpen}
               onNew={onNew}
               onNewFromIssue={onNewFromIssue}
+              onAskAssistant={onAskAssistant}
               onOpenNeedsYou={() => choose("needs-you")}
             />
           )}
@@ -229,14 +233,17 @@ export function BeehiveViews({
                 title="Workflows"
                 subtitle="The stages a card runs through."
                 actions={
-                  canRun ? (
-                    <>
+                  <>
+                    {canRun && (
                       <Button onClick={() => setImporting(true)}>Import</Button>
+                    )}
+                    <Button onClick={onAskAssistant}>With the assistant</Button>
+                    {canRun && (
                       <Button variant="prominent" onClick={onNewWorkflow}>
                         New workflow
                       </Button>
-                    </>
-                  ) : undefined
+                    )}
+                  </>
                 }
               />
               <WorkflowsPage

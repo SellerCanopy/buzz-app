@@ -356,6 +356,7 @@ function views(
       onOpen={vi.fn()}
       onNew={vi.fn()}
       onNewFromIssue={vi.fn()}
+      onAskAssistant={vi.fn()}
       workflowsRevision={0}
       onEditWorkflow={vi.fn()}
       onNewWorkflow={vi.fn()}

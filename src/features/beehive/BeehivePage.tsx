@@ -13,16 +13,23 @@ import type { Navigation } from "../navigation/controller";
 import type { PageProps } from "../pages/service";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
+import {
+  AssistantPanel,
+  NEW_THREAD,
+  type AssistantSession,
+} from "./AssistantPanel";
 import { BeehiveViews } from "./BeehiveViews";
 import { atLeast, createLevelStore, type LevelStore } from "./level";
 import { CardPage } from "./CardPage";
 import { NewCardDialog } from "./NewCardDialog";
 import { NewWorkflowPage } from "./NewWorkflowPage";
 import {
+  assistantTarget,
   boardTarget,
   cardTarget,
   isBeehivePage,
   newWorkflowTarget,
+  visitedAssistant,
   visitedCard,
   visitedNewWorkflow,
   visitedTab,
@@ -82,6 +89,9 @@ export function BeehivePage({
   const open = target ? visitedCard(target) : undefined;
   const editing = target ? visitedWorkflow(target) : undefined;
   const addingWorkflow = target ? visitedNewWorkflow(target) : false;
+  const asking = target ? visitedAssistant(target) : false;
+  // The assistant's thread stays while the panel is closed, so Back and Forward return to it.
+  const assistant = useRef<AssistantSession>(NEW_THREAD);
   // What a person typed in an editor stays while they go Back and Forward, by workflow.
   const drafts = useRef(new Map<string, EditorDraft>());
   const [workflowsRevision, setWorkflowsRevision] = useState(0);
@@ -134,6 +144,16 @@ export function BeehivePage({
         visitedNewWorkflow(visit) || visitedWorkflow(visit) === editing,
       workflowTarget(target, name),
     );
+  };
+  const openAssistant = () => {
+    if (!live || !target || !isBeehivePage(target)) return;
+    void navigator.open(assistantTarget(target));
+  };
+  // Done and Close end the panel's visits, so Back does not stop on it again. The view under
+  // it was never left, so it shows as it was.
+  const closeAssistant = () => {
+    if (!live || !target || !isBeehivePage(target)) return;
+    navigator.dismiss(visitedAssistant, boardTarget(target));
   };
   // Choosing a view in the sidebar leaves whichever page is open. An editor's unsaved text
   // stays in `drafts`, so opening the workflow again returns to it.
@@ -220,8 +240,24 @@ export function BeehivePage({
             onOpen={openCard}
             onNew={() => setAdding("blank")}
             onNewFromIssue={() => setAdding("issue")}
+            onAskAssistant={openAssistant}
           />
         </div>
+        {asking && (
+          <AssistantPanel
+            client={client}
+            relay={relay}
+            Thread={Thread}
+            canRun={canRun}
+            isAdmin={isAdmin}
+            restored={assistant.current}
+            onSession={(session) => {
+              assistant.current = session;
+            }}
+            onSaved={() => setWorkflowsRevision((n) => n + 1)}
+            onClose={closeAssistant}
+          />
+        )}
         {adding && (
           <NewCardDialog
             client={client}

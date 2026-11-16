@@ -72,6 +72,7 @@ function board(setup: Setup = {}) {
     onOpen: vi.fn(),
     onNew: vi.fn(),
     onNewFromIssue: vi.fn(),
+    onAskAssistant: vi.fn(),
     onOpenNeedsYou: vi.fn(),
   };
   render(

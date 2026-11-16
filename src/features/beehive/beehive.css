@@ -625,6 +625,57 @@
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+/* The assistant: a side panel with its thread, the workflows it offers and the box to ask in. */
+.beehive-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.beehive-assistant p {
+  margin: 0;
+}
+.beehive-assistant-thread {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 20rem;
+  block-size: 50vh;
+}
+.beehive-proposal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+}
+.beehive-proposal p {
+  margin: 0;
+}
+.beehive-proposal-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+.beehive-proposal-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.beehive-proposal-diff pre {
+  margin: 0;
+  max-block-size: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .beehive-callout + .beehive-live {
   margin-block-start: var(--space-3);
 }

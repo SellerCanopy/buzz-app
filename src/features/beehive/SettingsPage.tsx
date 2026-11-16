@@ -12,10 +12,17 @@ import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
 
 const UPDATE_CHANNEL = "update_channel";
+const ASSISTANT_AGENT = "assistant_agent";
 
 type Loaded =
   | { status: "loading" }
-  | { status: "ready"; channel: string }
+  | {
+      status: "ready";
+      channel: string;
+      agent: string;
+      /** The agents the assistant may be, by display name. */
+      agents: string[];
+    }
   | { status: "error"; message: string };
 
 /** The channel id inside a stored setting value, or "" when none is set. */
@@ -30,9 +37,10 @@ export function channelOf(valueJson: string | undefined): string {
 }
 
 /**
- * Where Beehive posts a run's status and its stage tasks. Everyone reads it;
- * only an admin changes it. An admin also sets what each person and agent may do. The engine checks the channel on save, and its
- * answer is shown beside the setting as it gives it.
+ * Where Beehive posts a run's status and its stage tasks, and which agent answers in the
+ * Assistant. Everyone reads them; only an admin changes them. An admin also sets what each
+ * person and agent may do. The engine checks each setting on save, and its answer is shown
+ * beside the setting as it gives it.
  */
 export function SettingsPage({
   client,
@@ -58,12 +66,20 @@ export function SettingsPage({
     void attempt;
     const abort = new AbortController();
     setLoaded({ status: "loading" });
-    client
-      .getCommunitySettings(abort.signal)
-      .then((reply) => {
+    Promise.all([
+      client.getCommunitySettings(abort.signal),
+      client.listAgents(abort.signal),
+    ])
+      .then(([reply, agents]) => {
         if (abort.signal.aborted) return;
-        const setting = reply.settings.find((s) => s.key === UPDATE_CHANNEL);
-        setLoaded({ status: "ready", channel: channelOf(setting?.valueJson) });
+        const value = (key: string) =>
+          channelOf(reply.settings.find((s) => s.key === key)?.valueJson);
+        setLoaded({
+          status: "ready",
+          channel: value(UPDATE_CHANNEL),
+          agent: value(ASSISTANT_AGENT),
+          agents: agents.agents.map((agent) => agent.name),
+        });
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted)
@@ -72,16 +88,22 @@ export function SettingsPage({
     return () => abort.abort();
   }, [client, attempt]);
 
-  const save = async (channel: string) => {
+  const save = async (key: string, value: string) => {
     if (pending) return;
     setPending(true);
     setSaveError(undefined);
     try {
-      await client.setCommunitySetting(
-        UPDATE_CHANNEL,
-        channel ? JSON.stringify(channel) : "",
+      await client.setCommunitySetting(key, value ? JSON.stringify(value) : "");
+      setLoaded((was) =>
+        was.status === "ready"
+          ? {
+              ...was,
+              ...(key === UPDATE_CHANNEL
+                ? { channel: value }
+                : { agent: value }),
+            }
+          : was,
       );
-      setLoaded({ status: "ready", channel });
     } catch (error) {
       // The saved value stands: the select shows it again.
       setSaveError(errorMessage(error));
@@ -116,7 +138,13 @@ export function SettingsPage({
                 value={loaded.channel}
                 disabled={!isAdmin || pending}
                 isAdmin={isAdmin}
-                onChange={(next) => void save(next)}
+                onChange={(next) => void save(UPDATE_CHANNEL, next)}
+              />
+              <AgentChoice
+                value={loaded.agent}
+                agents={loaded.agents}
+                disabled={!isAdmin || pending}
+                onChange={(next) => void save(ASSISTANT_AGENT, next)}
               />
             </SettingsGroup>
             {saveError && (
@@ -178,6 +206,45 @@ function ChannelChoice({
           disabled={disabled || !ready}
           onValueChange={onChange}
           groups={[{ label: "Channels", options }]}
+        />
+      }
+    />
+  );
+}
+
+function AgentChoice({
+  value,
+  agents,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  agents: string[];
+  disabled: boolean;
+  onChange(agent: string): void;
+}) {
+  const options = useMemo(() => {
+    const names = [...agents].sort((a, b) => a.localeCompare(b));
+    // A saved agent that is no longer listed still shows, so the select does not read as unset.
+    const known = value === "" || names.includes(value);
+    return [
+      { value: "", label: "No agent" },
+      ...(known ? [] : [{ value, label: value }]),
+      ...names.map((name) => ({ value: name, label: name })),
+    ];
+  }, [agents, value]);
+  return (
+    <PreferenceRow
+      title="Assistant agent"
+      subtitle="The agent that answers in the Assistant."
+      trailing={
+        <Select
+          label="Assistant agent"
+          variant="preference"
+          value={value}
+          disabled={disabled}
+          onValueChange={onChange}
+          groups={[{ label: "Agents", options }]}
         />
       }
     />

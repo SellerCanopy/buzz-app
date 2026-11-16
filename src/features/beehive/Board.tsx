@@ -33,6 +33,7 @@ export function Board({
   onOpen,
   onNew,
   onNewFromIssue,
+  onAskAssistant,
   onOpenNeedsYou,
 }: {
   client: Client;
@@ -44,6 +45,7 @@ export function Board({
   onOpen(card: string): void;
   onNew(): void;
   onNewFromIssue(): void;
+  onAskAssistant(): void;
   onOpenNeedsYou(): void;
 }) {
   const { live, retry, refresh } = useLive(client);
@@ -126,6 +128,7 @@ export function Board({
               </Button>
             )}
             {canRun && <Button onClick={onNewFromIssue}>From an issue</Button>}
+            <Button onClick={onAskAssistant}>Ask the assistant</Button>
             {canRun && (
               <Button variant="prominent" onClick={onNew}>
                 New card

@@ -13,6 +13,8 @@ import {
   ArchiveCardsRequestSchema,
   ArchiveCardsResponseSchema,
   AnswerInboxRequestSchema,
+  CancelJobRequestSchema,
+  CancelJobResponseSchema,
   CardSchema,
   InboxItemSchema,
   CheckWorkflowRequestSchema,
@@ -50,6 +52,8 @@ import {
   ListReposResponseSchema,
   ListRunsRequestSchema,
   ListRunsResponseSchema,
+  ListProposalsRequestSchema,
+  ListProposalsResponseSchema,
   ListWorkflowsRequestSchema,
   ListWorkflowsResponseSchema,
   MergeCardRequestSchema,
@@ -64,6 +68,8 @@ import {
   RefreshIntakeRequestSchema,
   RefreshIntakeResponseSchema,
   ResetCardRequestSchema,
+  ResolveProposalRequestSchema,
+  ResolveProposalResponseSchema,
   ResumeCardRequestSchema,
   RestoreCardRequestSchema,
   RetryRunRequestSchema,
@@ -77,6 +83,8 @@ import {
   SetCardWorkflowResponseSchema,
   SetSettingRequestSchema,
   SettingSchema,
+  StartChatRequestSchema,
+  StartJobResponseSchema,
   StartStageRequestSchema,
   StopRunRequestSchema,
   WhoAmIRequestSchema,
@@ -665,6 +673,50 @@ export function createClient(session: Session) {
         ListIssueCommentsRequestSchema,
         ListIssueCommentsResponseSchema,
         create(ListIssueCommentsRequestSchema, { cardId }),
+        signal,
+      ),
+    /**
+     * Ask the assistant's agent. The reply is the job's id at once, and the answer arrives as a
+     * `job.result` event. An empty `rootEventId` opens a new thread, whose root the `job.started`
+     * event names; a thread's root continues it.
+     */
+    startChat: (text: string, rootEventId = "", signal?: AbortSignal) =>
+      unary(
+        "StartChat",
+        StartChatRequestSchema,
+        StartJobResponseSchema,
+        create(StartChatRequestSchema, { text, rootEventId }),
+        signal,
+      ),
+    /** End a running job. The reply so far stays and no `job.result` event follows. */
+    cancelJob: (jobId: string, signal?: AbortSignal) =>
+      unary(
+        "CancelJob",
+        CancelJobRequestSchema,
+        CancelJobResponseSchema,
+        create(CancelJobRequestSchema, { jobId }),
+        signal,
+      ),
+    /** The workflows an agent offered the caller and that are not yet decided, oldest first. */
+    listProposals: (signal?: AbortSignal) =>
+      unary(
+        "ListProposals",
+        ListProposalsRequestSchema,
+        ListProposalsResponseSchema,
+        create(ListProposalsRequestSchema),
+        signal,
+      ),
+    /** Record what the person did with a proposal. It acts on nothing: apply it with `saveWorkflow`. */
+    resolveProposal: (
+      proposalId: bigint,
+      accepted: boolean,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "ResolveProposal",
+        ResolveProposalRequestSchema,
+        ResolveProposalResponseSchema,
+        create(ResolveProposalRequestSchema, { proposalId, accepted }),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

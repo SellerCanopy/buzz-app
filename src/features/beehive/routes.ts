@@ -72,11 +72,19 @@ export function routeNewWorkflow(value: JsonValue | undefined): boolean {
   return only(value, "newWorkflow") === true;
 }
 
+/** True for the route of the assistant panel: `{ assistant: true }` and nothing else. */
+export function routeAssistant(value: JsonValue | undefined): boolean {
+  return only(value, "assistant") === true;
+}
+
 /** The page's route contract: the one validator the page registers and the tests use. */
 export const PAGE_ROUTE = {
   version: 1,
   validate: (params: JsonValue) =>
-    !!routeCard(params) || !!routeWorkflow(params) || routeNewWorkflow(params),
+    !!routeCard(params) ||
+    !!routeWorkflow(params) ||
+    routeNewWorkflow(params) ||
+    routeAssistant(params),
 } as const;
 
 /** The tab a route names, or undefined when it names none or an unknown one. */
@@ -111,6 +119,16 @@ export function visitedWorkflow(target: OpenTarget): string | undefined {
 /** True when a visit shows the page that adds a workflow. */
 export function visitedNewWorkflow(target: OpenTarget): boolean {
   return isBeehive(target) && routeNewWorkflow(target.route?.params);
+}
+
+/** True when a visit shows the assistant panel over the view a person chose. */
+export function visitedAssistant(target: OpenTarget): boolean {
+  return isBeehive(target) && routeAssistant(target.route?.params);
+}
+
+/** The same page opened on the assistant panel. */
+export function assistantTarget(target: PageTarget): OpenTarget {
+  return { ...target, route: { version: 1, params: { assistant: true } } };
 }
 
 /** The same page opened on the editor of one workflow. */

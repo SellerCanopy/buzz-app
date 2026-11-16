@@ -6,13 +6,16 @@ import {
   PAGE_ID,
   PAGE_ROUTE,
   PLUGIN_ID,
+  assistantTarget,
   boardTarget,
   cardTarget,
   newWorkflowTarget,
+  routeAssistant,
   routeNewWorkflow,
   routeWorkflow,
   routeCard,
   routeTab,
+  visitedAssistant,
   visitedCard,
   visitedNewWorkflow,
   visitedTab,
@@ -128,6 +131,19 @@ it("registers a contract that accepts a card, a workflow and the new page, and n
   expect(PAGE_ROUTE.validate({ card: ID })).toBe(true);
   expect(PAGE_ROUTE.validate({ workflow: "my-flow" })).toBe(true);
   expect(PAGE_ROUTE.validate({ newWorkflow: true })).toBe(true);
+  expect(PAGE_ROUTE.validate({ assistant: true })).toBe(true);
   expect(PAGE_ROUTE.validate({ workflow: "Bad Name" })).toBe(false);
   expect(PAGE_ROUTE.validate({})).toBe(false);
+});
+
+it("round-trips the assistant panel through its target and accepts no other key beside it", () => {
+  const asking = assistantTarget(board);
+  expect(visitedAssistant(asking)).toBe(true);
+  expect(visitedCard(asking)).toBeUndefined();
+  expect(visitedWorkflow(asking)).toBeUndefined();
+  expect(visitedAssistant(board)).toBe(false);
+  expect(visitedAssistant({ version: 1, kind: "home" })).toBe(false);
+  expect(routeAssistant({ assistant: false })).toBe(false);
+  expect(routeAssistant({ assistant: true, card: ID })).toBe(false);
+  expect(PAGE_ROUTE.validate({ assistant: true, card: ID })).toBe(false);
 });
