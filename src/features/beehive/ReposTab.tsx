@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -192,6 +192,7 @@ function AddRepoDialog({
   onClose(): void;
   onAdded(card: Card): void;
 }) {
+  const field = useRef<HTMLInputElement>(null);
   const [repo, setRepo] = useState("");
   const [shape, setShape] = useState<string>();
   const [error, setError] = useState<string>();
@@ -222,6 +223,7 @@ function AddRepoDialog({
       size="compact"
       title="Add repo"
       description="Beehive checks that the team's GitHub token can read it."
+      initialFocus={field}
       dismissOnOutsideClick={false}
       preventClose={pending}
       onOpenChange={(open) => !open && onClose()}
@@ -245,6 +247,7 @@ function AddRepoDialog({
       <form id={FORM} onSubmit={submit} noValidate className="beehive-form">
         <Field label="Repo" description="Type owner/name." error={shape}>
           <Input
+            ref={field}
             value={repo}
             disabled={pending}
             autoComplete="off"

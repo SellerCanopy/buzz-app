@@ -70,6 +70,14 @@ it("names the repo of the card's issue, and none for a card without one", () => 
   expect(repoOf(card("", "idle"))).toBe("");
 });
 
+it("names the first repo of a card with repos and no issue, the one a run works in", () => {
+  const repos = [
+    { repo: { host: "github.com", owner: "example-org", repo: "web" } },
+    { repo: { host: "github.com", owner: "example-org", repo: "api" } },
+  ];
+  expect(repoOf(card("rpi", "idle", { repos }))).toBe("example-org/web");
+});
+
 it("counts the stages of the newest run that passed or were skipped", () => {
   const run = create(RunSchema, {
     cardId: "a",

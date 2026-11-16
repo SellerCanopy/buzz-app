@@ -36,6 +36,7 @@ export function RejectDialog({
       open
       size="compact"
       title={subject ? `Reject the ${subject}` : "Reject"}
+      description="Say what to change. The agent reads your reason on the next try."
       initialFocus={field}
       dismissOnOutsideClick={false}
       preventClose={pending}
@@ -58,10 +59,7 @@ export function RejectDialog({
       }
     >
       <form id={FORM} onSubmit={submit} noValidate className="beehive-form">
-        <Field
-          label="Reason"
-          description="Say what to change. The agent reads your reason on the next try."
-        >
+        <Field label="Reason">
           <Textarea
             ref={field}
             rows={4}

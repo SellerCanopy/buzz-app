@@ -13,6 +13,7 @@ import {
   issueOf,
   laneOf,
   progressOf,
+  repoOf,
   statusOf,
   type Lane,
 } from "./boardModel";
@@ -150,7 +151,7 @@ function Tile({
   const status = statusOf(card, items);
   const progress = progressOf(card, run, workflow);
   const chips = chipsOf(run, workflow);
-  const issue = issueOf(card);
+  const repo = issueOf(card) || repoOf(card);
   const review = items.some((item) => item.kind === "approval");
   const answer = items.some((item) => item.kind === "question");
   const movable = canRun && !!workflows && !!runs && canMove(card, run);
@@ -177,7 +178,7 @@ function Tile({
       </div>
       <p className="beehive-tile-meta text-body-sm text-subtle">
         <span className="beehive-tag">{card.workflow || "No workflow"}</span>
-        <span>{issue || "No repo"}</span>
+        <span>{repo || "No repo"}</span>
       </p>
       {chips.length > 0 ? (
         <ul className="beehive-chips" aria-label="Steps">
@@ -297,7 +298,7 @@ export function ArchivedRows({
                 {card.title}
               </Button>
             }
-            subtitle={`${card.workflow || "No workflow"}, ${issueOf(card) || "No repo"}`}
+            subtitle={`${card.workflow || "No workflow"}, ${issueOf(card) || repoOf(card) || "No repo"}`}
             trailing={
               canRun ? (
                 <Button

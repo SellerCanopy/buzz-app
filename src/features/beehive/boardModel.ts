@@ -59,9 +59,13 @@ export function laneOf(card: Card): Lane {
   return known(card.state) ? CARD_STATES[card.state].lane : "todo";
 }
 
-/** The repo a card's issue lives in as `owner/name`, or empty when the card has no issue. */
+/**
+ * The repo a card works in as `owner/name`: its issue's, or else the first of its own repos,
+ * which is the one a run works in. Empty when it has neither.
+ */
 export function repoOf(card: Card): string {
-  return card.issue ? `${card.issue.owner}/${card.issue.repo}` : "";
+  const repo = card.issue ?? card.repos[0]?.repo;
+  return repo ? `${repo.owner}/${repo.repo}` : "";
 }
 
 /** The issue a card was made from as `owner/name#number`, or empty. */

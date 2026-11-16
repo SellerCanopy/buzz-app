@@ -96,6 +96,7 @@ export function NeedsYouPage({
     <LoadingRegion
       pending={inbox.status === "loading"}
       label="Loading what needs you…"
+      statusVisibility="screen-reader"
       feedback={
         problem ? (
           <div className="beehive-error">

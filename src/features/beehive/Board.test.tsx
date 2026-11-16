@@ -146,6 +146,27 @@ it("says No repo for a card without an issue and not started for one that never 
   expect(within(card1).getByText("not started")).toBeVisible();
 });
 
+it("shows the first repo of a card that has repos but no issue", async () => {
+  board({
+    cards: [
+      card({
+        id: "a",
+        title: "Loose idea",
+        repos: [
+          {
+            repo: { host: "github.com", owner: "example-org", repo: "web" },
+            main: true,
+          },
+        ],
+      }),
+    ],
+  });
+  await loaded();
+  const card1 = tile("Backlog", "Loose idea");
+  expect(within(card1).getByText("example-org/web")).toBeVisible();
+  expect(within(card1).queryByText("No repo")).toBeNull();
+});
+
 it("folds a lane away to its heading and opens it again", async () => {
   const user = userEvent.setup();
   board({ cards: [card({ id: "a", title: "Loose idea" })] });

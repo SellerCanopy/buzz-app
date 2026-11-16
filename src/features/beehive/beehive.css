@@ -64,6 +64,10 @@
   flex: 1 0 auto;
   white-space: nowrap;
 }
+/* A group wider than the pane scrolls inside its track, so no label is cut off. */
+.beehive-filters .buzz-tabs-list {
+  overflow-x: auto;
+}
 /* The title keeps a readable width and the actions wrap below it in a narrow pane: a card
    page, a gate's buttons under a long card title, and a view's own header. */
 .beehive-card-page .buzz-content-header,
@@ -449,6 +453,10 @@
 .beehive-activity > li {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* The gates sit a step below the kind tabs above them. */
+.beehive-inbox {
+  margin-block-start: var(--space-4);
 }
 .beehive-inbox p {
   margin: var(--space-1) 0 0;

@@ -83,7 +83,12 @@ export function GateCard({
     <section aria-label={`${inboxKindLabel(item.kind)}: ${item.cardTitle}`}>
       <InlineHeader
         title={item.cardTitle || "Card"}
-        subtitle={item.title}
+        // With nothing listed, the engine's "waits for approval of" has nothing after it.
+        subtitle={
+          item.kind === "approval" && artifacts.length === 0
+            ? item.title.replace(/\s+of$/, "")
+            : item.title
+        }
         eyebrow={[
           `${inboxKindLabel(item.kind)}, stage ${item.stage}`,
           workflow,
@@ -100,6 +105,8 @@ export function GateCard({
               item.choices
                 // A question's reply has its own field and button below.
                 .filter((choice) => choice !== "reply")
+                // Reject sits before Approve, as the quieter answer before the prominent one.
+                .sort((a, b) => Number(b === "reject") - Number(a === "reject"))
                 .map((choice) => (
                   <Button
                     key={choice}

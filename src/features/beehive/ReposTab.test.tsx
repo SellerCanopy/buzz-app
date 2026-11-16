@@ -115,6 +115,12 @@ it("adds a repo with the engine and hands the card it returns to the page", asyn
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
+it("puts the focus on the Repo field when the dialog opens", async () => {
+  show();
+  await userEvent.click(screen.getByRole("button", { name: "Add repo" }));
+  await vi.waitFor(() => expect(screen.getByLabelText("Repo")).toHaveFocus());
+});
+
 it.each(["web", "a/b/c", "a/..", "../web", "a/b?x", "a b/c", ""])(
   "refuses %j before asking the engine",
   async (typed) => {

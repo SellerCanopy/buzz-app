@@ -116,6 +116,42 @@ it("shows what waits and approves with one press", async () => {
   expect(onAnswer).toHaveBeenCalledWith(expect.anything(), "approve", "");
 });
 
+it("puts Reject before Approve, the quieter answer first", () => {
+  card();
+  const names = screen
+    .getAllByRole("button")
+    .map((button) => button.textContent);
+  expect(names).toEqual(["Open card", "Reject", "Approve"]);
+});
+
+it("ends the sentence when an approval lists nothing, without adding a name", () => {
+  card({
+    item: item({
+      title: "Gate waits for approval of",
+      detailJson: "{}",
+    }),
+  });
+  expect(screen.getByText("Gate waits for approval")).toBeVisible();
+  expect(screen.queryByText(/To approve/)).toBeNull();
+});
+
+it("keeps the engine's words when an approval lists what it waits for", () => {
+  card({
+    item: item({ title: "Gate waits for approval of plan" }),
+  });
+  expect(screen.getByText("Gate waits for approval of plan")).toBeVisible();
+});
+
+it("says what to change under the dialog's title", async () => {
+  const user = userEvent.setup();
+  card({ item: item({ detailJson: JSON.stringify({ artifacts: ["plan"] }) }) });
+  await user.click(screen.getByRole("button", { name: "Reject" }));
+  const dialog = await screen.findByRole("dialog", { name: "Reject the plan" });
+  expect(dialog).toHaveAccessibleDescription(
+    "Say what to change. The agent reads your reason on the next try.",
+  );
+});
+
 it("keeps Reject off until the reason has words, then sends it", async () => {
   const user = userEvent.setup();
   const { onAnswer } = card();
