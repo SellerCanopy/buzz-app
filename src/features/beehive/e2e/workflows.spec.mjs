@@ -56,7 +56,7 @@ test("the page lists the built-in packages and their stages", async ({
 }) => {
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await pane.getByRole("tab", { name: "Workflows" }).click();
+  await pane.getByRole("button", { name: "Workflows" }).click();
   for (const name of BUILT_INS) {
     const section = pane.getByRole("region", { name });
     await expect(section).toBeVisible();
@@ -74,9 +74,9 @@ test("a broken package shows its finding, and a nameless folder shows its own", 
 }) => {
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await pane.getByRole("tab", { name: "Workflows" }).click();
+  await pane.getByRole("button", { name: "Workflows" }).click();
   const broken = pane.getByRole("region", { name: "broken" });
-  await expect(broken.getByText("Has errors")).toBeVisible();
+  await expect(broken.getByText("Has problems")).toBeVisible();
   await expect(
     broken.getByRole("list", { name: "Findings for broken" }),
   ).toContainText("route_target_unknown");

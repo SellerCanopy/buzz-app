@@ -17,7 +17,7 @@ import type { Client } from "./engine/client";
 import { useInbox } from "./engine/useInbox";
 import { EngineError } from "./engine/transport";
 import { GateCard } from "./GateCard";
-import { artifactsOf } from "./labels";
+import { artifactsOf, waitedLabel } from "./labels";
 import {
   EventSchema,
   InboxItemSchema,
@@ -36,7 +36,7 @@ it("lists an approval's artifacts by name, with the version when it has one", ()
   ]);
   expect(
     artifactsOf(JSON.stringify({ artifacts: [{ name: "plan", version: 2 }] })),
-  ).toEqual(["plan (version 2)"]);
+  ).toEqual(["plan v2"]);
   expect(artifactsOf("not json")).toEqual([]);
   expect(artifactsOf("{}")).toEqual([]);
 });
@@ -58,6 +58,8 @@ const item = (fields: MessageInitShape<typeof InboxItemSchema> = {}) =>
 function card(
   options: {
     item?: InboxItem;
+    workflow?: string;
+    now?: number;
     canRun?: boolean;
     onAnswer?: (...args: unknown[]) => Promise<void>;
   } = {},
@@ -67,6 +69,8 @@ function card(
   render(
     <GateCard
       item={options.item ?? item()}
+      {...(options.workflow ? { workflow: options.workflow } : {})}
+      {...(options.now ? { now: options.now } : {})}
       canRun={options.canRun ?? true}
       onOpenCard={onOpenCard}
       onAnswer={onAnswer as never}
@@ -74,6 +78,32 @@ function card(
   );
   return { onAnswer, onOpenCard };
 }
+
+it("says how long an item has waited, and nothing when it has no time", () => {
+  const opened = { seconds: 1_000n };
+  const at = (seconds: number) => (1_000 + seconds) * 1000;
+  expect(waitedLabel(undefined, at(0))).toBe("");
+  expect(waitedLabel(opened, at(30))).toBe("waiting under 1m");
+  expect(waitedLabel(opened, at(40 * 60))).toBe("waiting 40m");
+  expect(waitedLabel(opened, at(2 * 3600 + 59))).toBe("waiting 2h");
+  expect(waitedLabel(opened, at(3 * 86_400))).toBe("waiting 3d");
+});
+
+it("names the kind, stage, workflow and wait time in the head", () => {
+  card({
+    item: item({ createdAt: { seconds: 1_000n, nanos: 0 } }),
+    workflow: "rpi",
+    now: (1_000 + 2 * 3600) * 1000,
+  });
+  expect(
+    screen.getByText("Approval, stage gate, rpi, waiting 2h"),
+  ).toBeVisible();
+});
+
+it("leaves the workflow and the wait out of the head when they are not known", () => {
+  card();
+  expect(screen.getByText("Approval, stage gate")).toBeVisible();
+});
 
 it("shows what waits and approves with one press", async () => {
   const { onAnswer } = card();
@@ -84,6 +114,42 @@ it("shows what waits and approves with one press", async () => {
   expect(screen.getByText("To approve: plan, sketch")).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Approve" }));
   expect(onAnswer).toHaveBeenCalledWith(expect.anything(), "approve", "");
+});
+
+it("puts Reject before Approve, the quieter answer first", () => {
+  card();
+  const names = screen
+    .getAllByRole("button")
+    .map((button) => button.textContent);
+  expect(names).toEqual(["Open card", "Reject", "Approve"]);
+});
+
+it("ends the sentence when an approval lists nothing, without adding a name", () => {
+  card({
+    item: item({
+      title: "Gate waits for approval of ",
+      detailJson: "{}",
+    }),
+  });
+  expect(screen.getByText("Gate waits for approval")).toBeVisible();
+  expect(screen.queryByText(/To approve/)).toBeNull();
+});
+
+it("keeps the engine's words when an approval lists what it waits for", () => {
+  card({
+    item: item({ title: "Gate waits for approval of plan" }),
+  });
+  expect(screen.getByText("Gate waits for approval of plan")).toBeVisible();
+});
+
+it("says what to change under the dialog's title", async () => {
+  const user = userEvent.setup();
+  card({ item: item({ detailJson: JSON.stringify({ artifacts: ["plan"] }) }) });
+  await user.click(screen.getByRole("button", { name: "Reject" }));
+  const dialog = await screen.findByRole("dialog", { name: "Reject the plan" });
+  expect(dialog).toHaveAccessibleDescription(
+    "Say what to change. The agent reads your reason on the next try.",
+  );
 });
 
 it("keeps Reject off until the reason has words, then sends it", async () => {
@@ -125,7 +191,16 @@ it("keeps the dialog and the words when the engine refuses the answer", async ()
   expect(within(dialog).getByRole("textbox")).toHaveValue("Not yet.");
 });
 
-it("asks for a reply to a question and for nothing on a skip", async () => {
+it("shows an approval's version as a chip", () => {
+  card({
+    item: item({
+      detailJson: JSON.stringify({ artifacts: [{ name: "plan", version: 2 }] }),
+    }),
+  });
+  expect(screen.getByText("To approve: plan v2")).toBeVisible();
+});
+
+it("answers a question in the card: Send answer waits for words, and a skip needs none", async () => {
   const user = userEvent.setup();
   const { onAnswer } = card({
     item: item({
@@ -137,15 +212,82 @@ it("asks for a reply to a question and for nothing on a skip", async () => {
   });
   await user.click(screen.getByRole("button", { name: "Skip stage" }));
   expect(onAnswer).toHaveBeenCalledWith(expect.anything(), "skip", "");
-  await user.click(screen.getByRole("button", { name: "Reply" }));
-  const dialog = await screen.findByRole("dialog");
-  await user.type(within(dialog).getByRole("textbox"), "Postgres.");
-  await user.click(within(dialog).getByRole("button", { name: "Reply" }));
+  // The reply is typed in the card and is not a button next to Skip stage.
+  expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
+  const send = screen.getByRole("button", { name: "Send answer" });
+  expect(send).toBeDisabled();
+  const field = screen.getByRole("textbox", { name: "Your answer" });
+  expect(field).toHaveAttribute("placeholder", "Add a note");
+  await user.type(field, "   ");
+  expect(send).toBeDisabled();
+  await user.type(field, "Postgres.");
+  await user.click(send);
   expect(onAnswer).toHaveBeenLastCalledWith(
     expect.anything(),
     "reply",
     "Postgres.",
   );
+  await waitFor(() => expect(field).toHaveValue(""));
+});
+
+it("keeps a question's words and shows the refusal when the engine refuses the reply", async () => {
+  const user = userEvent.setup();
+  card({
+    item: item({
+      kind: "question",
+      detailJson: "{}",
+      choices: ["reply", "skip", "stop"],
+    }),
+    onAnswer: async () => {
+      throw new Error("someone else already answered this item");
+    },
+  });
+  const field = screen.getByRole("textbox", { name: "Your answer" });
+  await user.type(field, "Postgres.");
+  await user.click(screen.getByRole("button", { name: "Send answer" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "someone else already answered",
+  );
+  expect(field).toHaveValue("Postgres.");
+});
+
+it("gives a person who cannot run no field to answer a question", () => {
+  card({
+    canRun: false,
+    item: item({
+      kind: "question",
+      detailJson: "{}",
+      choices: ["reply", "skip", "stop"],
+    }),
+  });
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Send answer" })).toBeNull();
+});
+
+it("words Retry as the run for a failure and as the stage for a stage that ended without a result", async () => {
+  const user = userEvent.setup();
+  const first = card({
+    item: item({
+      kind: "failure",
+      detailJson: "{}",
+      choices: ["retry", "dismiss"],
+    }),
+  });
+  await user.click(screen.getByRole("button", { name: "Retry run" }));
+  expect(first.onAnswer).toHaveBeenCalledWith(expect.anything(), "retry", "");
+  cleanup();
+  for (const kind of ["no_result", "missing_output"]) {
+    card({
+      item: item({
+        kind,
+        detailJson: "{}",
+        choices: ["retry", "skip", "stop"],
+      }),
+    });
+    expect(screen.getByRole("button", { name: "Retry stage" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry run" })).toBeNull();
+    cleanup();
+  }
 });
 
 it("asks before it stops a run", async () => {
@@ -181,7 +323,10 @@ it("lets a person who cannot run read the item and open the card, nothing more",
 });
 
 /** The Beehive views over a fake engine whose inbox list and long poll the test controls. */
-function views(initial: InboxItem[], options: { failFirst?: string } = {}) {
+function views(
+  initial: InboxItem[],
+  options: { failFirst?: string; workflows?: Record<string, string> } = {},
+) {
   let open = initial;
   const polls: {
     after: bigint;
@@ -191,7 +336,15 @@ function views(initial: InboxItem[], options: { failFirst?: string } = {}) {
   }[] = [];
   const calls = {
     listCards: vi.fn(async () =>
-      create(ListCardsResponseSchema, { cards: [], seq: 5n }),
+      create(ListCardsResponseSchema, {
+        cards: Object.entries(options.workflows ?? {}).map(
+          ([id, workflow]) => ({
+            id,
+            workflow,
+          }),
+        ),
+        seq: 5n,
+      }),
     ),
     listInbox: vi.fn(async () =>
       create(ListInboxResponseSchema, { items: open, seq: 900_000n }),
@@ -235,8 +388,15 @@ function views(initial: InboxItem[], options: { failFirst?: string } = {}) {
       canRun
       isAdmin={false}
       me=""
+      onLeaveCard={vi.fn()}
       onOpen={vi.fn()}
       onNew={vi.fn()}
+      onNewFromIssue={vi.fn()}
+      onAskAssistant={vi.fn()}
+      workflowsRevision={0}
+      onEditWorkflow={vi.fn()}
+      onNewWorkflow={vi.fn()}
+      onWorkflowsChanged={vi.fn()}
     />,
   );
   return {
@@ -297,7 +457,7 @@ it("reads the list again for an inbox event only, not for a card event", async (
 it("answers from the list and reads it again, so the item leaves at once", async () => {
   const user = userEvent.setup();
   const e = views([item(), item({ id: "item-2", title: "Which region?" })]);
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   const list = await screen.findByRole("list", { name: "Needs you" });
   expect(within(list).getAllByRole("listitem")).toHaveLength(2);
   await user.click(
@@ -310,17 +470,103 @@ it("answers from the list and reads it again, so the item leaves at once", async
   expect(screen.getByRole("img", { name: "1 item needs you" })).toBeVisible();
 });
 
+it("titles the page with how many wait, and lists the oldest first", async () => {
+  const user = userEvent.setup();
+  views([
+    item({
+      id: "new",
+      cardTitle: "Newer card",
+      createdAt: { seconds: 200n, nanos: 0 },
+    }),
+    item({
+      id: "old",
+      cardTitle: "Older card",
+      createdAt: { seconds: 100n, nanos: 0 },
+    }),
+  ]);
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
+  expect(
+    await screen.findByRole("heading", { name: "Needs you" }),
+  ).toBeVisible();
+  expect(screen.getByText("2 waiting. Oldest first.")).toBeVisible();
+  const list = await screen.findByRole("list", { name: "Needs you" });
+  expect(
+    within(list)
+      .getAllByRole("listitem")
+      .map((entry) => entry.textContent),
+  ).toEqual([
+    expect.stringContaining("Older card"),
+    expect.stringContaining("Newer card"),
+  ]);
+});
+
+it("names each card's workflow in its head", async () => {
+  const user = userEvent.setup();
+  views([item()], { workflows: { "card-1": "rpi" } });
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
+  expect(await screen.findByText(/^Approval, stage gate, rpi/)).toBeVisible();
+});
+
+it("filters by kind with tabs that count each kind, and falls back to All when a kind empties", async () => {
+  const user = userEvent.setup();
+  const e = views([
+    item({ id: "a", cardTitle: "Plan one", kind: "approval" }),
+    item({ id: "b", cardTitle: "Plan two", kind: "approval" }),
+    item({
+      id: "c",
+      cardTitle: "Which db",
+      kind: "question",
+      detailJson: "{}",
+      choices: ["reply", "skip", "stop"],
+    }),
+    item({
+      id: "d",
+      cardTitle: "Broken",
+      kind: "failure",
+      detailJson: "{}",
+      choices: ["retry", "dismiss"],
+    }),
+  ]);
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
+  const tabs = await screen.findByRole("tablist", { name: "Kind" });
+  expect(
+    within(tabs)
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent),
+  ).toEqual(["All 4", "Approval 2", "Question 1", "Failure 1"]);
+  const list = screen.getByRole("list", { name: "Needs you" });
+  expect(within(list).getAllByRole("listitem")).toHaveLength(4);
+
+  await user.click(within(tabs).getByRole("tab", { name: "Approval 2" }));
+  expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+  expect(screen.getByText("4 waiting. Oldest first.")).toBeVisible();
+
+  await user.click(within(tabs).getByRole("tab", { name: "Failure 1" }));
+  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  await waitFor(() => expect(e.calls.answerInbox).toHaveBeenCalled());
+  // The failure is gone, so the page shows everything that still waits.
+  await waitFor(() =>
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3),
+  );
+  expect(
+    within(screen.getByRole("tablist", { name: "Kind" }))
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent),
+  ).toEqual(["All 3", "Approval 2", "Question 1"]);
+});
+
 it("says so when nothing waits", async () => {
   const user = userEvent.setup();
   views([]);
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   expect(await screen.findByText("Nothing needs you")).toBeVisible();
 });
 
 it("shows the failure beside the list and reads again on Retry", async () => {
   const user = userEvent.setup();
   views([], { failFirst: "Beehive is not reachable" });
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Beehive is not reachable",
   );
@@ -420,9 +666,9 @@ it("sends Retry and Dismiss for a failure with no words, and names a choice it d
     }),
   });
   expect(
-    screen.getByRole("region", { name: "Failed: Write the docs" }),
+    screen.getByRole("region", { name: "Failure: Write the docs" }),
   ).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Retry" }));
+  await user.click(screen.getByRole("button", { name: "Retry run" }));
   expect(onAnswer).toHaveBeenLastCalledWith(expect.anything(), "retry", "");
   await user.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(onAnswer).toHaveBeenLastCalledWith(expect.anything(), "dismiss", "");
@@ -446,7 +692,7 @@ it("says live updates paused when the poll is refused, and keeps the list", asyn
   e.polls[0]?.fail(
     new EngineError("permission_denied", "your access changed", 403),
   );
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Live updates paused: your access changed",
   );
@@ -465,7 +711,7 @@ it("pauses after three failures in a row and clears the notice when a poll succe
   const user = userEvent.setup();
   const e = views([item()]);
   await screen.findByRole("img", { name: "1 item needs you" });
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   for (let failure = 1; failure <= 3; failure += 1) {
     await waitFor(() => expect(e.polls).toHaveLength(failure));
     expect(screen.queryByRole("alert")).toBeNull();
@@ -484,7 +730,7 @@ it("pauses after three failures in a row and clears the notice when a poll succe
 it("keeps the list and says the read failed when reading it again fails", async () => {
   const user = userEvent.setup();
   const e = views([item()]);
-  await user.click(await screen.findByRole("tab", { name: /Needs you/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs you/ }));
   await screen.findByRole("list", { name: "Needs you" });
   await waitFor(() => expect(e.polls).toHaveLength(1));
   e.calls.listInbox.mockRejectedValueOnce(

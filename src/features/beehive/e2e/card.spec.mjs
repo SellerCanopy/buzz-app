@@ -33,7 +33,7 @@ test("a person adds a card with a description and reads it back on the card", as
   const backlog = pane.getByRole("region", { name: "Backlog" });
   await expect(backlog.getByText("Write the release notes")).toBeVisible();
   await backlog
-    .getByRole("button", { name: /Write the release notes/ })
+    .getByRole("button", { name: "Write the release notes", exact: true })
     .click();
   await expect(pane.getByRole("tab", { name: "Details" })).toBeVisible();
   await expect(pane.getByText("Cover the new board.")).toBeVisible();

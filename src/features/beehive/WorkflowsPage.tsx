@@ -6,6 +6,8 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
+import { kindLabel } from "./workflowDraft";
+import { Findings } from "./Findings";
 import type {
   Finding,
   PackageCheck,
@@ -15,64 +17,83 @@ import type {
 
 type Loaded =
   | { status: "loading" }
-  | { status: "ready"; workflows: Workflow[]; checks: PackageCheck[] }
+  | {
+      status: "ready";
+      workflows: Workflow[];
+      checks: PackageCheck[];
+      /** Why the checks could not run; the list shows without their findings. */
+      checkError?: string;
+    }
   | { status: "error"; message: string };
 
-/** The packages the engine loaded, and what its checks found in each. Read once; `retry` reads again. */
-function useWorkflows(client: Client) {
+/**
+ * The packages the engine loaded, and what its checks found in each. Read once; `retry` reads
+ * again, and so does a new `revision`, which the page bumps when a workflow was saved.
+ */
+function useWorkflows(client: Client, revision: number) {
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   useEffect(() => {
-    // `attempt` restarts the read; it is not otherwise used.
+    // `attempt` and `revision` restart the read; neither is otherwise used.
     void attempt;
+    void revision;
     const abort = new AbortController();
     setLoaded({ status: "loading" });
     Promise.all([
       client.listWorkflows(abort.signal),
-      client.checkWorkflow(abort.signal),
+      // The checks are the heavier read and only decorate the list, so their failure keeps it.
+      client.checkWorkflow(abort.signal).then(
+        (check) => ({ checks: check.packages }),
+        (error: unknown) => ({
+          checks: [] as PackageCheck[],
+          checkError: errorMessage(error),
+        }),
+      ),
     ])
       .then(([list, check]) => {
         if (abort.signal.aborted) return;
-        setLoaded({
-          status: "ready",
-          workflows: list.workflows,
-          checks: check.packages,
-        });
+        setLoaded({ status: "ready", workflows: list.workflows, ...check });
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
         setLoaded({ status: "error", message: errorMessage(error) });
       });
     return () => abort.abort();
-  }, [client, attempt]);
+  }, [client, attempt, revision]);
   return { loaded, retry };
 }
 
-const KINDS: Record<string, string> = {
-  prompt: "Prompt",
-  approval: "Approval",
-  wait: "Wait",
-  action: "Action",
-};
-
-const SEVERITIES: Record<string, { label: string; tone: string }> = {
-  error: { label: "Error", tone: "text-danger" },
-  warning: { label: "Warning", tone: "text-warning" },
-  note: { label: "Note", tone: "text-subtle" },
-};
-
-/** What a stage does, in a line: its kind, the agent a prompt runs on, and a pause. */
+/**
+ * What a stage does, in a line: its kind, the agent a prompt runs on, and who it waits for. An
+ * approval waits for a person by its nature; any stage may also hold a card until a person
+ * starts it.
+ */
 export function stageSummary(stage: WorkflowStage): string {
-  const parts = [KINDS[stage.kind] ?? stage.kind];
+  const parts = [kindLabel(stage.kind, "list")];
   if (stage.agent) parts.push(`agent ${stage.agent}`);
   if (stage.pause) parts.push("waits for a person to start it");
+  else if (stage.kind === "approval") parts.push("waits for a person");
   return parts.join(", ");
 }
 
-/** Every package the engine loaded with its stages and findings, and the folders that did not load. Read only. */
-export function WorkflowsPage({ client }: { client: Client }) {
-  const { loaded, retry } = useWorkflows(client);
+/**
+ * Every package the engine loaded with its stages and findings, and the folders that did not
+ * load. A person who can run opens one in the editor; anyone else opens it to read.
+ */
+export function WorkflowsPage({
+  client,
+  canRun = false,
+  revision = 0,
+  onEdit,
+}: {
+  client: Client;
+  canRun?: boolean;
+  /** Changes when a workflow was saved, deleted or imported, so the list reads again. */
+  revision?: number;
+  onEdit?(name: string): void;
+}) {
+  const { loaded, retry } = useWorkflows(client, revision);
   const failed = loaded.status === "error";
   const workflows = loaded.status === "ready" ? loaded.workflows : [];
   const checks = loaded.status === "ready" ? loaded.checks : [];
@@ -108,11 +129,18 @@ export function WorkflowsPage({ client }: { client: Client }) {
       )}
       {loaded.status === "ready" && !empty && (
         <div className="beehive-workflows">
+          {loaded.checkError && (
+            <p role="alert" className="text-body-sm text-danger">
+              {`Checks could not run. ${loaded.checkError}`}
+            </p>
+          )}
           {workflows.map((workflow) => (
             <WorkflowSection
               key={workflow.name}
               workflow={workflow}
               findings={findingsOf(workflow.name)}
+              canRun={canRun}
+              onEdit={onEdit}
             />
           ))}
           {unloaded.length > 0 && (
@@ -123,7 +151,10 @@ export function WorkflowsPage({ client }: { client: Client }) {
               <InlineHeader title="Packages that did not load" />
               {unloaded.map((check) => (
                 <div key={check.path}>
-                  <p className="text-body-sm text-subtle">{check.path}</p>
+                  <p className="text-body-sm text-subtle">
+                    <span>{check.path}</span>{" "}
+                    <span className="text-danger">Not loaded</span>
+                  </p>
                   <Findings label={check.path} findings={check.findings} />
                 </div>
               ))}
@@ -138,30 +169,48 @@ export function WorkflowsPage({ client }: { client: Client }) {
 function WorkflowSection({
   workflow,
   findings,
+  canRun,
+  onEdit,
 }: {
   workflow: Workflow;
   findings: Finding[];
+  canRun: boolean;
+  onEdit: ((name: string) => void) | undefined;
 }) {
-  const details = [
-    workflow.builtin ? "Built in" : undefined,
-    workflow.version ? `Version ${workflow.version}` : undefined,
-  ].filter(Boolean);
+  // `Built in, version 0.1.0.` for a package every build ships, `Version 1` for the rest.
+  const details = workflow.builtin
+    ? ["Built in", workflow.version && `version ${workflow.version}`]
+        .filter(Boolean)
+        .join(", ")
+    : workflow.version
+      ? `Version ${workflow.version}`
+      : "";
   return (
     <section aria-label={workflow.name} className="beehive-workflow">
       <InlineHeader
         title={workflow.name}
         subtitle={workflow.description || undefined}
         actions={
-          <span
-            className={`text-body-sm ${workflow.ok ? "text-subtle" : "text-danger"}`}
-          >
-            {workflow.ok ? "Ready" : "Has errors"}
-          </span>
+          <>
+            {workflow.builtin && <span className="beehive-tag">Built in</span>}
+            <span
+              className={`text-body-sm ${workflow.ok ? "text-subtle" : "text-danger"}`}
+            >
+              {workflow.ok ? "Ready" : "Has problems"}
+            </span>
+            {onEdit && (
+              <Button
+                size="sm"
+                aria-label={`${canRun ? "Edit" : "View"} ${workflow.name}`}
+                onClick={() => onEdit(workflow.name)}
+              >
+                {canRun ? "Edit" : "View"}
+              </Button>
+            )}
+          </>
         }
       />
-      {details.length > 0 && (
-        <p className="text-body-sm text-subtle">{details.join(", ")}</p>
-      )}
+      {details && <p className="text-body-sm text-subtle">{details}</p>}
       {workflow.stages.length > 0 && (
         <ol
           className="beehive-stages"
@@ -179,34 +228,5 @@ function WorkflowSection({
       )}
       <Findings label={workflow.name} findings={findings} />
     </section>
-  );
-}
-
-function Findings({ label, findings }: { label: string; findings: Finding[] }) {
-  if (!findings.length) return null;
-  return (
-    <ul className="beehive-findings" aria-label={`Findings for ${label}`}>
-      {findings.map((finding) => {
-        const severity = SEVERITIES[finding.severity] ?? {
-          label: finding.severity,
-          tone: "text-subtle",
-        };
-        return (
-          <li key={`${finding.path}|${finding.code}|${finding.message}`}>
-            <span className={`text-body-sm ${severity.tone}`}>
-              {severity.label}
-            </span>{" "}
-            <code className="text-mono-sm">{finding.code}</code>{" "}
-            {finding.message}
-            {finding.path && (
-              <span className="text-body-sm text-subtle">
-                {" "}
-                ({finding.path})
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ul>
   );
 }

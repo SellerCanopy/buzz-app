@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import type { Client } from "./engine/client";
@@ -9,10 +10,12 @@ import {
   IntakeRuleSchema,
   ListIntakeRulesResponseSchema,
   ListReposResponseSchema,
+  PreviewIntakeResponseSchema,
   RefreshIntakeResponseSchema,
 } from "./gen/kiln/engine/v1/engine_pb";
 import {
   ASSIGNEES,
+  matchCount,
   DEFAULT_INTERVAL_S,
   effectiveInterval,
   IntakePage,
@@ -54,6 +57,14 @@ function engine(rules: ReturnType<typeof rule>[] = [rule()]) {
     refreshIntake: vi.fn(async () =>
       create(RefreshIntakeResponseSchema, { addedCardIds: ["a", "b"] }),
     ),
+    previewIntake: vi.fn(async (_rule: unknown, _signal?: AbortSignal) =>
+      create(PreviewIntakeResponseSchema, {
+        issues: [
+          { ref: { owner: "example-org", repo: "api", number: 7 }, title: "A" },
+          { ref: { owner: "example-org", repo: "api", number: 9 }, title: "B" },
+        ],
+      }),
+    ),
     listRepos: vi.fn(async () =>
       create(ListReposResponseSchema, {
         repos: ["example-org/api", "example-org/web"],
@@ -70,7 +81,7 @@ it("lists each rule with its repo, label, authors, how often it reads and where 
   expect(row).toHaveTextContent("Bugs");
   expect(row).toHaveTextContent("example-org/api, label bug, opened by octo");
   expect(row).toHaveTextContent("Every 15 minutes");
-  expect(row).toHaveTextContent("workflow rpi");
+  expect(row).toHaveTextContent("Sends issues to rpi");
 });
 
 it("shows the rules to a reader but offers no change", async () => {
@@ -122,6 +133,73 @@ it("saves a new rule with one repo, the label and the logins as typed", async ()
   });
   // The list is read again after a save.
   expect(e.calls.listIntakeRules.mock.calls.length).toBeGreaterThanOrEqual(2);
+});
+
+it("counts the issues that match a count as the person words it", () => {
+  expect(matchCount(0, false)).toBe("No issues match");
+  expect(matchCount(1, false)).toBe("1 issue matches");
+  expect(matchCount(3, false)).toBe("3 issues match");
+  expect(matchCount(30, true)).toBe("At least 30 issues match");
+});
+
+it("names the issues a rule would take once the person stops typing, and asks nothing before a repo is chosen", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const e = engine([]);
+    render(<IntakePage client={e.client} canRun />);
+    await screen.findByText("No intake rules");
+    await user.click(
+      screen.getAllByRole("button", { name: "New rule" }).at(0) as HTMLElement,
+    );
+    const dialog = await screen.findByRole("dialog", { name: "New rule" });
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(e.calls.previewIntake).not.toHaveBeenCalled();
+    await user.click(
+      await within(dialog).findByRole("combobox", { name: "Repo" }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "example-org/api" }),
+    );
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "Checking which issues match",
+    );
+    // Typing a label restarts the wait, so one read follows the last change.
+    await user.type(within(dialog).getByLabelText(/^Label/), "bug");
+    expect(e.calls.previewIntake).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(600));
+    expect(e.calls.previewIntake).toHaveBeenCalledTimes(1);
+    expect(e.calls.previewIntake.mock.calls[0]?.[0]).toMatchObject({
+      host: "github.com",
+      repos: ["example-org/api"],
+      label: "bug",
+    });
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(
+      "2 issues match example-org/api#7, example-org/api#9",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("says the preview could not be read and still lets the rule be saved", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const e = engine([rule()]);
+    e.calls.previewIntake.mockRejectedValueOnce(new Error("no GitHub token"));
+    render(<IntakePage client={e.client} canRun />);
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit rule" });
+    await act(() => vi.advanceTimersByTimeAsync(600));
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(
+      "Could not check which issues match. no GitHub token",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Save rule" }));
+    expect(e.calls.saveIntakeRule).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("will not save a rule with no repo", async () => {
@@ -276,6 +354,33 @@ it("says Nothing new when a refresh added no card, and Added 1 card for one", as
   expect(await screen.findByText("Added 1 card.")).toBeVisible();
 });
 
+it("says GitHub returned only part of the matches when the refresh was cut short", async () => {
+  const user = userEvent.setup();
+  const e = engine();
+  e.calls.refreshIntake.mockResolvedValueOnce(
+    create(RefreshIntakeResponseSchema, { addedCardIds: [], truncated: true }),
+  );
+  e.calls.refreshIntake.mockResolvedValueOnce(
+    create(RefreshIntakeResponseSchema, {
+      addedCardIds: ["a", "b"],
+      truncated: true,
+    }),
+  );
+  render(<IntakePage client={e.client} canRun />);
+  await user.click(await screen.findByRole("button", { name: "Refresh all" }));
+  expect(
+    await screen.findByText(
+      "Nothing new. GitHub returned only part of the matches.",
+    ),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Refresh all" }));
+  expect(
+    await screen.findByText(
+      "Added 2 cards. GitHub returned only part of the matches.",
+    ),
+  ).toBeVisible();
+});
+
 it("ignores a second action while one is running", async () => {
   const user = userEvent.setup();
   const e = engine();
@@ -380,7 +485,7 @@ it("labels a rule with no name by its search, and shows an off rule as Off with 
   const list = await screen.findByRole("list", { name: "Intake rules" });
   const [off] = within(list).getAllByRole("listitem");
   expect(off).toHaveTextContent("example-org/api, label bug, opened by octo");
-  expect(off).toHaveTextContent("Off");
+  expect(off).toHaveTextContent("Turned off");
   expect(
     within(off as HTMLElement).getByRole("button", { name: "Refresh" }),
   ).toBeDisabled();

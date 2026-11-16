@@ -58,6 +58,24 @@ it("shows the runs, how long they took and the agents' weekly counts", async () 
   expect(rows[2]).toHaveTextContent(/Nov 9\s*1\s*4/);
 });
 
+it("names the weekly section and gives its chart a legend for both series", async () => {
+  usage();
+  const section = await screen.findByRole("region", {
+    name: "Started by agents, by week",
+  });
+  expect(
+    within(section).getByText(
+      "Cards agents created and runs agents started, for each week.",
+    ),
+  ).toBeVisible();
+  const legend = within(section).getByRole("list");
+  expect(
+    within(legend)
+      .getAllByRole("listitem")
+      .map((entry) => entry.textContent),
+  ).toEqual(["Cards created", "Runs started"]);
+});
+
 it("says no run has ended rather than showing a zero length", async () => {
   usage({ endedRuns: 0, averageRunSeconds: 0n, longestRunSeconds: 0n });
   const runs = await screen.findByRole("region", { name: "Runs" });

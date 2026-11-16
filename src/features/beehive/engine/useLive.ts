@@ -1,18 +1,35 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { clone, create } from "@bufbuild/protobuf";
 import {
   CardSchema,
   type Card,
   type Event,
+  type Run,
+  type Workflow,
 } from "../gen/kiln/engine/v1/engine_pb";
+import { NEW_CARD_STATE } from "../boardModel";
 import type { Client } from "./client";
-import { POLL_WAIT_SECONDS, pollErrorHandler, startPoll } from "./poll";
+import { feedOf } from "./feed";
+import { pollErrorHandler } from "./poll";
 import { errorMessage } from "./transport";
 
 export type Live =
   | { status: "loading" }
-  /** `paused` says why the cards stopped following the event log; the cards shown may be stale. */
-  | { status: "ready"; cards: Card[]; paused?: string }
+  /**
+   * `cards` are the board and `archived` the archive. `paused` says why they stopped following
+   * the event log, and `stale` that the last Refresh failed, so the lists shown may be stale.
+   * `runs` and `workflows` fill the tiles in and stay unset when their read failed, which
+   * leaves the board without progress rather than without cards.
+   */
+  | {
+      status: "ready";
+      cards: Card[];
+      archived: Card[];
+      runs?: Run[];
+      workflows?: Workflow[];
+      paused?: string;
+      stale?: string;
+    }
   | { status: "error"; message: string };
 
 type Payload = { title?: unknown; workflow?: unknown; state?: unknown };
@@ -58,7 +75,7 @@ export function applyEvents(
     const card = withFields(found ?? create(CardSchema, { id }), {
       title: text(payload.title, found?.title ?? ""),
       workflow: text(payload.workflow, found?.workflow ?? ""),
-      state: text(payload.state, found?.state ?? "idle"),
+      state: text(payload.state, found?.state ?? NEW_CARD_STATE),
       archived: isArchived,
     });
     next = found
@@ -89,75 +106,187 @@ export function applyEvents(
         change(id, { workflow: text(payload.workflow, "") });
         break;
       case "card.state":
-        change(id, { state: text(payload.state, "idle") });
+        change(id, { state: text(payload.state, NEW_CARD_STATE) });
         break;
     }
   }
   return next;
 }
 
+/** Whether an event changes a run or its stages, so the runs on the tiles are read again. */
+export function touchesRuns(events: Event[]): boolean {
+  return events.some(
+    (event) =>
+      /^(run|stage|result|round)\./.test(event.type) ||
+      event.type === "card.skipped" ||
+      event.type === "condition.unmet",
+  );
+}
+
+/** Runs `task`; a call made while one runs collapses with others into one more run after it. */
+function collapsed(task: () => Promise<void>): () => Promise<void> {
+  let running = false;
+  let again = false;
+  return async () => {
+    if (running) {
+      again = true;
+      return;
+    }
+    running = true;
+    try {
+      do {
+        again = false;
+        await task();
+      } while (again);
+    } finally {
+      running = false;
+    }
+  };
+}
+
 /**
- * The cards of the board or the archive, kept current. It reads the list once,
- * then follows the event log from the sequence number that read returned.
- * `retry` runs the read again after a failure, or when updates have paused.
+ * What the board shows, kept current: the cards of the board and of the archive, the runs that
+ * fill the tiles in, and the workflows that name their stages. It reads each list once, then
+ * follows the event log, through the poll every view of this client shares, from the lowest
+ * sequence number those reads returned. The runs are read again when an event goes by that
+ * changes one. `refresh` reads everything again in place and follows from the new reads, so an
+ * event that came after them is not lost. `retry` starts over after a failure, or when updates
+ * have paused.
+ *
+ * A mount costs four reads and no poll of its own. The runs and the workflows are only
+ * decoration, so a failure of either leaves the cards on screen.
  */
-export function useLive(client: Client, archived: boolean) {
+export function useLive(client: Client) {
   const [live, setLive] = useState<Live>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  const reader = useRef<() => void>(() => undefined);
+  const refresh = useCallback(() => reader.current(), []);
 
   useEffect(() => {
     // `attempt` restarts the read; it is not otherwise used.
     void attempt;
     const abort = new AbortController();
-    let poll: { stop(): void } | undefined;
+    const { signal } = abort;
+    let unfollow: (() => void) | undefined;
     setLive({ status: "loading" });
-    client
-      .listCards(archived, abort.signal)
-      .then((reply) => {
-        if (abort.signal.aborted) return;
-        setLive({ status: "ready", cards: reply.cards });
-        poll = startPoll({
-          after: reply.seq,
-          call: async (after, signal) => {
-            const next = await client.pollEvents(
-              after,
-              POLL_WAIT_SECONDS,
-              signal,
-            );
-            return { events: next.events, nextSeq: next.nextSeq };
-          },
-          onEvents: (events) =>
-            setLive((current) =>
-              current.status === "ready"
-                ? {
-                    ...current,
-                    cards: applyEvents(current.cards, events, archived),
-                  }
-                : current,
-            ),
-          onError: pollErrorHandler("Beehive live updates failed", (paused) =>
-            setLive((current) =>
-              current.status === "ready" ? { ...current, paused } : current,
-            ),
+
+    // The new follower joins before the old one leaves, so the shared poll never stops between.
+    const follow = (after: bigint) => {
+      const previous = unfollow;
+      unfollow = feedOf(client).follow({
+        after,
+        onEvents: (events) => {
+          setLive((current) =>
+            current.status === "ready"
+              ? {
+                  ...current,
+                  cards: applyEvents(current.cards, events, false),
+                  archived: applyEvents(current.archived, events, true),
+                }
+              : current,
+          );
+          if (touchesRuns(events)) void readRuns();
+        },
+        onError: pollErrorHandler("Beehive live updates failed", (paused) =>
+          setLive((current) =>
+            current.status === "ready" ? { ...current, paused } : current,
           ),
-          onRecover: () =>
-            setLive((current) =>
-              current.status === "ready" && current.paused
-                ? { status: "ready", cards: current.cards }
-                : current,
-            ),
+        ),
+        onRecover: () =>
+          setLive((current) => {
+            if (current.status !== "ready" || !current.paused) return current;
+            const { paused: _paused, ...rest } = current;
+            return rest;
+          }),
+      });
+      previous?.();
+    };
+
+    const readAll = async () => {
+      const [open, archived, runs, workflows] = await Promise.all([
+        client.listCards(false, signal),
+        client.listCards(true, signal),
+        client.listRuns("", signal).catch(() => undefined),
+        client.listWorkflows(signal).catch(() => undefined),
+      ]);
+      const seqs = [open.seq, archived.seq, ...(runs ? [runs.seq] : [])];
+      return {
+        cards: open.cards,
+        archived: archived.cards,
+        runs: runs?.runs,
+        workflows: workflows?.workflows,
+        after: seqs.reduce((low, seq) => (seq < low ? seq : low)),
+      };
+    };
+
+    const readRuns = collapsed(async () => {
+      try {
+        const reply = await client.listRuns("", signal);
+        if (signal.aborted) return;
+        setLive((current) =>
+          current.status === "ready"
+            ? { ...current, runs: reply.runs }
+            : current,
+        );
+      } catch {
+        // The runs on screen stay; the next run event reads them again.
+      }
+    });
+
+    const refreshAll = collapsed(async () => {
+      try {
+        const next = await readAll();
+        if (signal.aborted) return;
+        setLive((current) => {
+          if (current.status !== "ready") return current;
+          const runs = next.runs ?? current.runs;
+          const workflows = next.workflows ?? current.workflows;
+          return {
+            status: "ready",
+            cards: next.cards,
+            archived: next.archived,
+            ...(runs ? { runs } : {}),
+            ...(workflows ? { workflows } : {}),
+            ...(current.paused ? { paused: current.paused } : {}),
+          };
         });
+        // The poll's own cursor may be past this read, so follow again from the read.
+        follow(next.after);
+      } catch (error) {
+        if (signal.aborted) return;
+        // A board already on screen stays, with the failure said beside it.
+        setLive((current) =>
+          current.status === "ready"
+            ? { ...current, stale: errorMessage(error) }
+            : current,
+        );
+      }
+    });
+    reader.current = () => void refreshAll();
+
+    readAll()
+      .then(({ after, cards, archived, runs, workflows }) => {
+        if (signal.aborted) return;
+        setLive({
+          status: "ready",
+          cards,
+          archived,
+          ...(runs ? { runs } : {}),
+          ...(workflows ? { workflows } : {}),
+        });
+        follow(after);
       })
       .catch((error: unknown) => {
-        if (abort.signal.aborted) return;
+        if (signal.aborted) return;
         setLive({ status: "error", message: errorMessage(error) });
       });
     return () => {
       abort.abort();
-      poll?.stop();
+      unfollow?.();
+      reader.current = () => undefined;
     };
-  }, [client, archived, attempt]);
+  }, [client, attempt]);
 
-  return { live, retry };
+  return { live, retry, refresh };
 }

@@ -11,14 +11,14 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import type { Client } from "./engine/client";
 import { errorMessage } from "./engine/transport";
-import type { IntakeRule } from "./gen/kiln/engine/v1/engine_pb";
+import type { IntakeRule, PreviewIssue } from "./gen/kiln/engine/v1/engine_pb";
 
 type Loaded =
   | { status: "loading" }
@@ -140,9 +140,13 @@ export function IntakePage({
     run(async () => {
       const reply = await client.refreshIntake(rule?.id ?? "");
       const added = reply.addedCardIds.length;
-      return added === 0
-        ? "Nothing new."
-        : `Added ${added} ${added === 1 ? "card" : "cards"}.`;
+      const result =
+        added === 0
+          ? "Nothing new."
+          : `Added ${added} ${added === 1 ? "card" : "cards"}.`;
+      return reply.truncated
+        ? `${result} GitHub returned only part of the matches.`
+        : result;
     });
   const toggle = (rule: IntakeRule, enabled: boolean) =>
     run(async () => {
@@ -159,9 +163,9 @@ export function IntakePage({
   const rules = loaded.status === "ready" ? loaded.rules : [];
   return (
     <div className="beehive-intake">
-      <InlineHeader
-        title="Intake rules"
-        subtitle="Open issues of a GitHub repo become cards on the board."
+      <Header
+        title="Intake"
+        subtitle="Issues that match a rule become cards. Beehive reads GitHub with the team token."
         actions={
           canRun ? (
             <>
@@ -226,12 +230,13 @@ export function IntakePage({
                   <span className="text-body-sm text-subtle">
                     {[
                       rule.name ? ruleSummary(rule) : "",
+                      `Sends issues to ${rule.workflow || "Backlog"}`,
                       intervalLabel(rule.intake?.intervalS ?? 0),
-                      rule.workflow ? `workflow ${rule.workflow}` : "Backlog",
-                      rule.enabled ? "" : "Off",
+                      rule.enabled ? "" : "Turned off",
                     ]
                       .filter(Boolean)
-                      .join(", ")}
+                      .map((part) => `${part}.`)
+                      .join(" ")}
                   </span>
                 </div>
                 {canRun && (
@@ -323,6 +328,28 @@ type Repos =
   | { status: "ready"; repos: string[] }
   | { status: "error"; message: string };
 
+type Preview =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; issues: PreviewIssue[]; truncated: boolean }
+  | { status: "error"; message: string };
+
+/** How many matching issues the preview names before it says how many more. */
+const PREVIEW_NAMES = 5;
+
+/** How long the form waits after the last change before it asks which issues match. */
+const PREVIEW_DELAY_MS = 500;
+
+const issueName = (issue: PreviewIssue) =>
+  issue.ref ? `${issue.ref.owner}/${issue.ref.repo}#${issue.ref.number}` : "";
+
+/** `3 issues match`, or `At least 30 issues match` when the search has more than one page. */
+export function matchCount(count: number, truncated: boolean): string {
+  if (truncated) return `At least ${count} issues match`;
+  if (count === 0) return "No issues match";
+  return count === 1 ? "1 issue matches" : `${count} issues match`;
+}
+
 /** Logins as typed: separated by commas or spaces, without blanks or a leading `@`. */
 export function parseLogins(text: string): string[] {
   return text
@@ -360,6 +387,47 @@ function RuleDialog({
   const [pending, setPending] = useState(false);
   const [repos, setRepos] = useState<Repos>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [preview, setPreview] = useState<Preview>({ status: "idle" });
+
+  // Which issues the rule would take, asked once the person stops typing. The engine reads
+  // GitHub for it, so a change does not ask at once and an older answer is dropped.
+  useEffect(() => {
+    if (!repo) {
+      setPreview({ status: "idle" });
+      return;
+    }
+    const abort = new AbortController();
+    setPreview({ status: "loading" });
+    const timer = setTimeout(() => {
+      client
+        .previewIntake(
+          {
+            host: "github.com",
+            repos: [repo],
+            label: label.trim(),
+            assignees: unassigned ? ASSIGNEES.unassigned : ASSIGNEES.anyone,
+            authors: parseLogins(authors),
+          },
+          abort.signal,
+        )
+        .then((reply) => {
+          if (!abort.signal.aborted)
+            setPreview({
+              status: "ready",
+              issues: reply.issues,
+              truncated: reply.truncated,
+            });
+        })
+        .catch((failure: unknown) => {
+          if (!abort.signal.aborted)
+            setPreview({ status: "error", message: errorMessage(failure) });
+        });
+    }, PREVIEW_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+    };
+  }, [client, repo, label, unassigned, authors]);
 
   useEffect(() => {
     // `attempt` reads the repos again after a failure.
@@ -530,6 +598,7 @@ function RuleDialog({
             onChange={(event) => setAuthors(event.target.value)}
           />
         </Field>
+        <IssuePreview preview={preview} />
         <Field
           label="Workflow"
           optional
@@ -571,5 +640,36 @@ function RuleDialog({
         )}
       </form>
     </Dialog>
+  );
+}
+
+/** What the rule being edited would take, beside the fields that narrow it. */
+function IssuePreview({ preview }: { preview: Preview }) {
+  if (preview.status === "idle") return null;
+  if (preview.status === "error")
+    return (
+      <p role="status" className="text-body-sm text-subtle">
+        {`Could not check which issues match. ${preview.message}`}
+      </p>
+    );
+  if (preview.status === "loading")
+    return (
+      <p role="status" className="text-body-sm text-subtle">
+        Checking which issues match…
+      </p>
+    );
+  const names = preview.issues.map(issueName).filter(Boolean);
+  const more = names.length - PREVIEW_NAMES;
+  return (
+    <p role="status" className="text-body-sm">
+      <span className="text-label">
+        {matchCount(preview.issues.length, preview.truncated)}
+      </span>
+      {names.length > 0 && (
+        <span className="text-subtle">
+          {` ${names.slice(0, PREVIEW_NAMES).join(", ")}${more > 0 ? `, and ${more} more` : ""}`}
+        </span>
+      )}
+    </p>
   );
 }

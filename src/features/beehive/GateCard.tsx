@@ -1,55 +1,50 @@
 import { useRef, useState, type FormEvent } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { errorMessage } from "./engine/transport";
 import type { InboxItem } from "./gen/kiln/engine/v1/engine_pb";
-import { artifactsOf, CHOICES, inboxKindLabel } from "./labels";
-
-/** The answers that carry words: a reason for the agent, or a reply to it. */
-const WITH_TEXT: Record<
-  string,
-  { title: string; label: string; help: string }
-> = {
-  reject: {
-    title: "Reject",
-    label: "Reason",
-    help: "The agent receives this reason with the card when the stage runs again.",
-  },
-  reply: {
-    title: "Reply",
-    label: "Reply",
-    help: "The agent receives this reply in the stage's thread.",
-  },
-};
-
-const FORM = "beehive-answer";
+import { RejectDialog } from "./RejectDialog";
+import {
+  artifactsOf,
+  CHOICES,
+  choiceLabel,
+  inboxKindLabel,
+  subjectOf,
+  waitedLabel,
+} from "./labels";
 
 /**
  * One thing that waits for a person: the card it belongs to, what it waits for and a button for
- * each answer it takes. Reject and Reply ask for words first, and the button stays off until
- * there are some. Stop run asks first. Both questions are transient, so neither has a history
- * visit.
+ * each answer it takes. Reject asks for a reason in a dialog, and a question's reply is typed
+ * in the card itself; the button for either stays off until there are words. Stop run asks
+ * first. Both questions are transient, so neither has a history visit.
  */
 export function GateCard({
   item,
+  workflow = "",
+  now = Date.now(),
   canRun,
   onOpenCard,
   onAnswer,
 }: {
   item: InboxItem;
+  /** The card's workflow, when it is known. */
+  workflow?: string;
+  /** The moment waiting is counted to, in milliseconds. */
+  now?: number;
   canRun: boolean;
   onOpenCard(card: string): void;
   /** Sends the answer; it rejects with the engine's refusal. */
   onAnswer(item: InboxItem, choice: string, text: string): Promise<void>;
 }) {
-  const [asking, setAsking] = useState<string>();
+  const [rejecting, setRejecting] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const [reply, setReply] = useState("");
   const cancelStop = useRef<HTMLButtonElement>(null);
   const artifacts = artifactsOf(item.detailJson);
 
@@ -69,8 +64,17 @@ export function GateCard({
     }
   };
 
+  const replies = item.choices.includes("reply");
+  const sendReply = async (event: FormEvent) => {
+    event.preventDefault();
+    const text = reply.trim();
+    if (!text) return;
+    // On a refusal the words stay, with the reason under them.
+    if (await send("reply", text)) setReply("");
+  };
+
   const choose = (choice: string) => {
-    if (choice in WITH_TEXT) setAsking(choice);
+    if (choice === "reject") setRejecting(true);
     else if (choice === "stop") setConfirmStop(true);
     else void send(choice);
   };
@@ -79,48 +83,90 @@ export function GateCard({
     <section aria-label={`${inboxKindLabel(item.kind)}: ${item.cardTitle}`}>
       <InlineHeader
         title={item.cardTitle || "Card"}
-        subtitle={item.title}
-        eyebrow={`${inboxKindLabel(item.kind)}, stage ${item.stage}`}
+        // With nothing listed, the engine's "waits for approval of" has nothing after it.
+        subtitle={
+          item.kind === "approval" && artifacts.length === 0
+            ? item.title.replace(/\s+of\s*$/, "")
+            : item.title
+        }
+        eyebrow={[
+          `${inboxKindLabel(item.kind)}, stage ${item.stage}`,
+          workflow,
+          waitedLabel(item.createdAt, now),
+        ]
+          .filter(Boolean)
+          .join(", ")}
         actions={
           <>
-            <Button onClick={() => onOpenCard(item.cardId)}>Open card</Button>
+            <Button variant="ghost" onClick={() => onOpenCard(item.cardId)}>
+              Open card
+            </Button>
             {canRun &&
-              item.choices.map((choice) => (
-                <Button
-                  key={choice}
-                  {...(CHOICES[choice]?.variant
-                    ? { variant: CHOICES[choice].variant }
-                    : {})}
-                  disabled={pending}
-                  onClick={() => choose(choice)}
-                >
-                  {CHOICES[choice]?.label ?? choice}
-                </Button>
-              ))}
+              item.choices
+                // A question's reply has its own field and button below.
+                .filter((choice) => choice !== "reply")
+                // Reject sits before Approve, as the quieter answer before the prominent one.
+                .sort((a, b) => Number(b === "reject") - Number(a === "reject"))
+                .map((choice) => (
+                  <Button
+                    key={choice}
+                    {...(CHOICES[choice]?.variant
+                      ? { variant: CHOICES[choice].variant }
+                      : {})}
+                    disabled={pending}
+                    onClick={() => choose(choice)}
+                  >
+                    {choiceLabel(item.kind, choice)}
+                  </Button>
+                ))}
           </>
         }
       />
       {artifacts.length > 0 && (
-        <p className="text-body-sm text-subtle">
-          {`To approve: ${artifacts.join(", ")}`}
+        <p>
+          <span className="beehive-chip text-body-sm">
+            {`To approve: ${artifacts.join(", ")}`}
+          </span>
         </p>
       )}
-      {error && !asking && !confirmStop && (
+      {canRun && replies && (
+        <form onSubmit={sendReply} noValidate className="beehive-form">
+          <Field label="Your answer">
+            <Textarea
+              rows={3}
+              value={reply}
+              placeholder="Add a note"
+              disabled={pending}
+              onChange={(event) => setReply(event.target.value)}
+            />
+          </Field>
+          <div>
+            <Button
+              type="submit"
+              variant="prominent"
+              disabled={!reply.trim() || pending}
+            >
+              Send answer
+            </Button>
+          </div>
+        </form>
+      )}
+      {error && !rejecting && !confirmStop && (
         <p role="alert" className="text-body-sm text-danger">
           {error}
         </p>
       )}
-      {asking && (
-        <TextDialog
-          kind={asking}
+      {rejecting && (
+        <RejectDialog
+          subject={subjectOf(item.detailJson)}
           pending={pending}
           error={error}
           onClose={() => {
-            setAsking(undefined);
+            setRejecting(false);
             setError(undefined);
           }}
           onSubmit={async (text) => {
-            if (await send(asking, text)) setAsking(undefined);
+            if (await send("reject", text)) setRejecting(false);
           }}
         />
       )}
@@ -165,74 +211,5 @@ export function GateCard({
         </AlertDialog>
       )}
     </section>
-  );
-}
-
-/** Asks for the words an answer carries. The submit button waits for some. */
-function TextDialog({
-  kind,
-  pending,
-  error,
-  onClose,
-  onSubmit,
-}: {
-  kind: string;
-  pending: boolean;
-  error: string | undefined;
-  onClose(): void;
-  onSubmit(text: string): Promise<void>;
-}) {
-  const copy = WITH_TEXT[kind];
-  const field = useRef<HTMLTextAreaElement>(null);
-  const [text, setText] = useState("");
-  const ready = text.trim().length > 0;
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (ready && !pending) void onSubmit(text.trim());
-  };
-  if (!copy) return null;
-  return (
-    <Dialog
-      open
-      size="compact"
-      title={copy.title}
-      initialFocus={field}
-      dismissOnOutsideClick={false}
-      preventClose={pending}
-      onOpenChange={(open) => !open && onClose()}
-      actions={
-        <>
-          <Button disabled={pending} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            form={FORM}
-            variant="prominent"
-            loading={pending}
-            disabled={!ready || pending}
-          >
-            {copy.title}
-          </Button>
-        </>
-      }
-    >
-      <form id={FORM} onSubmit={submit} noValidate className="beehive-form">
-        <Field label={copy.label} description={copy.help}>
-          <Textarea
-            ref={field}
-            rows={4}
-            value={text}
-            disabled={pending}
-            onChange={(event) => setText(event.target.value)}
-          />
-        </Field>
-        {error && (
-          <p role="alert" className="text-body text-danger">
-            {error}
-          </p>
-        )}
-      </form>
-    </Dialog>
   );
 }

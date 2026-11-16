@@ -1,143 +1,319 @@
-import { HexagonIcon } from "../../shared/design-system/icons";
+import {
+  CaretDownIcon,
+  CaretRightIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
-import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import type { Card } from "./gen/kiln/engine/v1/engine_pb";
-import type { Client } from "./engine/client";
-import { useLive } from "./engine/useLive";
-import { stateLabel } from "./labels";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import {
+  LANES,
+  chipsOf,
+  issueOf,
+  laneOf,
+  progressOf,
+  repoOf,
+  statusOf,
+  type Lane,
+} from "./boardModel";
+import type {
+  Card,
+  InboxItem,
+  Run,
+  Workflow,
+} from "./gen/kiln/engine/v1/engine_pb";
+import { canMove, canRetry, canStart } from "./cardActions";
+import { MoveMenu } from "./MoveMenu";
 
-/** Board columns by where a card is: Backlog has no workflow, the rest follow its state. */
-const COLUMNS = [
-  { key: "backlog", label: "Backlog" },
-  { key: "todo", label: "To do" },
-  { key: "running", label: "Running" },
-  { key: "waiting", label: "Waiting" },
-  { key: "attention", label: "Needs attention" },
-  { key: "done", label: "Done" },
-] as const;
+/** What a person can do to a card from the board, each as one call to the engine. */
+export type TileActions = {
+  start(card: Card): void;
+  retry(run: Run): void;
+  restore(card: Card): void;
+  /** An empty workflow is Backlog. */
+  move(card: Card, workflow: string): void;
+};
 
-export function columnOf(card: Card): (typeof COLUMNS)[number]["key"] {
-  if (!card.workflow) return "backlog";
-  switch (card.state) {
-    case "running":
-      return "running";
-    case "waiting":
-      return "waiting";
-    case "failed":
-    case "stopped":
-      return "attention";
-    case "done":
-      return "done";
-    default:
-      return "todo";
-  }
-}
+/** What a tile and a row need beyond the card itself. */
+type Context = {
+  /** The newest run of each card, or unset when the runs could not be read. */
+  runs: Map<string, Run> | undefined;
+  workflows: Workflow[] | undefined;
+  waiting: Map<string, InboxItem[]>;
+  canRun: boolean;
+  /** An action is running, so the buttons wait. */
+  busy: boolean;
+  actions: TileActions;
+  onOpen(card: string): void;
+};
 
 /**
- * The board of live cards, or the archive. It owns the read and the event log, so
- * they run only while one of the two is showing. A card opens on its own page.
+ * The four lanes of the board. A lane with no cards says so, and a lane folds away to its
+ * heading. In select mode each tile has a checkbox.
  */
-export function CardList({
-  client,
-  archived,
-  canRun,
-  onOpen,
-  onNew,
+export function Lanes({
+  cards,
+  collapsed,
+  onCollapse,
+  selecting,
+  selected,
+  onSelect,
+  ...context
 }: {
-  client: Client;
-  archived: boolean;
-  canRun: boolean;
-  onOpen(card: string): void;
-  onNew(): void;
-}) {
-  const { live, retry } = useLive(client, archived);
-  const failed = live.status === "error";
-  const paused = live.status === "ready" ? live.paused : undefined;
-  const cards = live.status === "ready" ? live.cards : [];
-  const problem = failed ? live.message : paused;
+  cards: Card[];
+  collapsed: ReadonlySet<Lane>;
+  onCollapse(lane: Lane): void;
+  selecting: boolean;
+  selected: ReadonlySet<string>;
+  onSelect(card: string, on: boolean): void;
+} & Context) {
   return (
-    <LoadingRegion
-      pending={live.status === "loading"}
-      label="Loading cards…"
-      feedback={
-        problem ? (
-          <div className="beehive-error">
-            <p role="alert" className="text-danger">
-              {problem}
-            </p>
-            <Button onClick={retry}>Retry</Button>
-          </div>
-        ) : undefined
-      }
-    >
-      {live.status === "ready" && cards.length === 0 && (
-        <EmptyState
-          icon={<HexagonIcon size="1.5rem" />}
-          title={archived ? "Nothing archived" : "No cards yet"}
-          description={
-            archived
-              ? "Cards you archive are kept here and can be restored."
-              : "Cards you add will show up here."
-          }
-          action={
-            !archived && canRun ? (
-              <Button
-                variant="prominent"
-                onClick={onNew}
-                title="Add a card to the board"
+    <div className="beehive-lanes">
+      {LANES.map((lane) => {
+        const inLane = cards.filter((card) => laneOf(card) === lane.key);
+        const folded = collapsed.has(lane.key);
+        return (
+          <section
+            key={lane.key}
+            aria-label={lane.label}
+            className="beehive-lane"
+          >
+            <div className="beehive-lane-head">
+              <IconButton
+                aria-label={`${folded ? "Expand" : "Collapse"} ${lane.label}`}
+                aria-expanded={!folded}
+                icon={
+                  folded ? (
+                    <CaretRightIcon size="1rem" />
+                  ) : (
+                    <CaretDownIcon size="1rem" />
+                  )
+                }
+                onClick={() => onCollapse(lane.key)}
+              />
+              <InlineHeader title={lane.label} />
+              <span
+                className="text-body-sm text-subtle"
+                role="img"
+                aria-label={`${inLane.length} ${inLane.length === 1 ? "card" : "cards"}`}
               >
-                New card
-              </Button>
-            ) : undefined
-          }
-        />
-      )}
-      {live.status === "ready" && cards.length > 0 && !archived && (
-        <div className="beehive-columns">
-          {COLUMNS.map((column) => {
-            const inColumn = cards.filter((c) => columnOf(c) === column.key);
-            return (
-              <section
-                key={column.key}
-                aria-label={column.label}
-                className="beehive-column"
-              >
-                <InlineHeader title={column.label} />
+                {inLane.length}
+              </span>
+            </div>
+            {!folded &&
+              (inLane.length === 0 ? (
+                <p className="beehive-lane-empty text-body-sm text-subtle">
+                  No cards
+                </p>
+              ) : (
                 <ul className="beehive-cards">
-                  {inColumn.map((card) => (
-                    <CardRow key={card.id} card={card} onOpen={onOpen} />
+                  {inLane.map((card) => (
+                    <Tile
+                      key={card.id}
+                      card={card}
+                      selecting={selecting}
+                      selected={selected.has(card.id)}
+                      onSelect={(on) => onSelect(card.id, on)}
+                      {...context}
+                    />
                   ))}
                 </ul>
-              </section>
-            );
-          })}
-        </div>
-      )}
-      {live.status === "ready" && cards.length > 0 && archived && (
-        <ul className="beehive-cards" aria-label="Archived cards">
-          {cards.map((card) => (
-            <CardRow key={card.id} card={card} onOpen={onOpen} />
-          ))}
-        </ul>
-      )}
-    </LoadingRegion>
+              ))}
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
-function CardRow({ card, onOpen }: { card: Card; onOpen(card: string): void }) {
+function Tile({
+  card,
+  selecting,
+  selected,
+  onSelect,
+  runs,
+  workflows,
+  waiting,
+  canRun,
+  busy,
+  actions,
+  onOpen,
+}: {
+  card: Card;
+  selecting: boolean;
+  selected: boolean;
+  onSelect(on: boolean): void;
+} & Context) {
+  const run = runs?.get(card.id);
+  const workflow = workflows?.find((item) => item.name === card.workflow);
+  const items = waiting.get(card.id) ?? [];
+  const status = statusOf(card, items);
+  const progress = progressOf(card, run, workflow);
+  const chips = chipsOf(run, workflow);
+  const repo = issueOf(card) || repoOf(card);
+  const review = items.some((item) => item.kind === "approval");
+  const answer = items.some((item) => item.kind === "question");
+  const movable = canRun && !!workflows && !!runs && canMove(card, run);
   return (
-    <li>
-      <NavigationItem
-        multiline
-        label={card.title}
-        trailing={
-          <span className="text-body-sm text-subtle">{stateLabel(card)}</span>
-        }
-        onClick={() => onOpen(card.id)}
-      />
+    <li
+      className="beehive-tile"
+      data-selected={selected || undefined}
+      data-danger={status.tone === "danger" || undefined}
+    >
+      <div className="beehive-tile-head">
+        {selecting && (
+          <Checkbox
+            size="sm"
+            checked={selected}
+            onCheckedChange={onSelect}
+            label={<span className="sr-only">{`Select ${card.title}`}</span>}
+          />
+        )}
+        <div className="beehive-tile-title">
+          <Button variant="link" size="text" onClick={() => onOpen(card.id)}>
+            {card.title}
+          </Button>
+        </div>
+      </div>
+      <p className="beehive-tile-meta text-body-sm text-subtle">
+        <span className="beehive-tag">{card.workflow || "No workflow"}</span>
+        <span>{repo || "No repo"}</span>
+      </p>
+      {chips.length > 0 ? (
+        <ul className="beehive-chips" aria-label="Steps">
+          {chips.map((chip) => (
+            <li
+              key={chip.stage}
+              className="beehive-chip text-body-sm"
+              data-status={chip.status}
+            >
+              {chip.stage}
+              <span className="sr-only">{`, ${chip.status}`}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-body-sm text-subtle">no steps</p>
+      )}
+      <div className="beehive-tile-progress">
+        {progress ? (
+          <>
+            <progress
+              className="beehive-progress"
+              data-tone={status.tone}
+              aria-label={`${card.title} progress`}
+              max={progress.total}
+              value={progress.done}
+            />
+            <span className="text-body-sm text-subtle">{`${progress.done} of ${progress.total}`}</span>
+          </>
+        ) : (
+          <span className="text-body-sm text-subtle">not started</span>
+        )}
+      </div>
+      <div className="beehive-tile-foot">
+        <span className="beehive-status text-body-sm" data-tone={status.tone}>
+          {status.label}
+        </span>
+        <div className="beehive-tile-actions">
+          {review && (
+            <Button
+              size="sm"
+              variant="prominent"
+              onClick={() => onOpen(card.id)}
+            >
+              Review
+            </Button>
+          )}
+          {answer && (
+            <Button
+              size="sm"
+              variant="prominent"
+              onClick={() => onOpen(card.id)}
+            >
+              Answer
+            </Button>
+          )}
+          {canRun && canRetry(card, run) && (
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => actions.retry(run)}
+            >
+              Retry run
+            </Button>
+          )}
+          {canRun && canStart(card) && (
+            <Button
+              size="sm"
+              disabled={busy}
+              aria-label={`Start run on ${card.title}`}
+              onClick={() => actions.start(card)}
+            >
+              Start run
+            </Button>
+          )}
+          {movable && (
+            <MoveMenu
+              label="Move"
+              cardLabel={`Move ${card.title}`}
+              workflows={workflows}
+              current={card.workflow}
+              disabled={busy}
+              onMove={(next) => actions.move(card, next)}
+            />
+          )}
+        </div>
+      </div>
     </li>
+  );
+}
+
+/** The archive: one row for each card set aside, with the way to bring it back. */
+export function ArchivedRows({
+  cards,
+  canRun,
+  busy,
+  actions,
+  onOpen,
+}: {
+  cards: Card[];
+  canRun: boolean;
+  busy: boolean;
+  actions: Pick<TileActions, "restore">;
+  onOpen(card: string): void;
+}) {
+  return (
+    <ul className="beehive-cards" aria-label="Archived cards">
+      {cards.map((card) => (
+        <li key={card.id}>
+          <PreferenceRow
+            title={
+              <Button
+                variant="link"
+                size="text"
+                onClick={() => onOpen(card.id)}
+              >
+                {card.title}
+              </Button>
+            }
+            subtitle={`${card.workflow || "No workflow"}, ${issueOf(card) || repoOf(card) || "No repo"}`}
+            trailing={
+              canRun ? (
+                <Button
+                  size="sm"
+                  disabled={busy}
+                  aria-label={`${card.workflow ? "Restore" : "Back to Backlog"} ${card.title}`}
+                  onClick={() => actions.restore(card)}
+                >
+                  {card.workflow ? "Restore" : "Back to Backlog"}
+                </Button>
+              ) : undefined
+            }
+          />
+        </li>
+      ))}
+    </ul>
   );
 }

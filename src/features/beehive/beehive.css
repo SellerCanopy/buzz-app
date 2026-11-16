@@ -1,15 +1,43 @@
 .beehive-page {
-  display: flex;
-  flex-direction: column;
   height: 100%;
   min-height: 0;
   color: var(--text-standard);
+  /* The sidebar gives way to a strip above the view when the pane is narrow. */
+  container-type: inline-size;
 }
-.beehive-body {
+.beehive-layout {
+  display: grid;
+  grid-template-columns: 16.25rem minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.beehive-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-inline-end: 1px solid var(--border-standard);
+}
+.beehive-nav {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  padding: var(--space-2);
+}
+.beehive-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
   padding: var(--space-4) var(--space-panel-inset) var(--space-8);
+}
+.beehive-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.beehive-view[hidden] {
+  display: none;
 }
 .beehive-error {
   display: flex;
@@ -21,41 +49,262 @@
 .beehive-error p {
   margin: 0;
 }
-.beehive-toolbar {
+.beehive-filters {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  margin: 0 0 var(--space-4);
 }
-/*
- * Six views do not fit a narrow window with enlarged text. The toolbar scrolls sideways and
- * keeps each tab readable, rather than the page scrolling or the tabs squeezing together.
- * The padding leaves room for the focus ring that the scroll box would clip.
- */
-.beehive-toolbar {
-  overflow-x: auto;
-  padding: var(--space-1);
-}
-.beehive-toolbar > * {
+/* A tab group keeps each label on one line and moves to the next row rather than shrink. */
+.beehive-filters .buzz-tabs {
   flex: none;
+  max-inline-size: 100%;
 }
-.beehive-columns {
+.beehive-filters .buzz-tabs-tab {
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+/* A group wider than the pane scrolls inside its track, so no label is cut off. */
+.beehive-filters .buzz-tabs-list {
+  overflow-x: auto;
+}
+/* The title keeps a readable width and the actions wrap below it in a narrow pane: a card
+   page, a gate's buttons under a long card title, and a view's own header. */
+.beehive-card-page .buzz-content-header,
+.beehive-inbox .buzz-content-header,
+.beehive-view > .buzz-content-header {
+  flex-wrap: wrap;
+}
+.beehive-card-page .buzz-content-header-copy,
+.beehive-inbox .buzz-content-header-copy,
+.beehive-view > .buzz-content-header > .buzz-content-header-copy {
+  flex: 1 1 12rem;
+}
+.beehive-card-page .buzz-content-header-actions,
+.beehive-inbox .buzz-content-header-actions,
+.beehive-view > .buzz-content-header > .buzz-content-header-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-inline-size: 100%;
+}
+@container (max-width: 40rem) {
+  .beehive-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .beehive-sidebar {
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--border-standard);
+  }
+  /* The two sections sit side by side, and scroll sideways rather than squeeze. */
+  .beehive-nav {
+    display: flex;
+    gap: var(--space-4);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .beehive-nav .navigation-section {
+    flex: none;
+    min-width: 9rem;
+    margin-top: 0;
+  }
+}
+.beehive-lanes {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(14rem, 1fr);
+  /* Four equal columns while each can keep 12rem; a narrower pane scrolls sideways
+     rather than squeezing a tile. */
+  grid-template-columns: repeat(4, minmax(12rem, 1fr));
   gap: var(--space-4);
   align-items: start;
+  overflow-x: auto;
 }
-.beehive-column {
+.beehive-lane {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.beehive-lane-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block-end: var(--space-2);
+  border-block-end: 2px solid var(--border-standard);
+}
+.beehive-lane-head .buzz-content-header {
+  flex: 1;
+  min-width: 0;
+}
+.beehive-lane-empty {
+  margin: 0;
+  padding: var(--space-4);
+  text-align: center;
+  border: 1px dashed var(--border-standard);
+  border-radius: var(--radius-row);
 }
 .beehive-cards {
   display: flex;
   flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.beehive-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-panel);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+}
+.beehive-tile[data-danger] {
+  border-color: var(--border-danger);
+}
+.beehive-tile[data-selected] {
+  border-color: var(--border-prominent);
+  box-shadow: 0 0 0 1px var(--border-prominent);
+}
+.beehive-tile-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.beehive-tile-title {
+  min-width: 0;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.beehive-tile-title button {
+  white-space: normal;
+  text-align: start;
+}
+.beehive-tile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.beehive-tag,
+.beehive-chip {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-pill);
+}
+.beehive-chips {
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
+}
+.beehive-chip {
+  overflow-wrap: anywhere;
+  color: var(--text-subtle);
+}
+.beehive-chip[data-status="done"] {
+  color: var(--text-success);
+  border-color: var(--border-success-subtle);
+}
+.beehive-chip[data-status="failed"] {
+  color: var(--text-danger);
+  border-color: var(--border-danger);
+}
+.beehive-chip[data-status="running"] {
+  color: var(--text-standard);
+  border-color: var(--border-prominent);
+}
+.beehive-tile-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.beehive-progress {
+  flex: 1;
+  min-width: 0;
+  block-size: 0.25rem;
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+  overflow: hidden;
+}
+.beehive-progress::-webkit-progress-bar {
+  background: var(--surface-inset);
+}
+.beehive-progress::-webkit-progress-value {
+  background: var(--chart-series-1);
+}
+.beehive-progress::-moz-progress-bar {
+  background: var(--chart-series-1);
+}
+.beehive-progress[data-tone="warning"]::-webkit-progress-value {
+  background: var(--border-warning);
+}
+.beehive-progress[data-tone="warning"]::-moz-progress-bar {
+  background: var(--border-warning);
+}
+.beehive-progress[data-tone="danger"]::-webkit-progress-value {
+  background: var(--border-danger);
+}
+.beehive-progress[data-tone="danger"]::-moz-progress-bar {
+  background: var(--border-danger);
+}
+.beehive-progress[data-tone="success"]::-webkit-progress-value {
+  background: var(--chart-series-3);
+}
+.beehive-progress[data-tone="success"]::-moz-progress-bar {
+  background: var(--chart-series-3);
+}
+.beehive-tile-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.beehive-status {
+  color: var(--text-subtle);
+}
+.beehive-status[data-tone="danger"] {
+  color: var(--text-danger);
+}
+.beehive-status[data-tone="success"] {
+  color: var(--text-success);
+}
+.beehive-status[data-tone="warning"] {
+  color: var(--text-warning);
+}
+.beehive-tile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.beehive-notice,
+.beehive-select-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+}
+.beehive-notice {
+  justify-content: space-between;
+}
+.beehive-notice p {
+  margin: 0;
+}
+.beehive-search-field {
+  flex: 0 1 18rem;
+  min-width: 12rem;
 }
 .beehive-card-page {
   display: flex;
@@ -63,25 +312,18 @@
   gap: var(--space-4);
 }
 /* A long title keeps a readable width and the actions wrap below it. */
-.beehive-card-page .buzz-content-header {
-  flex-wrap: wrap;
-}
-.beehive-card-page .buzz-content-header-copy {
-  flex: 1 1 12rem;
-}
 .beehive-card-page .buzz-content-header-title {
   overflow-wrap: anywhere;
 }
-.beehive-card-page .buzz-content-header-actions {
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  max-inline-size: 100%;
-}
-.beehive-details {
+.beehive-details,
+.beehive-facts {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
   margin: var(--space-4) 0 0;
+}
+.beehive-facts {
+  margin: 0;
 }
 .beehive-details dd {
   margin: 0;
@@ -212,20 +454,12 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* The gates sit a step below the kind tabs above them. */
+.beehive-inbox {
+  margin-block-start: var(--space-4);
+}
 .beehive-inbox p {
   margin: var(--space-1) 0 0;
-}
-/* A gate's buttons wrap under a long card title at a narrow width. */
-.beehive-inbox .buzz-content-header {
-  flex-wrap: wrap;
-}
-.beehive-inbox .buzz-content-header-copy {
-  flex: 1 1 12rem;
-}
-.beehive-inbox .buzz-content-header-actions {
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  max-inline-size: 100%;
 }
 .beehive-activity > li {
   display: flex;
@@ -352,4 +586,343 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+}
+
+/* A card page: the way back, the facts under the title and the stage strip. */
+.beehive-crumb {
+  align-self: flex-start;
+}
+.beehive-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+}
+.beehive-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.beehive-strip p {
+  margin: 0;
+}
+.beehive-chip[data-status="next"] {
+  border-style: dashed;
+}
+/* A card that waits on a person, with the buttons that answer it. */
+.beehive-callout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-row);
+}
+.beehive-callout[data-tone="danger"] {
+  border-color: var(--border-danger);
+}
+.beehive-callout p {
+  margin: 0;
+}
+.beehive-callout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+/* The assistant: a side panel with its thread, the workflows it offers and the box to ask in. */
+.beehive-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.beehive-assistant p {
+  margin: 0;
+}
+.beehive-assistant-thread {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 20rem;
+  block-size: 50vh;
+}
+.beehive-proposal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+}
+.beehive-proposal p {
+  margin: 0;
+}
+.beehive-proposal-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+.beehive-proposal-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.beehive-proposal-diff pre {
+  margin: 0;
+  max-block-size: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.beehive-callout + .beehive-live {
+  margin-block-start: var(--space-3);
+}
+/* The Repos tab: a line about how a run uses them and Add repo, then one row for each repo. */
+.beehive-repos {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-block-start: var(--space-4);
+}
+.beehive-repos p {
+  margin: 0;
+}
+.beehive-repos-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.beehive-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.beehive-repo-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+.beehive-repo-refusal {
+  flex-basis: 100%;
+}
+.beehive-steps-count {
+  margin: var(--space-4) 0 0;
+}
+.beehive-steps-count + .beehive-steps {
+  margin-block-start: var(--space-3);
+}
+.beehive-step-group + .beehive-step-group {
+  margin-block-start: var(--space-4);
+}
+
+/* The workflow editor: a canvas of stages beside the settings of the one that is picked. */
+.wf-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26rem;
+  gap: var(--space-6);
+  align-items: start;
+}
+@container (max-width: 60rem) {
+  .wf-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.wf-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.wf-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.wf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.wf-swatch {
+  inline-size: 1.25rem;
+  block-size: 0.1875rem;
+  border-radius: var(--radius-row);
+  background: var(--text-link);
+}
+.wf-swatch[data-result="passed"] {
+  background: var(--text-success);
+}
+.wf-swatch[data-result="needs_work"] {
+  background: var(--border-warning);
+}
+.wf-swatch[data-result="failed"] {
+  background: var(--border-danger);
+}
+.wf-canvas {
+  overflow-x: auto;
+  padding: var(--space-4);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+}
+.wf-nodes {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-6) * 2);
+  margin: 0;
+  padding: 0 var(--space-4);
+  list-style: none;
+}
+.wf-node {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.wf-node-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  text-align: start;
+  color: inherit;
+  background: var(--surface-raised, var(--surface-inset));
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.wf-node[data-selected] .wf-node-main {
+  border-color: var(--text-link);
+  box-shadow: 0 0 0 1px var(--text-link);
+}
+.wf-node[data-mark="error"] .wf-node-main {
+  border-color: var(--border-danger);
+}
+.wf-node[data-mark="warning"] .wf-node-main {
+  border-color: var(--border-warning);
+}
+.wf-node-tools {
+  display: flex;
+  gap: var(--space-1);
+}
+.wf-arcs {
+  display: block;
+  margin-inline-start: 0;
+  fill: none;
+}
+.wf-arc {
+  fill: none;
+  stroke: var(--text-link);
+  stroke-width: 1.5;
+}
+.wf-arc[data-result="passed"] {
+  stroke: var(--text-success);
+}
+.wf-arc[data-result="needs_work"] {
+  stroke: var(--border-warning);
+}
+.wf-arc[data-result="failed"] {
+  stroke: var(--border-danger);
+}
+.wf-findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.wf-findings p {
+  margin: 0;
+}
+.wf-findings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.wf-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+}
+.wf-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.wf-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-new-form {
+  max-inline-size: 28rem;
+}
+.wf-recipes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-recipe {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  inline-size: 100%;
+  block-size: 100%;
+  padding: var(--space-4);
+  text-align: start;
+  color: inherit;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+  cursor: pointer;
+}
+.wf-recipe:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.wf-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
 }

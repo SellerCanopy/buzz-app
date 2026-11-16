@@ -55,7 +55,7 @@ it("lists each package with its stages, the kind of each and the agent a prompt 
   const section = await screen.findByRole("region", { name: "demo" });
   expect(within(section).getByText("A small workflow.")).toBeVisible();
   expect(within(section).getByText("Ready")).toBeVisible();
-  expect(within(section).getByText("Built in, Version 0.1.0")).toBeVisible();
+  expect(within(section).getByText("Built in, version 0.1.0")).toBeVisible();
   const stages = within(section).getAllByRole("listitem");
   expect(stages).toHaveLength(2);
   expect(stages[0]).toHaveTextContent("Plan");
@@ -66,6 +66,40 @@ it("lists each package with its stages, the kind of each and the agent a prompt 
     "Approval, waits for a person to start it",
   );
   expect(within(section).queryByRole("list", { name: /Findings/ })).toBeNull();
+});
+
+it("says an approval waits for a person, and gives a package that is not built in its version", async () => {
+  render(
+    <WorkflowsPage
+      client={
+        engine(
+          [
+            {
+              name: "mine",
+              version: "1",
+              ok: true,
+              stages: [
+                { id: "gate", name: "plan_review", kind: "approval" },
+                {
+                  id: "build",
+                  name: "implement",
+                  kind: "prompt",
+                  agent: "builder",
+                },
+              ],
+            },
+          ],
+          [{ name: "mine", path: "workflows/mine", findings: [] }],
+        ).client
+      }
+    />,
+  );
+  const section = await screen.findByRole("region", { name: "mine" });
+  expect(within(section).getByText("Version 1")).toBeVisible();
+  const stages = within(section).getAllByRole("listitem");
+  expect(stages[0]).toHaveTextContent("Approval, waits for a person");
+  expect(stages[0]).not.toHaveTextContent("to start it");
+  expect(stages[1]).toHaveTextContent("Prompt, agent builder");
 });
 
 it("shows each finding with its severity, code and message beside its package", async () => {
@@ -98,7 +132,7 @@ it("shows each finding with its severity, code and message beside its package", 
     />,
   );
   const section = await screen.findByRole("region", { name: "broken" });
-  expect(within(section).getByText("Has errors")).toBeVisible();
+  expect(within(section).getByText("Has problems")).toBeVisible();
   const findings = within(
     within(section).getByRole("list", { name: "Findings for broken" }),
   ).getAllByRole("listitem");
@@ -138,6 +172,7 @@ it("lists a folder that did not load by its path, apart from the packages", asyn
     name: "Packages that did not load",
   });
   expect(within(section).getByText("workflows/nameless")).toBeVisible();
+  expect(within(section).getByText("Not loaded")).toBeVisible();
   expect(
     within(section).getByRole("list", {
       name: "Findings for workflows/nameless",
@@ -178,4 +213,70 @@ it("names a kind it does not know as the engine sent it", () => {
       pause: false,
     } as never),
   ).toBe("review");
+});
+
+it("tags a built-in workflow and opens a workflow in the editor from its Edit button", async () => {
+  const onEdit = vi.fn();
+  render(
+    <WorkflowsPage
+      canRun
+      onEdit={onEdit}
+      client={
+        engine([demo], [{ name: "demo", path: "builtin/demo", findings: [] }])
+          .client
+      }
+    />,
+  );
+  const section = await screen.findByRole("region", { name: "demo" });
+  expect(within(section).getByText("Built in")).toBeVisible();
+  await userEvent.click(
+    within(section).getByRole("button", { name: "Edit demo" }),
+  );
+  expect(onEdit).toHaveBeenCalledWith("demo");
+});
+
+it("offers a person who cannot run View in the place of Edit", async () => {
+  render(
+    <WorkflowsPage
+      onEdit={vi.fn()}
+      client={
+        engine([demo], [{ name: "demo", path: "builtin/demo", findings: [] }])
+          .client
+      }
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "View demo" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Edit demo" })).toBeNull();
+});
+
+it("reads the workflows again when a workflow was saved", async () => {
+  const e = engine([demo], []);
+  const { rerender } = render(<WorkflowsPage client={e.client} revision={0} />);
+  await screen.findByRole("region", { name: "demo" });
+  expect(e.calls.listWorkflows).toHaveBeenCalledTimes(1);
+  rerender(<WorkflowsPage client={e.client} revision={1} />);
+  await vi.waitFor(() =>
+    expect(e.calls.listWorkflows).toHaveBeenCalledTimes(2),
+  );
+});
+
+it("keeps the list and says the checks could not run when only the checks fail", async () => {
+  const e = engine([demo], []);
+  e.calls.checkWorkflow.mockRejectedValueOnce(new Error("Beehive is down"));
+  render(<WorkflowsPage client={e.client} />);
+  const section = await screen.findByRole("region", { name: "demo" });
+  expect(within(section).getByText("A small workflow.")).toBeVisible();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Checks could not run. Beehive is down",
+  );
+});
+
+it("still fails the page when the workflows themselves cannot be read", async () => {
+  const e = engine([demo], []);
+  e.calls.listWorkflows.mockRejectedValueOnce(new Error("no workflows"));
+  render(<WorkflowsPage client={e.client} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("no workflows");
+  expect(screen.queryByRole("region", { name: "demo" })).toBeNull();
 });

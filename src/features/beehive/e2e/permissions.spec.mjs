@@ -78,7 +78,7 @@ test("a person at None cannot read the board, and Settings lists both people", a
 
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await pane.getByRole("tab", { name: "Settings" }).click();
+  await pane.getByRole("button", { name: "Settings" }).click();
   const short = `${otherPubkey.slice(0, 8)}…`;
   const row = pane.getByRole("combobox", { name: `Level for ${short}` });
   await expect(row).toHaveText("None");

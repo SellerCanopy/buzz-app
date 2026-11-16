@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { Details } from "./CardPage";
+import { Details } from "./CardDetails";
 import { CardSchema } from "./gen/kiln/engine/v1/engine_pb";
 
 afterEach(cleanup);

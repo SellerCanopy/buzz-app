@@ -6,13 +6,18 @@ import {
   type MessageShape,
 } from "@bufbuild/protobuf";
 import {
+  AcceptTicketProposalRequestSchema,
+  AcceptTicketProposalResponseSchema,
   AccessEntrySchema,
+  AddIssueRepoRequestSchema,
   AddNoteRequestSchema,
   AddNoteResponseSchema,
   ArtifactVersionSchema,
   ArchiveCardsRequestSchema,
   ArchiveCardsResponseSchema,
   AnswerInboxRequestSchema,
+  CancelJobRequestSchema,
+  CancelJobResponseSchema,
   CardSchema,
   InboxItemSchema,
   CheckWorkflowRequestSchema,
@@ -39,6 +44,7 @@ import {
   ListCardsRequestSchema,
   ListCardsResponseSchema,
   IntakeRuleSchema,
+  type IntakeSchema,
   ListInboxRequestSchema,
   ListInboxResponseSchema,
   ListIntakeRulesRequestSchema,
@@ -49,14 +55,25 @@ import {
   ListReposResponseSchema,
   ListRunsRequestSchema,
   ListRunsResponseSchema,
+  ListProposalsRequestSchema,
+  ListProposalsResponseSchema,
   ListWorkflowsRequestSchema,
   ListWorkflowsResponseSchema,
   MergeCardRequestSchema,
+  PauseCardRequestSchema,
   PollEventsRequestSchema,
+  PreviewIntakeRequestSchema,
+  PreviewIntakeResponseSchema,
   PollEventsResponseSchema,
   ReadArtifactRequestSchema,
+  RemoveCardRequestSchema,
+  RemoveIssueRepoRequestSchema,
+  RemoveCardResponseSchema,
   RefreshIntakeRequestSchema,
   RefreshIntakeResponseSchema,
+  ResetCardRequestSchema,
+  ResolveProposalRequestSchema,
+  ResolveProposalResponseSchema,
   ResumeCardRequestSchema,
   RestoreCardRequestSchema,
   RetryRunRequestSchema,
@@ -66,17 +83,53 @@ import {
   SearchIssuesResponseSchema,
   SetAccessLevelRequestSchema,
   SetAutoModeRequestSchema,
+  SetCardWorkflowRequestSchema,
+  SetCardWorkflowResponseSchema,
   SetSettingRequestSchema,
   SettingSchema,
+  StartChatRequestSchema,
+  StartJobResponseSchema,
   StartStageRequestSchema,
   StopRunRequestSchema,
   WhoAmIRequestSchema,
   WhoAmIResponseSchema,
+  DeleteWorkflowRequestSchema,
+  DeleteWorkflowResponseSchema,
+  DuplicateWorkflowRequestSchema,
+  ExportWorkflowRequestSchema,
+  ExportWorkflowResponseSchema,
+  GetWorkflowDraftRequestSchema,
+  GetWorkflowDraftResponseSchema,
+  ImportWorkflowRequestSchema,
+  ListAgentsRequestSchema,
+  ListAgentsResponseSchema,
+  ListStageTemplatesRequestSchema,
+  ListStageTemplatesResponseSchema,
+  SaveWorkflowRequestSchema,
+  SaveWorkflowResponseSchema,
+  WorkflowSchema,
 } from "../gen/kiln/engine/v1/engine_pb";
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import type { Session } from "./session";
 
 const SERVICE = "/kiln.engine.v1.EngineService/";
+
+/** A package's files by path, as text. */
+export type WorkflowFiles = { name: string; files: Record<string, string> };
+
+const encoder = new TextEncoder();
+
+function toDraft(draft: WorkflowFiles) {
+  return {
+    name: draft.name,
+    files: Object.fromEntries(
+      Object.entries(draft.files).map(([path, text]) => [
+        path,
+        encoder.encode(text),
+      ]),
+    ),
+  };
+}
 
 /** The Beehive methods the app calls. Each phase adds the methods it needs. */
 export function createClient(session: Session) {
@@ -141,6 +194,21 @@ export function createClient(session: Session) {
         CreateTaskRequestSchema,
         CardSchema,
         create(CreateTaskRequestSchema, input),
+        signal,
+      ),
+    /**
+     * Sort idle cards that have never run into a workflow, or into Backlog with an empty one.
+     * All or nothing: the engine refuses the whole batch when one card cannot move.
+     */
+    setCardWorkflow: (
+      moves: { cardId: string; workflow: string }[],
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SetCardWorkflow",
+        SetCardWorkflowRequestSchema,
+        SetCardWorkflowResponseSchema,
+        create(SetCardWorkflowRequestSchema, { moves }),
         signal,
       ),
     archiveCards: (cardIds: string[], signal?: AbortSignal) =>
@@ -228,13 +296,65 @@ export function createClient(session: Session) {
         create(RetryRunRequestSchema, { runId }),
         signal,
       ),
-    /** A card's runs, newest first. */
-    listRuns: (cardId: string, signal?: AbortSignal) =>
+    /** A card's runs, newest first. An empty `cardId` reads the runs of every card. */
+    listRuns: (cardId = "", signal?: AbortSignal) =>
       unary(
         "ListRuns",
         ListRunsRequestSchema,
         ListRunsResponseSchema,
         create(ListRunsRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Hold a running card: its run stops where it is until `resumeCard`. */
+    pauseCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "PauseCard",
+        PauseCardRequestSchema,
+        CardSchema,
+        create(PauseCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Stop a card's run and put the card back to idle. Its artifacts and branch are kept. */
+    resetCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "ResetCard",
+        ResetCardRequestSchema,
+        CardSchema,
+        create(ResetCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Take a card off the board for good. The engine refuses a card whose run is working. */
+    removeCard: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "RemoveCard",
+        RemoveCardRequestSchema,
+        RemoveCardResponseSchema,
+        create(RemoveCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /**
+     * Add an `owner/name` repo to the card. The reply is the card with its repos. The engine
+     * refuses a repo it cannot read, one the card has, and a card whose run is active.
+     */
+    addIssueRepo: (cardId: string, repo: string, signal?: AbortSignal) =>
+      unary(
+        "AddIssueRepo",
+        AddIssueRepoRequestSchema,
+        CardSchema,
+        create(AddIssueRepoRequestSchema, { cardId, repo }),
+        signal,
+      ),
+    /**
+     * Take an extra repo off the card. The reply is the card with its repos. The engine refuses
+     * the repo the card runs in while others remain, one with an open pull request, and a card
+     * whose run is active.
+     */
+    removeIssueRepo: (cardId: string, repo: string, signal?: AbortSignal) =>
+      unary(
+        "RemoveIssueRepo",
+        RemoveIssueRepoRequestSchema,
+        CardSchema,
+        create(RemoveIssueRepoRequestSchema, { cardId, repo }),
         signal,
       ),
     /** Let a held card carry on: a stage held before it started posts its task. */
@@ -318,6 +438,98 @@ export function createClient(session: Session) {
         ListWorkflowsRequestSchema,
         ListWorkflowsResponseSchema,
         create(ListWorkflowsRequestSchema),
+        signal,
+      ),
+    /** Check one unsaved package as the editor holds it, in place of a loaded one. */
+    checkDraft: (draft: WorkflowFiles, signal?: AbortSignal) =>
+      unary(
+        "CheckWorkflow",
+        CheckWorkflowRequestSchema,
+        CheckWorkflowResponseSchema,
+        create(CheckWorkflowRequestSchema, { draft: toDraft(draft) }),
+        signal,
+      ),
+    /** A package's files as text, with the hash an edit of them is made against. */
+    getWorkflowDraft: (name: string, signal?: AbortSignal) =>
+      unary(
+        "GetWorkflowDraft",
+        GetWorkflowDraftRequestSchema,
+        GetWorkflowDraftResponseSchema,
+        create(GetWorkflowDraftRequestSchema, { name, text: true }),
+        signal,
+      ),
+    /**
+     * Save a package. `baseHash` is the hash the files were opened at, and empty for a new
+     * name. A save made against an older hash fails with `failed_precondition`, and a draft the
+     * checks find errors in fails with `invalid_argument`. Nothing is written in either case.
+     */
+    saveWorkflow: (
+      draft: WorkflowFiles,
+      baseHash: string,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "SaveWorkflow",
+        SaveWorkflowRequestSchema,
+        SaveWorkflowResponseSchema,
+        create(SaveWorkflowRequestSchema, {
+          draft: toDraft(draft),
+          baseHash,
+        }),
+        signal,
+      ),
+    /** Copy a package under a new name. The copy is the person's own. */
+    duplicateWorkflow: (name: string, newName: string, signal?: AbortSignal) =>
+      unary(
+        "DuplicateWorkflow",
+        DuplicateWorkflowRequestSchema,
+        WorkflowSchema,
+        create(DuplicateWorkflowRequestSchema, { name, newName }),
+        signal,
+      ),
+    /** Delete a saved package. A built-in, or one a card still uses, is refused. */
+    deleteWorkflow: (name: string, signal?: AbortSignal) =>
+      unary(
+        "DeleteWorkflow",
+        DeleteWorkflowRequestSchema,
+        DeleteWorkflowResponseSchema,
+        create(DeleteWorkflowRequestSchema, { name }),
+        signal,
+      ),
+    /** A package as a zip of its files. */
+    exportWorkflow: (name: string, signal?: AbortSignal) =>
+      unary(
+        "ExportWorkflow",
+        ExportWorkflowRequestSchema,
+        ExportWorkflowResponseSchema,
+        create(ExportWorkflowRequestSchema, { name }),
+        signal,
+      ),
+    /** Add the package in a zip, under `name` when given. */
+    importWorkflow: (zip: Uint8Array, name = "", signal?: AbortSignal) =>
+      unary(
+        "ImportWorkflow",
+        ImportWorkflowRequestSchema,
+        WorkflowSchema,
+        create(ImportWorkflowRequestSchema, { zip, name }),
+        signal,
+      ),
+    /** The stages a person can add, each as the JSON a workflow's stage holds. */
+    listStageTemplates: (signal?: AbortSignal) =>
+      unary(
+        "ListStageTemplates",
+        ListStageTemplatesRequestSchema,
+        ListStageTemplatesResponseSchema,
+        create(ListStageTemplatesRequestSchema),
+        signal,
+      ),
+    /** The agents in the community by display name, which a workflow stage names. */
+    listAgents: (signal?: AbortSignal) =>
+      unary(
+        "ListAgents",
+        ListAgentsRequestSchema,
+        ListAgentsResponseSchema,
+        create(ListAgentsRequestSchema),
         signal,
       ),
     /** Check every package and folder the engine loaded. */
@@ -429,6 +641,21 @@ export function createClient(session: Session) {
         create(RefreshIntakeRequestSchema, { ruleId }),
         signal,
       ),
+    /**
+     * The issues on the first page of a rule's search that the rule would take. Nothing is
+     * stored and no card is added.
+     */
+    previewIntake: (
+      rule: MessageInitShape<typeof IntakeSchema>,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "PreviewIntake",
+        PreviewIntakeRequestSchema,
+        PreviewIntakeResponseSchema,
+        create(PreviewIntakeRequestSchema, { rule }),
+        signal,
+      ),
     /** The repos the team's token reaches on github.com, as "owner/name". */
     listRepos: (signal?: AbortSignal) =>
       unary(
@@ -438,9 +665,18 @@ export function createClient(session: Session) {
         create(ListReposRequestSchema, { host: "github.com" }),
         signal,
       ),
-    /** Open issues of one repo, narrowed by text. */
+    /**
+     * Issues of one or more repos, narrowed by text, label, assignee (a login, or `none`) and
+     * state. An empty state reads open and closed issues.
+     */
     searchIssues: (
-      input: { repo: string; text?: string },
+      input: {
+        repos: string[];
+        text?: string;
+        label?: string;
+        assignee?: string;
+        state?: "open" | "closed" | "";
+      },
       signal?: AbortSignal,
     ) =>
       unary(
@@ -450,9 +686,11 @@ export function createClient(session: Session) {
         create(SearchIssuesRequestSchema, {
           host: "github.com",
           filter: {
-            repos: [input.repo],
+            repos: input.repos,
             text: input.text ?? "",
-            state: "open",
+            label: input.label ?? "",
+            assignee: input.assignee ?? "",
+            state: input.state ?? "open",
           },
         }),
         signal,
@@ -464,6 +702,59 @@ export function createClient(session: Session) {
         ListIssueCommentsRequestSchema,
         ListIssueCommentsResponseSchema,
         create(ListIssueCommentsRequestSchema, { cardId }),
+        signal,
+      ),
+    /**
+     * Ask the assistant's agent. The reply is the job's id at once, and the answer arrives as a
+     * `job.result` event. An empty `rootEventId` opens a new thread, whose root the `job.started`
+     * event names; a thread's root continues it.
+     */
+    startChat: (text: string, rootEventId = "", signal?: AbortSignal) =>
+      unary(
+        "StartChat",
+        StartChatRequestSchema,
+        StartJobResponseSchema,
+        create(StartChatRequestSchema, { text, rootEventId }),
+        signal,
+      ),
+    /** End a running job. The reply so far stays and no `job.result` event follows. */
+    cancelJob: (jobId: string, signal?: AbortSignal) =>
+      unary(
+        "CancelJob",
+        CancelJobRequestSchema,
+        CancelJobResponseSchema,
+        create(CancelJobRequestSchema, { jobId }),
+        signal,
+      ),
+    /** The workflows an agent offered the caller and that are not yet decided, oldest first. */
+    listProposals: (signal?: AbortSignal) =>
+      unary(
+        "ListProposals",
+        ListProposalsRequestSchema,
+        ListProposalsResponseSchema,
+        create(ListProposalsRequestSchema),
+        signal,
+      ),
+    /** Record what the person did with a proposal. It acts on nothing: apply it with `saveWorkflow`. */
+    resolveProposal: (
+      proposalId: bigint,
+      accepted: boolean,
+      signal?: AbortSignal,
+    ) =>
+      unary(
+        "ResolveProposal",
+        ResolveProposalRequestSchema,
+        ResolveProposalResponseSchema,
+        create(ResolveProposalRequestSchema, { proposalId, accepted }),
+        signal,
+      ),
+    /** File a ticket an agent proposed: the engine opens its issue and adds the card. */
+    acceptTicketProposal: (proposalId: bigint, signal?: AbortSignal) =>
+      unary(
+        "AcceptTicketProposal",
+        AcceptTicketProposalRequestSchema,
+        AcceptTicketProposalResponseSchema,
+        create(AcceptTicketProposalRequestSchema, { proposalId }),
         signal,
       ),
     getStatus: (signal?: AbortSignal) =>

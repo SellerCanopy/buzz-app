@@ -23,12 +23,19 @@ import {
   ListArtifactVersionsResponseSchema,
   ListCardsResponseSchema,
   ListInboxResponseSchema,
+  ListProposalsResponseSchema,
   ListIntakeRulesResponseSchema,
   ListIssueCommentsResponseSchema,
   ListRunsResponseSchema,
   ListWorkflowsResponseSchema,
+  WorkflowSchema,
   GetSettingsResponseSchema,
+  GetUsageResponseSchema,
+  GetWorkflowDraftResponseSchema,
+  ListAgentsResponseSchema,
+  ListStageTemplatesResponseSchema,
   GetStatusResponseSchema,
+  InboxItemSchema,
   RunSchema,
   RunStepSchema,
   SettingSchema,
@@ -41,7 +48,7 @@ import {
   type Run,
 } from "./gen/kiln/engine/v1/engine_pb";
 import { createLevelStore, type LevelStore } from "./level";
-import { PAGE_ID, PLUGIN_ID } from "./routes";
+import { assistantTarget, PAGE_ID, PLUGIN_ID } from "./routes";
 
 afterEach(cleanup);
 
@@ -64,6 +71,9 @@ function engine(
     seq?: bigint;
     /** The channel id the update_channel setting holds, or none. */
     updateChannel?: string;
+    /** The assistant_agent setting, and the agents the community lists. */
+    assistantAgent?: string;
+    agents?: string[];
     /** Who the access list shows, each with the level they act at. */
     access?: AccessEntry[];
     /** What the card's stages saved, every version of each, oldest first. */
@@ -98,11 +108,39 @@ function engine(
       }),
     ),
     checkWorkflow: vi.fn(async () => create(CheckWorkflowResponseSchema, {})),
+    duplicateWorkflow: vi.fn(async (_source: string, name: string) =>
+      create(WorkflowSchema, { name }),
+    ),
+    checkDraft: vi.fn(async () => create(CheckWorkflowResponseSchema, {})),
+    getWorkflowDraft: vi.fn(async () =>
+      create(GetWorkflowDraftResponseSchema, {
+        hash: "h1",
+        textFiles: {
+          "kiln-package.yaml": JSON.stringify({ name: "demo", version: "1" }),
+          "workflow.yaml": JSON.stringify({
+            version: 2,
+            stages: [{ id: "plan", kind: "prompt", agent: "a", prompt: "p" }],
+          }),
+        },
+      }),
+    ),
+    listAgents: vi.fn(async () =>
+      create(ListAgentsResponseSchema, {
+        agents: (options.agents ?? []).map((name) => ({ name })),
+      }),
+    ),
+    listStageTemplates: vi.fn(async () =>
+      create(ListStageTemplatesResponseSchema, {}),
+    ),
+    getUsage: vi.fn(async () => create(GetUsageResponseSchema, {})),
     getCard: vi.fn(async () => card({ body: "Line one\nLine two" })),
     createCard: vi.fn(async () => card()),
     startRun: vi.fn(async () => create(RunSchema, { id: "run-1", cardId: ID })),
     listRuns: vi.fn(async () =>
-      create(ListRunsResponseSchema, { runs: options.runs ?? [] }),
+      create(ListRunsResponseSchema, {
+        runs: options.runs ?? [],
+        seq: options.seq ?? 5n,
+      }),
     ),
     listArtifacts: vi.fn(async () => {
       const names = [...new Set((options.saved ?? []).map((v) => v.name))];
@@ -139,6 +177,12 @@ function engine(
     retryRun: vi.fn(async () =>
       create(RunSchema, { id: "run-2", cardId: ID, state: "running" }),
     ),
+    pauseCard: vi.fn(async () => card()),
+    resetCard: vi.fn(async () => card()),
+    removeCard: vi.fn(async () => ({})),
+    answerInbox: vi.fn(async (id: string) =>
+      create(InboxItemSchema, { id, state: "resolved" }),
+    ),
     getCommunitySettings: vi.fn(async () =>
       create(GetSettingsResponseSchema, {
         settings: [
@@ -148,8 +192,17 @@ function engine(
               ? JSON.stringify(options.updateChannel)
               : "null",
           }),
+          create(SettingSchema, {
+            key: "assistant_agent",
+            valueJson: options.assistantAgent
+              ? JSON.stringify(options.assistantAgent)
+              : "null",
+          }),
         ],
       }),
+    ),
+    listProposals: vi.fn(async () =>
+      create(ListProposalsResponseSchema, { proposals: [] }),
     ),
     listAccess: vi.fn(async () =>
       create(ListAccessResponseSchema, { entries: options.access ?? [] }),
@@ -203,6 +256,9 @@ function engine(
   return { client: client as unknown as Client, calls: client, polls };
 }
 
+/** The board has been read: its lanes are on screen. */
+const boardLoaded = () => screen.findByRole("region", { name: "Backlog" });
+
 /**
  * Resolves once the engine's answer to WhoAmI has gone through the level store and into the
  * page. Until then nothing is offered, so a control that is absent proves nothing. The store
@@ -245,6 +301,10 @@ function shell(target: OpenTarget = board) {
       setCurrent(next);
       return {};
     });
+    // Ending visits leaves the page on the target that replaces them.
+    mock.dismiss.mockImplementation((_retire: unknown, next: OpenTarget) =>
+      setCurrent(next),
+    );
     return children({
       navigator: mock as unknown as Navigation,
       navigation: { entryId: "visit-1", target: current, signal } as never,
@@ -283,10 +343,17 @@ function page(
   return s.mock;
 }
 
-it("keeps the header and shows the empty state when there are no cards", async () => {
+it("keeps the header and shows four empty lanes, without filters, when there are no cards", async () => {
   page(engine().client);
-  expect(await screen.findByText("No cards yet")).toBeVisible();
+  await boardLoaded();
   expect(screen.getByRole("region", { name: "Beehive" })).toBeVisible();
+  for (const name of ["Backlog", "To do", "In progress", "Done"]) {
+    const lane = screen.getByRole("region", { name });
+    expect(within(lane).getByText("No cards")).toBeVisible();
+    expect(within(lane).getByRole("img", { name: "0 cards" })).toBeVisible();
+  }
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  expect(screen.queryByRole("tab", { name: /^Archived/ })).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -314,14 +381,15 @@ it("shows the failure beside the board and retries on request", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Beehive is not reachable",
   );
-  expect(screen.queryByText("No cards yet")).toBeNull();
+  expect(screen.queryByRole("region", { name: "Backlog" })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-  expect(await screen.findByText("No cards yet")).toBeVisible();
+  expect(await boardLoaded()).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(e.calls.listCards).toHaveBeenCalledTimes(2);
+  // Each read takes the board and the archive.
+  expect(e.calls.listCards).toHaveBeenCalledTimes(4);
 });
 
-it("places a card in the column its state names", async () => {
+it("places a card in the lane its state names", async () => {
   page(
     engine({
       cards: [
@@ -337,36 +405,34 @@ it("places a card in the column its state names", async () => {
       ],
     }).client,
   );
-  await screen.findByText("Loose");
+  await boardLoaded();
   const expected: [string, string[]][] = [
     ["Backlog", ["Loose"]],
     ["To do", ["Ready", "Odd"]],
-    ["Running", ["Going"]],
-    ["Waiting", ["Held"]],
-    ["Needs attention", ["Broke", "Halted"]],
+    ["In progress", ["Going", "Held", "Broke", "Halted"]],
     ["Done", ["Shipped"]],
   ];
   for (const [name, titles] of expected) {
-    const region = screen.getByRole("region", { name });
+    const lane = screen.getByRole("region", { name });
     expect(
-      within(region)
-        .getAllByRole("button")
-        .map((button) => button.textContent),
-    ).toEqual(titles.map((title) => expect.stringContaining(title)));
+      within(lane)
+        .getAllByRole("listitem")
+        .map((tile) => tile.querySelector(".beehive-tile-title")?.textContent),
+    ).toEqual(titles);
   }
 });
 
-it("says nothing is archived and offers no way to add a card there", async () => {
-  page(engine().client);
-  await screen.findByText("No cards yet");
-  // The header's button and the empty state's own.
+it("says nothing is archived once cards exist, and offers no way to add a card there", async () => {
+  page(engine({ cards: [card()] }).client);
+  await screen.findByText("Fix the build");
+  // The sidebar's plus and the Board header's button; no lane adds a card of its own.
   expect(screen.getAllByRole("button", { name: "New card" })).toHaveLength(2);
-  await userEvent.click(screen.getByRole("tab", { name: "Archive" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Archived 0" }));
   expect(await screen.findByText("Nothing archived")).toBeVisible();
   expect(
     screen.getByText("Cards you archive are kept here and can be restored."),
   ).toBeVisible();
-  expect(screen.getAllByRole("button", { name: "New card" })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "New card" })).toHaveLength(2);
 });
 
 it("says so when what the person may do cannot be read, and Retry asks again", async () => {
@@ -392,7 +458,7 @@ it("reads what the person may do from the host's level store and starts no secon
   const stop = level.start();
   await vi.waitFor(() => expect(level.get().status).toBe("ready"));
   page(e.client, undefined, fakeRelay([]), level);
-  await screen.findByText("No cards yet");
+  await boardLoaded();
   // The store's own read is the only one, and it already holds Read.
   expect(e.calls.whoAmI).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("button", { name: "New card" })).toBeNull();
@@ -447,56 +513,239 @@ it("keeps the cards and says live updates paused when the poll is refused, and R
     expect.objectContaining({ code: "permission_denied", terminal: true }),
   );
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await vi.waitFor(() => expect(e.calls.listCards).toHaveBeenCalledTimes(2));
+  // Each read takes the board and the archive.
+  await vi.waitFor(() => expect(e.calls.listCards).toHaveBeenCalledTimes(4));
   warn.mockRestore();
 });
 
 it("follows the event log from the sequence number the list returned", async () => {
   const e = engine({ seq: 12n });
   page(e.client);
-  await screen.findByText("No cards yet");
+  await boardLoaded();
   await vi.waitFor(() => expect(e.polls).toHaveLength(1));
   expect(e.polls[0]?.after).toBe(12n);
   e.polls[0]?.answer([card({ title: "From another person" })], "card.created");
   expect(await screen.findByText("From another person")).toBeVisible();
-  expect(screen.queryByText("No cards yet")).toBeNull();
   await vi.waitFor(() => expect(e.polls).toHaveLength(2));
   expect(e.polls[1]?.after).toBe(13n);
   e.polls[1]?.answer([card()], "card.archived");
-  await screen.findByText("No cards yet");
+  await vi.waitFor(() =>
+    expect(screen.queryByText("From another person")).toBeNull(),
+  );
+  // The archived card is counted on the Archived filter.
+  expect(screen.getByRole("tab", { name: "Archived 1" })).toBeVisible();
 });
 
 it("lists archived cards in the Archive view", async () => {
   const e = engine({ cards: [card({ archived: true })] });
   page(e.client);
-  await screen.findByText("No cards yet");
-  await userEvent.click(screen.getByRole("tab", { name: "Archive" }));
+  await boardLoaded();
+  await userEvent.click(screen.getByRole("tab", { name: "Archived 1" }));
   expect(await screen.findByText("Fix the build")).toBeVisible();
-  expect(e.calls.listCards).toHaveBeenLastCalledWith(true, expect.anything());
+  expect(e.calls.listCards).toHaveBeenCalledWith(true, expect.anything());
 });
 
 it("lists the workflows from the Workflows view and returns to the board", async () => {
   const e = engine({ cards: [card()] });
   page(e.client);
   await screen.findByText("Fix the build");
-  await userEvent.click(screen.getByRole("tab", { name: "Workflows" }));
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
   expect(await screen.findByRole("region", { name: "demo" })).toBeVisible();
   expect(screen.queryByText("Fix the build")).toBeNull();
-  // Workflows keeps no poll open for a board nobody is looking at.
+  // The page's other readers keep the one shared poll open while the board is not shown.
   await vi.waitFor(() => expect(e.polls).toHaveLength(1));
-  expect(e.polls[0]?.signal?.aborted).toBe(true);
-  await userEvent.click(screen.getByRole("tab", { name: "Board" }));
+  expect(e.polls[0]?.signal?.aborted).toBe(false);
+  await userEvent.click(screen.getByRole("button", { name: "Board" }));
   expect(await screen.findByText("Fix the build")).toBeVisible();
-  // The board reads again on return and follows the log from the new read.
-  expect(e.calls.listCards).toHaveBeenCalledTimes(2);
-  await vi.waitFor(() => expect(e.polls).toHaveLength(2));
-  expect(e.polls[1]?.signal?.aborted).toBe(false);
+  // The board reads again on return (the board and the archive) and joins the shared poll,
+  // which has not passed that read, so it carries on without a second request.
+  expect(e.calls.listCards).toHaveBeenCalledTimes(4);
+  expect(e.polls).toHaveLength(1);
+  expect(e.polls[0]?.signal?.aborted).toBe(false);
+});
+
+const editorView: OpenTarget = {
+  ...board,
+  route: { version: 1, params: { workflow: "demo" } },
+} as OpenTarget;
+const newWorkflowView: OpenTarget = {
+  ...board,
+  route: { version: 1, params: { newWorkflow: true } },
+} as OpenTarget;
+
+it("offers Import and New workflow, and Edit on each workflow, to someone who can run", async () => {
+  const e = engine();
+  const nav = page(e.client);
+  await levelApplied(e);
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  expect(await screen.findByRole("button", { name: "Import" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Edit demo" }));
+  expect(nav.open).toHaveBeenLastCalledWith({
+    ...board,
+    route: { version: 1, params: { workflow: "demo" } },
+  });
+});
+
+it("opens the page that adds a workflow as a visit", async () => {
+  const e = engine();
+  const nav = page(e.client);
+  await levelApplied(e);
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "New workflow" }),
+  );
+  expect(nav.open).toHaveBeenLastCalledWith({
+    ...board,
+    route: { version: 1, params: { newWorkflow: true } },
+  });
+});
+
+it("gives a reader the workflows to read, with no Import, New workflow or Edit", async () => {
+  const e = engine({ role: "read" });
+  page(e.client);
+  await levelApplied(e);
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  expect(
+    await screen.findByRole("button", { name: "View demo" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "New workflow" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Edit/ })).toBeNull();
+});
+
+it("shows the editor when its visit is shown, under Workflows in the sidebar", async () => {
+  const e = engine();
+  page(e.client, editorView);
+  expect(await screen.findByRole("heading", { name: "demo" })).toBeVisible();
+  expect(e.calls.getWorkflowDraft).toHaveBeenCalledWith(
+    "demo",
+    expect.anything(),
+  );
+  expect(screen.getByRole("button", { name: "Workflows" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
+it("Back to Workflows retires the editor's visits and falls back to the board", async () => {
+  const nav = page(engine().client, editorView);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Back to Workflows" }),
+  );
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(retire(editorView)).toBe(true);
+  expect(retire(board)).toBe(false);
+  expect(retire(cardView)).toBe(false);
+  expect(fallback).toEqual(board);
+});
+
+it("leaves the editor when another view is chosen in the sidebar", async () => {
+  const nav = page(engine().client, editorView);
+  await userEvent.click(await screen.findByRole("button", { name: "Usage" }));
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  const [retire] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+  ];
+  expect(retire(editorView)).toBe(true);
+});
+
+it("shows the new workflow page when its visit is shown, and Cancel retires it", async () => {
+  const e = engine();
+  const nav = page(e.client, newWorkflowView);
+  expect(
+    await screen.findByRole("heading", { name: "New workflow" }),
+  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(retire(newWorkflowView)).toBe(true);
+  expect(retire(editorView)).toBe(false);
+  expect(fallback).toEqual(board);
+});
+
+it("opens the copy in the editor in place of the New workflow page, and ends only that page's visits", async () => {
+  const e = engine();
+  const nav = page(e.client, newWorkflowView);
+  await levelApplied(e);
+  await userEvent.type(
+    await screen.findByRole("textbox", { name: "Name" }),
+    "mine",
+  );
+  await userEvent.click(
+    await screen.findByRole("combobox", { name: "Workflow to copy" }),
+  );
+  await userEvent.click(await screen.findByRole("option", { name: "demo" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Start from a copy" }),
+  );
+
+  await vi.waitFor(() =>
+    expect(e.calls.duplicateWorkflow).toHaveBeenCalledWith("demo", "mine"),
+  );
+  await vi.waitFor(() => expect(nav.dismiss).toHaveBeenCalledTimes(1));
+  const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(retire(newWorkflowView)).toBe(true);
+  // No editor was open, so another workflow's visit is not this page's to end.
+  expect(retire(editorView)).toBe(false);
+  expect(retire(board)).toBe(false);
+  expect(retire(cardView)).toBe(false);
+  expect(fallback).toEqual({
+    ...board,
+    route: { version: 1, params: { workflow: "mine" } },
+  });
+  // The visit it fell back to is the new workflow's editor.
+  expect(await screen.findByRole("heading", { name: "mine" })).toBeVisible();
+  expect(e.calls.getWorkflowDraft).toHaveBeenCalledWith(
+    "mine",
+    expect.anything(),
+  );
+});
+
+it("keeps what was typed in the editor when another view is chosen, and returns it when the workflow is opened again", async () => {
+  const e = engine();
+  const nav = page(e.client, editorView);
+  await levelApplied(e);
+  await userEvent.click(
+    await screen.findByRole("button", { name: /^plan, Agent task/ }),
+  );
+  const prompt = () =>
+    within(
+      screen.getByRole("complementary", { name: "Settings of stage plan" }),
+    ).getByRole("textbox", { name: "Prompt" });
+  await userEvent.type(prompt(), " and more");
+  expect(prompt()).toHaveValue("p and more");
+
+  // Choosing a view leaves the editor, which ends its visits.
+  await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("heading", { name: "demo" })).toBeNull(),
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Edit demo" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: /^plan, Agent task/ }),
+  );
+  // The text is back, though nothing was saved.
+  expect(prompt()).toHaveValue("p and more");
 });
 
 it("offers New card only to someone who can run", async () => {
   const reader = engine({ role: "read" });
   page(reader.client);
-  await screen.findByText("No cards yet");
+  await boardLoaded();
   await levelApplied(reader);
   expect(screen.queryByRole("button", { name: "New card" })).toBeNull();
   cleanup();
@@ -621,7 +870,7 @@ it("shows the tab a visit names", async () => {
     route: { version: 1, params: { card: ID, tab: "steps" } },
   } as OpenTarget);
   expect(
-    await screen.findByRole("list", { name: "Stages of the run" }),
+    await screen.findByRole("list", { name: "Steps of the run" }),
   ).toBeVisible();
 });
 
@@ -648,7 +897,7 @@ it("archives the open card and restores it", async () => {
 it("Close retires the card's visits and falls back to the board", async () => {
   const nav = page(engine().client, cardView);
   await userEvent.click(
-    await screen.findByRole("button", { name: "Close card" }),
+    await screen.findByRole("button", { name: "Back to Board" }),
   );
   expect(nav.dismiss).toHaveBeenCalledTimes(1);
   const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
@@ -759,7 +1008,14 @@ it("merges the card's pull request and reads the card again", async () => {
   const e = engine();
   e.calls.getCard.mockResolvedValue(card({ pullRequest: openPull() }));
   page(e.client, cardView);
-  await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Merge pull request" }),
+  );
+  // The merge waits for the person to confirm it.
+  expect(e.calls.mergeCard).not.toHaveBeenCalled();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Merge the pull request" }),
+  );
   await vi.waitFor(() => expect(e.calls.mergeCard).toHaveBeenCalledWith(ID));
   await vi.waitFor(() => expect(e.calls.getCard).toHaveBeenCalledTimes(2));
 });
@@ -770,7 +1026,9 @@ it("offers Merge only to a person who can run, for a pull request that can be me
   page(reader.client, cardView);
   await screen.findByRole("tab", { name: "Details" });
   await levelApplied(reader);
-  expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Merge pull request" }),
+  ).toBeNull();
   cleanup();
 
   for (const pull of [
@@ -786,14 +1044,18 @@ it("offers Merge only to a person who can run, for a pull request that can be me
     await screen.findByRole("tab", { name: "Details" });
     await levelApplied(e);
     await screen.findByRole("button", { name: "Archive" });
-    expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Merge pull request" }),
+    ).toBeNull();
     cleanup();
   }
 
   const none = engine();
   page(none.client, cardView);
   await screen.findByRole("button", { name: "Archive" });
-  expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Merge pull request" }),
+  ).toBeNull();
 });
 
 it("shows the engine's refusal to merge", async () => {
@@ -803,7 +1065,12 @@ it("shows the engine's refusal to merge", async () => {
     new Error("the pull request has failing checks"),
   );
   page(e.client, cardView);
-  await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Merge pull request" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Merge the pull request" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "the pull request has failing checks",
   );
@@ -910,29 +1177,23 @@ const ISSUE = {
 it("shows the Intake rules from the Intake tab to a person who can run, with a way to add one", async () => {
   const e = engine({ role: "run" });
   page(e.client);
-  await screen.findByText("No cards yet");
+  await boardLoaded();
   await levelApplied(e);
-  await userEvent.click(screen.getByRole("tab", { name: "Intake" }));
-  expect(
-    await screen.findByRole("heading", { name: "Intake rules" }),
-  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Intake" }));
+  expect(await screen.findByRole("heading", { name: "Intake" })).toBeVisible();
   expect(e.calls.listIntakeRules).toHaveBeenCalledTimes(1);
   expect(
     (await screen.findAllByRole("button", { name: "New rule" })).length,
   ).toBeGreaterThan(0);
-  // Intake keeps no poll open for a board nobody is looking at.
-  await vi.waitFor(() => expect(e.polls[0]?.signal?.aborted).toBe(true));
 });
 
 it("shows the Intake rules to a reader without a way to change them", async () => {
   const e = engine({ role: "read" });
   page(e.client);
-  await screen.findByText("No cards yet");
+  await boardLoaded();
   await levelApplied(e);
-  await userEvent.click(screen.getByRole("tab", { name: "Intake" }));
-  expect(
-    await screen.findByRole("heading", { name: "Intake rules" }),
-  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Intake" }));
+  expect(await screen.findByRole("heading", { name: "Intake" })).toBeVisible();
   await screen.findByText("No intake rules");
   expect(e.calls.listIntakeRules).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("button", { name: "New rule" })).toBeNull();
@@ -948,7 +1209,7 @@ it("has an Issue tab for a card made from an issue, and choosing it is a visit",
     ...board,
     route: { version: 1, params: { card: ID, tab: "issue" } },
   });
-  expect(await screen.findByText("example-org/api#42")).toBeVisible();
+  expect(await screen.findAllByText("example-org/api#42")).not.toHaveLength(0);
   expect(e.calls.listIssueComments).toHaveBeenCalledWith(ID, expect.anything());
 });
 
@@ -964,6 +1225,88 @@ it("has no Issue tab for a card written by hand, and a visit that names it opens
   );
   expect(screen.queryByRole("tab", { name: "Issue" })).toBeNull();
   expect(e.calls.listIssueComments).not.toHaveBeenCalled();
+});
+
+it("has a Repos tab for a card with an issue, and choosing it is a visit", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ issue: ISSUE }));
+  const nav = page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("tab", { name: "Repos" }));
+  expect(nav.open).toHaveBeenCalledWith({
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "repos" } },
+  });
+  const rows = await screen.findAllByRole("listitem");
+  expect(rows[0]).toHaveTextContent("1. example-org/api");
+});
+
+it("shows the card the engine returns after a repo is added, without reading the card again", async () => {
+  const e = engine();
+  e.calls.getCard.mockResolvedValue(card({ issue: ISSUE }));
+  const addIssueRepo = vi.fn(async () =>
+    card({
+      issue: ISSUE,
+      repos: [
+        { repo: ISSUE, main: true },
+        { repo: { ...ISSUE, repo: "web", number: 0 }, mergeOrder: 2 },
+      ],
+    }),
+  );
+  Object.assign(e.calls, { addIssueRepo });
+  page(e.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "repos" } },
+  } as OpenTarget);
+  await levelApplied(e);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Add repo" }),
+  );
+  await userEvent.type(screen.getByLabelText("Repo"), "example-org/web");
+  await userEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Add repo",
+    }),
+  );
+  expect(addIssueRepo).toHaveBeenCalledWith(ID, "example-org/web");
+  await screen.findByText("2. example-org/web");
+  expect(e.calls.getCard).toHaveBeenCalledTimes(1);
+});
+
+it("gives a reader the Repos tab without the buttons that change it", async () => {
+  const e = engine({ role: "read" });
+  e.calls.getCard.mockResolvedValue(card({ issue: ISSUE }));
+  page(e.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "repos" } },
+  } as OpenTarget);
+  await levelApplied(e);
+  await screen.findByRole("list", { name: "Repos of the card" });
+  expect(screen.queryByRole("button", { name: "Add repo" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Remove/ })).toBeNull();
+});
+
+it("has a Repos tab for a card written by hand that has not run, and none for one that failed", async () => {
+  const idle = engine();
+  idle.calls.getCard.mockResolvedValue(card({ state: "idle" }));
+  page(idle.client, cardView);
+  expect(await screen.findByRole("tab", { name: "Repos" })).toBeVisible();
+  cleanup();
+
+  // The mock's failed card has no issue and no repos: no Issue tab and no Repos tab.
+  const failed = engine();
+  failed.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "failed" }),
+  );
+  page(failed.client, {
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "repos" } },
+  } as OpenTarget);
+  expect(await screen.findByRole("tab", { name: "Details" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByRole("tab", { name: "Repos" })).toBeNull();
+  expect(screen.queryByRole("tab", { name: "Issue" })).toBeNull();
 });
 
 it("says the card may be out of date when reading it again fails after an action", async () => {
@@ -1016,7 +1359,7 @@ it("lists the stages of the card's run with where each stands", async () => {
   );
   page(e.client, cardView);
   await userEvent.click(await screen.findByRole("tab", { name: "Steps" }));
-  const stages = await screen.findByRole("list", { name: "Stages of the run" });
+  const stages = await screen.findByRole("list", { name: "Steps of the run" });
   const [first, second] = within(stages).getAllByRole("listitem");
   expect(first).toHaveTextContent("build");
   expect(first).toHaveTextContent("passed, then review");
@@ -1044,7 +1387,7 @@ it("marks a stage that was skipped, and one that is held", async () => {
   page(e.client, cardView);
   await userEvent.click(await screen.findByRole("tab", { name: "Steps" }));
   const [first, second] = within(
-    await screen.findByRole("list", { name: "Stages of the run" }),
+    await screen.findByRole("list", { name: "Steps of the run" }),
   ).getAllByRole("listitem");
   expect(first).toHaveTextContent("Skipped");
   expect(second).toHaveTextContent("Held until someone resumes it");
@@ -1387,7 +1730,7 @@ it("shows why a stage failed beside the stage", async () => {
   await userEvent.click(await screen.findByRole("tab", { name: "Steps" }));
   expect(
     within(
-      await screen.findByRole("list", { name: "Stages of the run" }),
+      await screen.findByRole("list", { name: "Steps of the run" }),
     ).getByText("build timed out after 30m"),
   ).toBeInTheDocument();
 });
@@ -1395,7 +1738,9 @@ it("shows why a stage failed beside the stage", async () => {
 it("lets an admin pick the update channel in Settings", async () => {
   const e = engine({ role: "admin" });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const select = await screen.findByRole("combobox", {
     name: "Update channel",
   });
@@ -1418,7 +1763,9 @@ it("lets an admin pick the update channel in Settings", async () => {
 it("shows the saved channel and clears it with No channel", async () => {
   const e = engine({ role: "admin", updateChannel: CHANNEL });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const select = await screen.findByRole("combobox", {
     name: "Update channel",
   });
@@ -1441,7 +1788,9 @@ it("keeps the saved channel and shows the engine's answer when it refuses a chan
     new Error("add the Beehive account to this channel, then save again"),
   );
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const select = await screen.findByRole("combobox", {
     name: "Update channel",
   });
@@ -1459,12 +1808,101 @@ it("keeps the saved channel and shows the engine's answer when it refuses a chan
 it("shows the update channel to a person who is not an admin without a way to change it", async () => {
   const e = engine({ role: "run", updateChannel: CHANNEL });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const select = await screen.findByRole("combobox", {
     name: "Update channel",
   });
   await vi.waitFor(() => expect(select).toHaveTextContent("# updates"));
   expect(select).toBeDisabled();
+});
+
+it("lets an admin choose the assistant agent in Settings", async () => {
+  const e = engine({ role: "admin", agents: ["builder", "reviewer"] });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  expect(
+    await screen.findByText("The agent that answers in the Assistant."),
+  ).toBeVisible();
+  const select = await screen.findByRole("combobox", {
+    name: "Assistant agent",
+  });
+  expect(select).toHaveTextContent("No agent");
+  await userEvent.click(select);
+  await userEvent.click(await screen.findByRole("option", { name: "builder" }));
+  await vi.waitFor(() =>
+    expect(e.calls.setCommunitySetting).toHaveBeenCalledWith(
+      "assistant_agent",
+      JSON.stringify("builder"),
+    ),
+  );
+  await vi.waitFor(() => expect(select).toHaveTextContent("builder"));
+});
+
+it("shows the assistant agent to a person who is not an admin without a way to change it", async () => {
+  const e = engine({
+    role: "run",
+    assistantAgent: "builder",
+    agents: ["builder"],
+  });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  const select = await screen.findByRole("combobox", {
+    name: "Assistant agent",
+  });
+  await vi.waitFor(() => expect(select).toHaveTextContent("builder"));
+  expect(select).toBeDisabled();
+});
+
+it("opens the assistant from the Board and from Workflows as a visit of its own, and closes it by dismissing that visit", async () => {
+  const e = engine({
+    role: "read",
+    assistantAgent: "builder",
+    updateChannel: CHANNEL,
+  });
+  const nav = page(e.client, undefined, channels);
+  await boardLoaded();
+  // Asking needs no more than reading.
+  await userEvent.click(
+    screen.getByRole("button", { name: "Ask the assistant" }),
+  );
+  expect(nav.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      route: { version: 1, params: { assistant: true } },
+    }),
+  );
+  const panel = await screen.findByRole("dialog", { name: "Assistant" });
+  expect(within(panel).getByText("What can I help with?")).toBeVisible();
+  await userEvent.click(within(panel).getByRole("button", { name: "Done" }));
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  const [matches, fallback] = nav.dismiss.mock.calls[0] as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(matches(assistantTarget(board as never))).toBe(true);
+  expect(matches(board)).toBe(false);
+  expect(fallback).toEqual(board);
+});
+
+it("offers the assistant on Workflows", async () => {
+  const e = engine({ role: "read" });
+  const nav = page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Workflows" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "With the assistant" }),
+  );
+  expect(nav.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      route: { version: 1, params: { assistant: true } },
+    }),
+  );
 });
 
 const ADA = "a".repeat(64);
@@ -1495,7 +1933,9 @@ const access = () => [
 it("lists everyone's level for an admin and saves a change from the row", async () => {
   const e = engine({ role: "admin", access: access() });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   const ben = await screen.findByRole("combobox", { name: "Level for Ben" });
   expect(ben).toHaveTextContent("Read");
   expect(
@@ -1522,10 +1962,29 @@ it("lists everyone's level for an admin and saves a change from the row", async 
   expect(e.calls.listAccess.mock.calls.length).toBeGreaterThanOrEqual(2);
 });
 
+it("explains Access and says what caps each agent", async () => {
+  const e = engine({ role: "admin", access: access() });
+  page(e.client, undefined, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
+  await screen.findByRole("combobox", { name: "Level for builder" });
+  expect(
+    screen.getByText(
+      "Who can see and change cards. An agent never has more access than its owner.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Agent owned by Ben, capped at Read by its owner."),
+  ).toBeVisible();
+});
+
 it("says the level saved when only the list read afterwards failed, and Retry reads the list again", async () => {
   const e = engine({ role: "admin", access: access() });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   await userEvent.click(
     await screen.findByRole("combobox", { name: "Level for Ben" }),
   );
@@ -1551,7 +2010,9 @@ it("says the level saved when only the list read afterwards failed, and Retry re
 it("does not offer an agent a level above its owner's", async () => {
   const e = engine({ role: "admin", access: access() });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   await userEvent.click(
     await screen.findByRole("combobox", { name: "Level for builder" }),
   );
@@ -1575,7 +2036,9 @@ it("shows the engine's answer beside the row when a change is refused", async ()
     new Error("agent builder is capped at read by its owner Ben"),
   );
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   await userEvent.click(
     await screen.findByRole("combobox", { name: "Level for Ben" }),
   );
@@ -1589,7 +2052,9 @@ it("shows the engine's answer beside the row when a change is refused", async ()
 it("gives a person who is not an admin no access list", async () => {
   const e = engine({ role: "run", access: access() });
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   await screen.findByRole("combobox", { name: "Update channel" });
   expect(screen.queryByRole("combobox", { name: "Level for Ben" })).toBeNull();
   expect(e.calls.listAccess).not.toHaveBeenCalled();
@@ -1601,7 +2066,9 @@ it("says so when the settings cannot be read and Retry reads them again", async 
     new Error("Beehive is not reachable"),
   );
   page(e.client, undefined, channels);
-  await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Settings" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Beehive is not reachable",
   );
@@ -1669,4 +2136,333 @@ it("hides the auto mode switch below Run and on an archived card, and still says
   await screen.findByRole("button", { name: "Restore" });
   await levelApplied(archived);
   expect(screen.queryByRole("switch", { name: "Auto mode" })).toBeNull();
+});
+
+it("chooses a view from a sidebar of Work and Manage, with a title on each", async () => {
+  page(engine().client);
+  await boardLoaded();
+  // The old segmented tab bar is gone: the views are the sidebar's rows.
+  expect(screen.queryByRole("tablist", { name: "View" })).toBeNull();
+  const nav = screen.getByRole("navigation", { name: "Beehive views" });
+  expect(
+    within(nav)
+      .getAllByRole("heading")
+      .map((heading) => heading.textContent),
+  ).toEqual(["Work", "Manage"]);
+  expect(
+    within(nav)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Board", "Needs you", "Intake", "Workflows", "Usage", "Settings"]);
+  expect(within(nav).getByRole("button", { name: "Board" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(screen.getByRole("heading", { name: "Board" })).toBeVisible();
+
+  const titles: [string, string | undefined][] = [
+    ["Needs you", "0 waiting. Oldest first."],
+    [
+      "Intake",
+      "Issues that match a rule become cards. Beehive reads GitHub with the team token.",
+    ],
+    ["Workflows", "The stages a card runs through."],
+    [
+      "Usage",
+      "Runs and cards for the last four weeks. Beehive does not track tokens or cost.",
+    ],
+    ["Settings", undefined],
+  ];
+  for (const [name, subtitle] of titles) {
+    await userEvent.click(within(nav).getByRole("button", { name }));
+    expect(
+      await screen.findByRole("heading", { level: 2, name }),
+    ).toBeVisible();
+    expect(within(nav).getByRole("button", { name })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    if (subtitle) expect(await screen.findByText(subtitle)).toBeVisible();
+  }
+});
+
+it("closes the open card when another view is chosen from the sidebar", async () => {
+  const nav = page(engine().client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+  expect(nav.dismiss).toHaveBeenCalledTimes(1);
+  const [retire, fallback] = nav.dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(retire(cardView)).toBe(true);
+  expect(fallback).toEqual(board);
+});
+
+it("toggles the archived cards from the board and returns to live cards", async () => {
+  const e = engine({
+    cards: [
+      card({ id: "a", title: "Live one" }),
+      card({ id: "b", title: "Old one", archived: true }),
+    ],
+  });
+  page(e.client);
+  await screen.findByText("Live one");
+  const archived = screen.getByRole("tab", { name: "Archived 1" });
+  expect(archived).toHaveAttribute("aria-selected", "false");
+  await userEvent.click(archived);
+  expect(await screen.findByText("Old one")).toBeVisible();
+  expect(screen.queryByText("Live one")).toBeNull();
+  expect(screen.getByRole("tab", { name: "Archived 1" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await userEvent.click(screen.getByRole("tab", { name: "Archived 1" }));
+  expect(await screen.findByText("Live one")).toBeVisible();
+  // Choosing Board in the sidebar also lands on the live cards.
+  await userEvent.click(screen.getByRole("tab", { name: "Archived 1" }));
+  await screen.findByText("Old one");
+  await userEvent.click(screen.getByRole("button", { name: "Board" }));
+  expect(await screen.findByText("Live one")).toBeVisible();
+});
+
+/** A card in its second stage, waiting on an approval of its plan. */
+function reviewing(options: { role?: string } = {}) {
+  const e = engine({
+    ...options,
+    runs: [
+      run({
+        state: "waiting",
+        stageId: "plan_review",
+        steps: [
+          step({ stage: "plan", result: "passed", routedTo: "plan_review" }),
+          step({ stage: "plan_review" }),
+        ],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({
+      workflow: "demo",
+      state: "waiting",
+      stageId: "plan_review",
+      issue: ISSUE,
+      issueUrl: "https://github.example.org/example-org/api/issues/42",
+      pullRequest: openPull({ draft: true }),
+      stages: [
+        create(StageThreadSchema, {
+          stage: "plan_review",
+          visit: 1,
+          rootEventId: ROOT,
+          channelId: CHANNEL,
+        }),
+      ],
+    }),
+  );
+  e.calls.listWorkflows.mockResolvedValue(
+    create(ListWorkflowsResponseSchema, {
+      workflows: [
+        {
+          name: "demo",
+          ok: true,
+          stages: [{ id: "plan" }, { id: "plan_review" }, { id: "implement" }],
+        },
+      ],
+    }),
+  );
+  e.calls.listInbox.mockResolvedValue(
+    create(ListInboxResponseSchema, {
+      seq: INBOX_SEQ,
+      items: [
+        create(InboxItemSchema, {
+          id: "item-1",
+          kind: "approval",
+          cardId: ID,
+          cardTitle: "Fix the build",
+          stage: "plan_review",
+          detailJson: JSON.stringify({ artifacts: ["plan"] }),
+          choices: ["approve", "reject"],
+        }),
+      ],
+    }),
+  );
+  return e;
+}
+
+it("shows the card's facts, its stage strip and where the card is", async () => {
+  page(reviewing().client, cardView, channels);
+  expect(
+    await screen.findByRole("heading", { name: "Fix the build" }),
+  ).toBeVisible();
+  const strip = await screen.findByRole("list", { name: "Stages of the run" });
+  expect(within(strip).getAllByRole("listitem")).toHaveLength(3);
+  expect(
+    await screen.findByText("plan_review, needs you. Step 2 of 3"),
+  ).toBeVisible();
+  expect(screen.getByText("Ready for review")).toBeVisible();
+  expect(screen.getByText("example-org/api#42")).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Pull request #12" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.example.org/example-org/api/pull/12",
+  );
+  expect(screen.getByText("Workflow demo")).toBeVisible();
+  // The tabs run Issue, Live, Steps, Files, Activity, Repos, Details.
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+    "Issue",
+    "Live",
+    "Steps",
+    "Files",
+    "Activity",
+    "Repos",
+    "Details",
+  ]);
+});
+
+it("jumps from the Ready for review note to Live, where the approval is answered", async () => {
+  const e = reviewing();
+  const nav = page(
+    e.client,
+    {
+      ...board,
+      route: { version: 1, params: { card: ID, tab: "steps" } },
+    } as OpenTarget,
+    channels,
+  );
+  expect(await screen.findByText("1 of 3 steps done")).toBeVisible();
+  expect(
+    screen.getByText("Approve the plan, or send it back with a reason."),
+  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Jump to it" }));
+  expect(nav.open).toHaveBeenCalledWith({
+    ...board,
+    route: { version: 1, params: { card: ID, tab: "live" } },
+  });
+  // Live carries its own note, so the frame's is gone.
+  expect(await screen.findByText("Waiting for your approval")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Jump to it" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await vi.waitFor(() =>
+    expect(e.calls.answerInbox).toHaveBeenCalledWith("item-1", "approve", ""),
+  );
+});
+
+it("rejects with a reason in the Reject the plan dialog", async () => {
+  const e = reviewing();
+  page(e.client, cardView, channels);
+  await userEvent.click(await screen.findByRole("button", { name: "Reject" }));
+  const dialog = await screen.findByRole("dialog", { name: "Reject the plan" });
+  expect(
+    within(dialog).getByText(
+      "Say what to change. The agent reads your reason on the next try.",
+    ),
+  ).toBeVisible();
+  const submit = within(dialog).getByRole("button", { name: "Reject" });
+  expect(submit).toBeDisabled();
+  await userEvent.type(
+    within(dialog).getByRole("textbox", { name: "Reason" }),
+    "Add a rollback step",
+  );
+  await userEvent.click(submit);
+  await vi.waitFor(() =>
+    expect(e.calls.answerInbox).toHaveBeenCalledWith(
+      "item-1",
+      "reject",
+      "Add a rollback step",
+    ),
+  );
+});
+
+it("offers no Approve or Reject to a person who can only read", async () => {
+  const e = reviewing({ role: "read" });
+  page(e.client, cardView, channels);
+  await screen.findByText("Waiting for your approval");
+  await levelApplied(e);
+  expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+});
+
+it("opens the issue and the pull request from More actions", async () => {
+  page(reviewing().client, cardView, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "More actions" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Open issue" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.example.org/example-org/api/issues/42",
+  );
+  expect(
+    screen.getByRole("menuitem", { name: "Open pull request" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.example.org/example-org/api/pull/12",
+  );
+});
+
+it("removes the card only after asking, then closes its page", async () => {
+  const e = reviewing();
+  const nav = page(e.client, cardView, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "More actions" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "Remove this card" }),
+  );
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Remove this card?",
+  });
+  expect(e.calls.removeCard).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Remove card" }),
+  );
+  await vi.waitFor(() => expect(e.calls.removeCard).toHaveBeenCalledWith(ID));
+  await vi.waitFor(() => expect(nav.dismiss).toHaveBeenCalledTimes(1));
+});
+
+it("resets the card only after asking", async () => {
+  const e = reviewing();
+  page(e.client, cardView, channels);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "More actions" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "Reset this card" }),
+  );
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Reset this card?",
+  });
+  expect(e.calls.resetCard).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Reset card" }),
+  );
+  await vi.waitFor(() => expect(e.calls.resetCard).toHaveBeenCalledWith(ID));
+});
+
+it("holds a running card with Pause", async () => {
+  const e = engine({
+    runs: [
+      run({
+        state: "running",
+        stageId: "build",
+        steps: [step({ stage: "build" })],
+      }),
+    ],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  page(e.client, cardView);
+  await userEvent.click(await screen.findByRole("button", { name: "Pause" }));
+  await vi.waitFor(() => expect(e.calls.pauseCard).toHaveBeenCalledWith(ID));
+});
+
+it("gives a person who can only read no More actions menu when there is nothing to open", async () => {
+  const e = engine({ role: "read" });
+  page(e.client, cardView);
+  await screen.findByRole("tab", { name: "Details" });
+  await levelApplied(e);
+  expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
 });

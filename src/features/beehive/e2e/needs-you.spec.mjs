@@ -22,7 +22,7 @@ test("with nothing waiting, Needs you says so and its tab shows no count", async
 }) => {
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  const tab = pane.getByRole("tab", { name: /Needs you/ });
+  const tab = pane.getByRole("button", { name: /Needs you/ });
   await expect(tab).toBeVisible();
   await tab.click();
   await expect(pane.getByText("Nothing needs you")).toBeVisible();
@@ -34,7 +34,7 @@ test("Usage reads the engine and shows no token or cost figure", async ({
 }) => {
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await pane.getByRole("tab", { name: "Usage" }).click();
+  await pane.getByRole("button", { name: "Usage" }).click();
   await expect(pane.getByText("No activity yet")).toBeVisible();
   await expect(pane.getByRole("alert")).toHaveCount(0);
   const text = (await pane.innerText()).toLowerCase();
@@ -52,7 +52,7 @@ test("a note shows on the card's Activity tab with who wrote it", async ({
   });
   await page.goto(world.pageUrl);
   const pane = page.getByRole("region", { name: "Beehive" });
-  await pane.getByRole("button", { name: /Needs a note/ }).click();
+  await pane.getByRole("button", { name: "Needs a note", exact: true }).click();
   await pane.getByRole("tab", { name: "Activity" }).click();
   const entry = pane
     .getByRole("list", { name: "Activity" })

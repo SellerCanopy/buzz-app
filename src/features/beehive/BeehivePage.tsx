@@ -1,35 +1,43 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { HexagonIcon, PlusIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Panel } from "../../shared/design-system/ui/Panel";
-import {
-  PanelHeader,
-  PanelHeaderLabel,
-} from "../../shared/design-system/ui/PanelHeader";
 import type { EmbeddedThreadProps } from "../conversation/EmbeddedThread";
 import type { Navigation } from "../navigation/controller";
 import type { PageProps } from "../pages/service";
 import type { RelayData } from "../relay/service";
 import type { Client } from "./engine/client";
+import {
+  AssistantPanel,
+  NEW_THREAD,
+  type AssistantSession,
+} from "./AssistantPanel";
 import { BeehiveViews } from "./BeehiveViews";
 import { atLeast, createLevelStore, type LevelStore } from "./level";
 import { CardPage } from "./CardPage";
 import { NewCardDialog } from "./NewCardDialog";
+import { NewWorkflowPage } from "./NewWorkflowPage";
 import {
+  assistantTarget,
   boardTarget,
   cardTarget,
   isBeehivePage,
+  newWorkflowTarget,
+  visitedAssistant,
   visitedCard,
+  visitedNewWorkflow,
   visitedTab,
+  visitedWorkflow,
+  workflowTarget,
   type CardTab,
 } from "./routes";
+import { WorkflowEditor, type EditorDraft } from "./WorkflowEditor";
 import "./beehive.css";
 
 /**
@@ -57,7 +65,7 @@ function useAccess(client: Client, shared: LevelStore | undefined) {
 }
 
 /**
- * The Beehive destination: a workspace pane whose header stays mounted in every
+ * The Beehive destination: a workspace pane whose sidebar stays mounted in every
  * state. A card is its own visit of this page, so Back returns to the board.
  */
 export function BeehivePage({
@@ -76,86 +84,184 @@ export function BeehivePage({
   Thread: (props: EmbeddedThreadProps) => ReactNode;
 } & Pick<PageProps, "navigation"> & { navigator?: Navigation | undefined }) {
   const { canRun, isAdmin, me, problem, retry } = useAccess(client, level);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<"blank" | "issue">();
   const target = navigation?.target;
   const open = target ? visitedCard(target) : undefined;
-  const live = !!navigator && !!navigation && !navigation.signal.aborted;
+  const editing = target ? visitedWorkflow(target) : undefined;
+  const addingWorkflow = target ? visitedNewWorkflow(target) : false;
+  const asking = target ? visitedAssistant(target) : false;
+  // The assistant's thread stays while the panel is closed, so Back and Forward return to it.
+  const assistant = useRef<AssistantSession>(NEW_THREAD);
+  // What a person typed in an editor stays while they go Back and Forward, by workflow.
+  const drafts = useRef(new Map<string, EditorDraft>());
+  const [workflowsRevision, setWorkflowsRevision] = useState(0);
+  // What every handler needs: navigation that is still alive and a visit of this page.
+  const page =
+    navigator && navigation && !navigation.signal.aborted && target
+      ? isBeehivePage(target)
+        ? { navigator, target }
+        : undefined
+      : undefined;
 
   const openCard = (card: string) => {
-    if (!live || !target || !isBeehivePage(target)) return;
-    void navigator.open(cardTarget(target, card));
+    if (page) void page.navigator.open(cardTarget(page.target, card));
   };
   // A tab is its own visit, so Back returns to the tab a person left.
   const openTab = (tab: CardTab) => {
-    if (!live || !target || !isBeehivePage(target) || !open) return;
-    void navigator.open(cardTarget(target, open, tab));
+    if (page && open)
+      void page.navigator.open(cardTarget(page.target, open, tab));
   };
   const closeCard = () => {
-    if (!live || !target || !isBeehivePage(target)) return;
     // Close ends this card's visits, so Back does not stop on it again.
-    navigator.dismiss(
+    page?.navigator.dismiss(
       (visit) => visitedCard(visit) === open,
-      boardTarget(target),
+      boardTarget(page.target),
     );
+  };
+  const openWorkflow = (name: string) => {
+    if (page) void page.navigator.open(workflowTarget(page.target, name));
+  };
+  const openNewWorkflow = () => {
+    if (page) void page.navigator.open(newWorkflowTarget(page.target));
+  };
+  // Close ends the editor's visits, so Back does not stop on it again.
+  const closeWorkflow = () => {
+    page?.navigator.dismiss(
+      (visit) => visitedWorkflow(visit) === editing,
+      boardTarget(page.target),
+    );
+  };
+  const closeNewWorkflow = () => {
+    page?.navigator.dismiss(visitedNewWorkflow, boardTarget(page.target));
+  };
+  // A workflow that was just added or copied opens in the editor in the place of the page
+  // that made it. Only that page's own visits end: the editor clause needs an editor.
+  const openCreated = (name: string) => {
+    setWorkflowsRevision((n) => n + 1);
+    page?.navigator.dismiss(
+      (visit) =>
+        visitedNewWorkflow(visit) ||
+        (editing !== undefined && visitedWorkflow(visit) === editing),
+      workflowTarget(page.target, name),
+    );
+  };
+  const openAssistant = () => {
+    if (page) void page.navigator.open(assistantTarget(page.target));
+  };
+  // Done and Close end the panel's visits, so Back does not stop on it again. The view under
+  // it was never left, so it shows as it was.
+  const closeAssistant = () => {
+    page?.navigator.dismiss(visitedAssistant, boardTarget(page.target));
+  };
+  // Choosing a view in the sidebar leaves whichever page is open. An editor's unsaved text
+  // stays in `drafts`, so opening the workflow again returns to it.
+  const leavePage = () => {
+    if (open !== undefined) closeCard();
+    else if (editing !== undefined) closeWorkflow();
+    else if (addingWorkflow) closeNewWorkflow();
   };
 
   return (
     <Panel aria-label="Beehive">
       <div className="beehive-page text-body">
-        <PanelHeader
-          title={
-            <PanelHeaderLabel
-              title="Beehive"
-              icon={<HexagonIcon size="1rem" />}
-            />
-          }
-          actions={
-            canRun ? (
-              <IconButton
-                aria-label="New card"
-                icon={<PlusIcon size="1rem" />}
-                onClick={() => setAdding(true)}
-              />
-            ) : undefined
-          }
-        />
-        <div className="beehive-body">
-          {problem && (
-            <div className="beehive-error">
-              <p role="alert" className="text-danger">
-                {`Could not check what you can do. ${problem}`}
-              </p>
-              <Button onClick={retry}>Retry</Button>
-            </div>
-          )}
-          <div hidden={open !== undefined}>
-            <BeehiveViews
-              client={client}
-              relay={relay}
-              canRun={canRun}
-              isAdmin={isAdmin}
-              me={me}
-              onOpen={openCard}
-              onNew={() => setAdding(true)}
-            />
-          </div>
-          {open !== undefined && (
-            <CardPage
-              key={open}
-              client={client}
-              relay={relay}
-              navigator={navigator}
-              Thread={Thread}
-              id={open}
-              tab={target ? visitedTab(target) : undefined}
-              canRun={canRun}
-              onTab={openTab}
-              onClose={closeCard}
-            />
-          )}
+        <div className="beehive-layout">
+          <BeehiveViews
+            client={client}
+            relay={relay}
+            canRun={canRun}
+            isAdmin={isAdmin}
+            me={me}
+            notice={
+              problem ? (
+                <div className="beehive-error">
+                  <p role="alert" className="text-danger">
+                    {`Could not check what you can do. ${problem}`}
+                  </p>
+                  <Button onClick={retry}>Retry</Button>
+                </div>
+              ) : undefined
+            }
+            card={
+              open !== undefined
+                ? ({ waiting, refresh }) => (
+                    <CardPage
+                      key={open}
+                      client={client}
+                      relay={relay}
+                      navigator={navigator}
+                      Thread={Thread}
+                      id={open}
+                      tab={target ? visitedTab(target) : undefined}
+                      canRun={canRun}
+                      waiting={waiting}
+                      onAnswered={refresh}
+                      onTab={openTab}
+                      onClose={closeCard}
+                    />
+                  )
+                : undefined
+            }
+            workflowsRevision={workflowsRevision}
+            workflowPage={
+              editing !== undefined ? (
+                <WorkflowEditor
+                  key={editing}
+                  client={client}
+                  name={editing}
+                  canRun={canRun}
+                  isAdmin={isAdmin}
+                  me={me}
+                  restored={drafts.current.get(editing)}
+                  onDraft={(draft) =>
+                    draft
+                      ? drafts.current.set(editing, draft)
+                      : drafts.current.delete(editing)
+                  }
+                  onChanged={() => setWorkflowsRevision((n) => n + 1)}
+                  onCopied={openCreated}
+                  onClose={closeWorkflow}
+                />
+              ) : addingWorkflow ? (
+                <NewWorkflowPage
+                  client={client}
+                  isAdmin={isAdmin}
+                  me={me}
+                  onCreated={openCreated}
+                  onClose={closeNewWorkflow}
+                />
+              ) : undefined
+            }
+            onLeaveCard={leavePage}
+            onEditWorkflow={openWorkflow}
+            onNewWorkflow={openNewWorkflow}
+            onWorkflowsChanged={() => setWorkflowsRevision((n) => n + 1)}
+            onOpen={openCard}
+            onNew={() => setAdding("blank")}
+            onNewFromIssue={() => setAdding("issue")}
+            onAskAssistant={openAssistant}
+          />
         </div>
+        {asking && (
+          <AssistantPanel
+            client={client}
+            relay={relay}
+            Thread={Thread}
+            canRun={canRun}
+            isAdmin={isAdmin}
+            restored={assistant.current}
+            onSession={(session) => {
+              assistant.current = session;
+            }}
+            onSaved={() => setWorkflowsRevision((n) => n + 1)}
+            onClose={closeAssistant}
+          />
+        )}
         {adding && (
-          <NewCardDialog client={client} onClose={() => setAdding(false)} />
+          <NewCardDialog
+            client={client}
+            initial={adding}
+            onClose={() => setAdding(undefined)}
+          />
         )}
       </div>
     </Panel>
