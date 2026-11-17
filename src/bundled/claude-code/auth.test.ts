@@ -53,40 +53,41 @@ function store(saved = true) {
 }
 beforeEach(() => void store());
 
-/** A host whose `claude.sh review` prints a review folder and whose
- * `claude auth status` reports `account`; every start is recorded. */
-function host(
-  account: {
-    loggedIn: boolean;
-    authMethod?: string;
-    email?: string;
-    orgName?: string;
-  } = {
-    loggedIn: false,
-  },
-) {
+/** A host whose `claude.sh review` prints a review folder, and whose
+ * `claude auth status` reports `own`, the person's own setup (signed out
+ * unless set); every start but that check is recorded. */
+function host(own: Record<string, unknown> = { loggedIn: false }) {
   const started: { id: string; options: HostProcessOptions | undefined }[] = [];
+  const status = { own, asked: 0 };
   const spawn: Spawn = async (id, options) => {
+    if (id === "claude" && options?.args?.join(" ") === "auth status --json") {
+      status.asked++;
+      // As every Claude starts, and never with the key.
+      expect(options).toMatchObject({ env: ENV });
+      expect(options).not.toHaveProperty("secrets");
+      options.onStdout?.(JSON.stringify(status.own));
+      return {
+        write: async () => undefined,
+        // As native code does once the process exited, as a status soon is.
+        end: async () => {
+          throw new Error("No such process");
+        },
+        kill: async () => undefined,
+        // As Claude does, signed out exits 1, having said so.
+        exited: Promise.resolve(status.own.loggedIn ? 0 : 1),
+      };
+    }
     started.push({ id, options });
     if (id === "review")
       queueMicrotask(() => options?.onStdout?.("/Users/me/review\n"));
-    const status = options?.args?.join(" ") === "auth status --json";
-    if (status)
-      queueMicrotask(() => options.onStdout?.(JSON.stringify(account)));
     return {
       write: async () => undefined,
-      // As native code does once the process exited, as a status soon is.
-      end: async () => {
-        if (status) throw new Error("No such process");
-      },
+      end: async () => undefined,
       kill: async () => undefined,
-      // As Claude does, signed out exits 1, having said so.
-      exited: new Promise((resolve) =>
-        setTimeout(() => resolve(status && !account.loggedIn ? 1 : 0), 0),
-      ),
+      exited: Promise.resolve(0),
     };
   };
-  return { spawn, started };
+  return { spawn, started, status };
 }
 
 it("asks native code to start every claude, the protected release included, with the key", async () => {
@@ -114,16 +115,15 @@ it("asks native code to start every claude, the protected release included, with
 });
 
 it("refuses a turn's claude without a key, but lets setup run its checks", async () => {
-  const { spawn, started } = host();
+  const { spawn, started, status } = host();
   store(false);
   const auth = new ClaudeAuth(spawn);
   await expect(
     auth.authorize(spawn, true)("claude", { env: ENV }),
   ).rejects.toThrow("Claude needs an Anthropic API key.");
-  // Only the look for an account it could use instead, which finds none.
-  expect(started.map(({ options }) => options?.args)).toEqual([
-    ["auth", "status", "--json"],
-  ]);
+  // Only the look for a setup it could use instead, which finds none.
+  expect(started).toEqual([]);
+  expect(status.asked).toBe(1);
   await auth.authorize(spawn)("claude", { args: ["--version"], env: ENV });
   expect(started.at(-1)).toEqual({
     id: "claude",
@@ -252,6 +252,169 @@ it("links a turn that failed for want of a working key to Settings", async () =>
   );
 });
 
+it("points a refusal at both the saved key and the own setup while protected launches use the key", async () => {
+  const { spawn } = host(SIGNED_IN);
+  const auth = new ClaudeAuth(spawn);
+  await auth.check();
+  // A protected launch selects the saved key beside the own setup.
+  await auth.authorize(spawn, true)("claude-protected-arm64", {
+    env: ENV,
+    args: ["--setting-sources", ""],
+  });
+  const settings = "buzz://settings?section=agents";
+  for (const error of [
+    "Invalid API key",
+    "Invalid API key · Please run /login",
+  ])
+    expect(auth.explainTurn(error, settings)).toBe(
+      `Claude could not authenticate. Protected agents use the API key in [Settings](${settings}): replace it there if it was revoked or ran out of credit. Other agents use your own Claude setup: fix it with the Claude CLI. Then try again.`,
+    );
+  // Once the key is removed, only the own setup is left to fix.
+  await auth.clear();
+  await auth.check();
+  expect(auth.explainTurn("Invalid API key", settings)).toBe(
+    "Claude could not authenticate with your own Claude setup. Fix it with the Claude CLI, then try again.",
+  );
+});
+
+const SIGNED_IN = {
+  loggedIn: true,
+  authMethod: "third_party",
+  apiProvider: "vertex",
+};
+
+it("runs turns with the person's own Claude setup, without the key, even with one saved", async () => {
+  const { spawn, started } = host(SIGNED_IN);
+  const auth = new ClaudeAuth(spawn);
+  // Ready, without naming the setup.
+  await expect(auth.check()).resolves.toEqual({});
+  expect(auth.usesOwnSetup).toBe(true);
+  const authorized = auth.authorize(spawn, true);
+  for (const id of ["claude", "claude-protected-arm64"])
+    await authorized(id, { env: ENV });
+  expect(started).toEqual([
+    { id: "claude", options: { env: ENV } },
+    { id: "claude-protected-arm64", options: { env: ENV } },
+  ]);
+});
+
+it("needs no key while the person's own setup works", async () => {
+  store(false);
+  const { spawn, started } = host({
+    loggedIn: true,
+    authMethod: "third_party",
+    apiProvider: "bedrock",
+  });
+  const auth = new ClaudeAuth(spawn);
+  await expect(auth.check()).resolves.toEqual({});
+  await auth.authorize(spawn, true)("claude", { env: ENV });
+  expect(started).toEqual([{ id: "claude", options: { env: ENV } }]);
+  expect(state.asked).toBe(0);
+});
+
+it("still gives security reviews the key, in their own folder", async () => {
+  const { spawn, started } = host(SIGNED_IN);
+  const auth = new ClaudeAuth(spawn);
+  await auth.check();
+  const review = await auth.review();
+  const env = { ...ENV, CLAUDE_CONFIG_DIR: review.home };
+  await auth.authorize(spawn)("claude-protected-arm64", { env });
+  expect(started.at(-1)).toEqual({
+    id: "claude-protected-arm64",
+    options: { env, secrets: ["anthropic-api-key"] },
+  });
+});
+
+it("keeps the saved key for protected launches, which read no settings files", async () => {
+  const { spawn, started } = host(SIGNED_IN);
+  const auth = new ClaudeAuth(spawn);
+  await auth.check();
+  const args = ["--verbose", "--setting-sources", ""];
+  await auth.authorize(spawn, true)("claude-protected-arm64", {
+    env: ENV,
+    args,
+  });
+  expect(started.at(-1)).toEqual({
+    id: "claude-protected-arm64",
+    options: { env: ENV, args, secrets: ["anthropic-api-key"] },
+  });
+  // With no key saved, the person's own setup is all a protected launch has.
+  store(false);
+  const keyless = new ClaudeAuth(spawn);
+  await keyless.check();
+  await keyless.authorize(spawn, true)("claude-protected-arm64", {
+    env: ENV,
+    args,
+  });
+  expect(started.at(-1)).toEqual({
+    id: "claude-protected-arm64",
+    options: { env: ENV, args },
+  });
+});
+
+it("asks for the person's own setup once until checked, and tells listeners when it changes", async () => {
+  const { spawn, status } = host();
+  const auth = new ClaudeAuth(spawn);
+  const told = vi.fn();
+  auth.subscribe(told);
+  const authorized = auth.authorize(spawn, true);
+  await authorized("claude");
+  await authorized("claude");
+  // The version needs no credentials.
+  await authorized("claude", { args: ["--version"] });
+  expect(status.asked).toBe(1);
+  await auth.check();
+  expect(told).not.toHaveBeenCalled();
+  status.own = SIGNED_IN;
+  // Ready, without naming the setup.
+  await expect(auth.check()).resolves.toEqual({});
+  expect(told).toHaveBeenCalledOnce();
+  status.own = { loggedIn: false };
+  await expect(auth.check()).resolves.toEqual({});
+  expect(told).toHaveBeenCalledTimes(2);
+});
+
+it("uses the key when Claude cannot say whether the person has a setup", async () => {
+  const started: string[] = [];
+  const spawn: Spawn = async (id, options) => {
+    started.push([id, ...(options?.args ?? [])].join(" "));
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => undefined,
+      // Not installed yet: no JSON.
+      exited: Promise.resolve(127),
+    };
+  };
+  const auth = new ClaudeAuth(spawn);
+  await expect(auth.check()).resolves.toEqual({});
+  expect(auth.usesOwnSetup).toBe(false);
+  await auth.authorize(spawn, true)("claude");
+  // An answer Claude could not give is asked again.
+  expect(started).toEqual([
+    "claude auth status --json",
+    "claude auth status --json",
+    "claude",
+  ]);
+});
+
+it("points a refused own setup at the Claude CLI rather than a key", async () => {
+  store(false);
+  const { spawn } = host(SIGNED_IN);
+  const auth = new ClaudeAuth(spawn);
+  await auth.check();
+  const settings = "buzz://settings?section=agents";
+  for (const error of [
+    "Invalid API key · Please run /login",
+    "OAuth token has expired. Please run /login",
+  ])
+    expect(auth.explainTurn(error, settings)).toBe(
+      "Claude could not authenticate with your own Claude setup. Fix it with the Claude CLI, then try again.",
+    );
+  expect(auth.explainTurn("Error: overloaded", settings)).toBe(
+    "Error: overloaded",
+  );
+});
 /** Agent storage holding only what it is given. `stale` keeps this
  * program's copy from ever seeing it, as another program's writes. */
 function storage(
@@ -293,23 +456,32 @@ it("runs Claude on the account it signed in to when no key is saved, as before k
   expect(started.at(-1)?.options?.secrets).toEqual(["anthropic-api-key"]);
 });
 
-it("uses a saved key until the owner picks the account, and the key again once one is saved", async () => {
+it("uses the own setup until the owner picks the key, even over a saved one, and the account again on request", async () => {
   const { spawn, started } = host({ loggedIn: true });
   const auth = new ClaudeAuth(spawn, storage());
   const told = vi.fn();
   auth.subscribe(told);
-  // A key saved leads, and the account isn't asked about.
+  // Until the owner chooses, the setup that works leads, a saved key or not.
   await expect(auth.check()).resolves.toEqual({});
-  expect(auth.found.method).toBe("api-key");
-  expect(started).toEqual([]);
-  await auth.use("account");
-  expect(told).toHaveBeenCalledTimes(1);
-  await expect(auth.check()).resolves.toEqual({});
-  expect(auth.found).toMatchObject({ method: "account", key: true });
+  expect(auth.found).toMatchObject({ method: "account" });
   await auth.authorize(spawn, true)("claude", { env: ENV });
   expect(started.at(-1)?.options?.secrets).toBeUndefined();
-  await auth.save(KEY);
+  // The owner's choice of the key beats it.
+  await auth.use("api-key");
+  expect(told).toHaveBeenCalledTimes(1);
+  await expect(auth.check()).resolves.toEqual({});
+  expect(auth.found).toMatchObject({ method: "api-key", key: true });
+  expect(auth.usesOwnSetup).toBe(false);
+  await auth.authorize(spawn, true)("claude", { env: ENV });
+  expect(started.at(-1)?.options?.secrets).toEqual(["anthropic-api-key"]);
+  await auth.use("account");
   expect(told).toHaveBeenCalledTimes(2);
+  await expect(auth.check()).resolves.toEqual({});
+  expect(auth.found).toMatchObject({ method: "account", key: true });
+  expect(auth.usesOwnSetup).toBe(true);
+  // A key saved is the one to use.
+  await auth.save(KEY);
+  expect(told).toHaveBeenCalledTimes(3);
   await expect(auth.check()).resolves.toEqual({});
   expect(auth.found.method).toBe("api-key");
 });
@@ -372,12 +544,16 @@ it("looks for the account before a first check, so an early turn isn't refused",
   expect(auth.found.method).toBe("account");
 });
 
-it("takes an API key Claude holds, as from a helper, for no account", async () => {
+it("takes a credential Claude holds itself, as from a helper, for the person's own setup", async () => {
   const { spawn } = host({ loggedIn: true, authMethod: "api_key_helper" });
   store(false);
   const auth = new ClaudeAuth(spawn, storage());
-  await expect(auth.check()).resolves.toBeUndefined();
-  expect(auth.found).toEqual({ method: "api-key", key: false });
+  await expect(auth.check()).resolves.toEqual({});
+  expect(auth.found).toEqual({
+    method: "account",
+    key: false,
+    account: { label: "" },
+  });
 });
 
 it("uses another program's choice, saved after this one read its copy", async () => {
@@ -410,24 +586,25 @@ it("checks again when a key is saved while a check is under way", async () => {
   expect(auth.found).toEqual({ method: "api-key", key: true });
 });
 
-it("finds an account signed in from a terminal after a check found none", async () => {
-  const account = { loggedIn: false };
-  const { spawn, started } = host(account);
+it("finds an account signed in from a terminal once checked again", async () => {
+  const { spawn, started, status } = host({ loggedIn: false });
   store(false);
   const auth = new ClaudeAuth(spawn, storage());
   await expect(auth.check()).resolves.toBeUndefined();
-  account.loggedIn = true;
+  status.own = { loggedIn: true };
+  await expect(auth.check()).resolves.toEqual({});
   await auth.authorize(spawn, true)("claude", { env: ENV });
   expect(started.at(-1)).toEqual({ id: "claude", options: { env: ENV } });
 });
 
 it("runs on the chosen account when secure storage can't be read, but not on the key", async () => {
-  const { spawn } = host({ loggedIn: true, email: "me@example.org" });
+  const { spawn, status } = host({ loggedIn: false });
   store(false);
   state.unreadable = true;
   const values = new Map<string, string>();
   const auth = new ClaudeAuth(spawn, storage(values));
   await expect(auth.check()).rejects.toThrow();
+  status.own = { loggedIn: true, email: "me@example.org" };
   await auth.use("account");
   await expect(auth.check()).resolves.toEqual({ account: "me@example.org" });
 });
