@@ -14,7 +14,7 @@
     "preview": "vite preview",
     "author:build": "node scripts/build-author.mjs",
     "buzz-mcp": "vite build --config vite.buzz-mcp.config.ts",
-    "build:beehive-standalone": "tsc --noEmit && vite build --config vite.beehive.config.ts",
+    "build:beehive-standalone": "tsc --noEmit && vite build --config vite.beehive.config.ts && node scripts/check-beehive-standalone.mjs",
     "typecheck": "tsc --noEmit",
     "format": "biome format --write .",
     "format:check": "biome format .",

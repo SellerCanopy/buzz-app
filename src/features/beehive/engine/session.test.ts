@@ -254,25 +254,78 @@ describe("session", () => {
       expect(c.authorize).not.toHaveBeenCalled();
     });
 
-    it("retries once with a fresh native token on unauthenticated", async () => {
+    it("retries once on unauthenticated and asks native to refresh, not resend", async () => {
       let calls = 0;
       const c = carrier((path) =>
         path === "/a" && calls++ === 0
           ? new EngineError("unauthenticated", "expired", 401)
           : undefined,
       );
-      let n = 0;
-      const native = { token: vi.fn(async () => `n${++n}`) };
+      // Native resends its cached token unless it is told to refresh.
+      const native = {
+        token: vi.fn(async (options?: { refresh?: boolean }) =>
+          options?.refresh ? "fresh" : "cached",
+        ),
+      };
       await expect(
         createSession(c, () => 1_000_000, native).call("/a", {}),
       ).resolves.toEqual({ ok: true });
-      expect(c.post).toHaveBeenLastCalledWith(
+      expect(native.token).toHaveBeenNthCalledWith(1, undefined);
+      expect(native.token).toHaveBeenNthCalledWith(2, { refresh: true });
+      expect(c.post).toHaveBeenNthCalledWith(
+        1,
         "/a",
         {},
-        { bearer: "n2" },
+        { bearer: "cached" },
+        undefined,
+      );
+      expect(c.post).toHaveBeenNthCalledWith(
+        2,
+        "/a",
+        {},
+        { bearer: "fresh" },
         undefined,
       );
       expect(c.authorize).not.toHaveBeenCalled();
+    });
+
+    it("surfaces a second unauthenticated reply after the one retry", async () => {
+      const c = carrier((path) =>
+        path === "/a"
+          ? new EngineError("unauthenticated", "expired", 401)
+          : undefined,
+      );
+      const native = { token: vi.fn(async () => "n") };
+      await expect(
+        createSession(c, () => 1_000_000, native).call("/a", {}),
+      ).rejects.toMatchObject({ code: "unauthenticated" });
+      expect(native.token).toHaveBeenCalledTimes(2);
+      expect(c.post).toHaveBeenCalledTimes(2);
+    });
+
+    it("gives the fallback message for a rejection that is not an Error", async () => {
+      const c = carrier();
+      const native = { token: vi.fn(() => Promise.reject("nope")) };
+      await expect(
+        createSession(c, () => 1_000_000, native).call("/a", {}),
+      ).rejects.toMatchObject({
+        code: "unavailable",
+        message: "Native sign-in failed",
+      });
+      expect(c.post).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["empty", ""],
+      ["not a string", 42],
+      ["missing", undefined],
+    ])("rejects a native token that is %s as unavailable", async (_, value) => {
+      const c = carrier();
+      const native = { token: vi.fn(async () => value as never) };
+      await expect(
+        createSession(c, () => 1_000_000, native).call("/a", {}),
+      ).rejects.toMatchObject({ code: "unavailable" });
+      expect(c.post).not.toHaveBeenCalled();
     });
 
     it("reports a failed native token as unavailable and sends nothing", async () => {

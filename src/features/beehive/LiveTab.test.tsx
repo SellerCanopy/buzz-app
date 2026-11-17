@@ -144,13 +144,21 @@ it("without a relay or a host to hand the thread to shows no link", () => {
       card={create(CardSchema, {
         id: "card",
         stageId: "build",
-        stages: [thread("build", 1, BUILD)],
+        stages: [thread("build", 1, BUILD), thread("review", 1, REVIEW)],
       })}
       relay={undefined}
       navigator={undefined}
       Thread={Thread as never}
     />,
   );
+  // The stage picker still shows, with nothing to embed, wait for or open.
+  expect(screen.getByRole("combobox", { name: "Stage" })).toHaveTextContent(
+    "build",
+  );
   expect(screen.queryByRole("button", { name: "Open thread" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Open in channel" })).toBeNull();
+  expect(screen.queryByTestId("thread")).toBeNull();
+  expect(screen.queryByText("Connecting to the community…")).toBeNull();
+  expect(screen.queryByText("No access to the channel")).toBeNull();
+  expect(screen.queryByText("Nothing running")).toBeNull();
 });

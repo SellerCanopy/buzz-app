@@ -2579,6 +2579,16 @@ describe("without a relay", () => {
     ).toBeNull();
   });
 
+  it("mounts no assistant panel for an assistant visit and no relay-dependent call", async () => {
+    const e = engine();
+    page(e.client, assistantTarget(board as never) as OpenTarget, null);
+    await boardLoaded();
+    expect(screen.queryByRole("dialog", { name: "Assistant" })).toBeNull();
+    expect(screen.queryByText("Connecting to the community…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+    expect(e.calls.getCommunitySettings).not.toHaveBeenCalled();
+  });
+
   it("keeps Settings and the assistant when there is a relay", async () => {
     page(engine().client);
     await boardLoaded();
