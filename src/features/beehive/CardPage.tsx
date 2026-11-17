@@ -51,6 +51,7 @@ export function CardPage({
   relay,
   navigator,
   Thread,
+  onOpenThread,
   id,
   tab,
   canRun,
@@ -60,9 +61,11 @@ export function CardPage({
   onClose,
 }: {
   client: Client;
-  relay: RelayData;
+  relay: RelayData | undefined;
   navigator: Navigation | undefined;
   Thread: (props: EmbeddedThreadProps) => ReactNode;
+  /** Shows a stage's thread where there is no relay to embed it. */
+  onOpenThread?: ((channelId: string, rootEventId: string) => void) | undefined;
   id: string;
   /** The tab the visit names; the card's own default when it names none. */
   tab: CardTab | undefined;
@@ -335,6 +338,7 @@ export function CardPage({
                     relay={relay}
                     navigator={navigator}
                     Thread={Thread}
+                    onOpenThread={onOpenThread}
                   />
                 </>
               ) : value === "steps" && run ? (

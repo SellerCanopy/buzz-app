@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactElement } from "react";
-import { afterEach, expect, it, vi, type Mock } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
@@ -339,11 +339,13 @@ const Thread = (props: { channelId: string; messageId: string }) => (
   </div>
 );
 
+/** `null` renders the standalone page, which has no relay. */
 function page(
   client: Client,
   target?: OpenTarget,
-  relay = fakeRelay([]),
+  relay: ReturnType<typeof fakeRelay> | null = fakeRelay([]),
   level?: LevelStore,
+  onOpenThread?: (channelId: string, rootEventId: string) => void,
 ) {
   const s = shell(target);
   render(
@@ -351,9 +353,10 @@ function page(
       {(props) => (
         <BeehivePage
           client={client}
-          relay={relay}
+          relay={relay ?? undefined}
           level={level}
           Thread={Thread as never}
+          onOpenThread={onOpenThread}
           {...props}
         />
       )}
@@ -1422,7 +1425,10 @@ const saved = (fields: MessageInitShape<typeof ArtifactVersionSchema>) =>
   create(ArtifactVersionSchema, { kind: "text", version: 1, ...fields });
 
 /** A card that ran, with what its stages saved. */
-function withFiles(versions: ArtifactVersion[], relay = fakeRelay([])) {
+function withFiles(
+  versions: ArtifactVersion[],
+  relay: ReturnType<typeof fakeRelay> | null = fakeRelay([]),
+) {
   const e = engine({
     runs: [run({ state: "running", steps: [step({ stage: "build" })] })],
     saved: versions,
@@ -2555,4 +2561,88 @@ it("gives a person who can only read no More actions menu when there is nothing 
   await screen.findByRole("tab", { name: "Details" });
   await levelApplied(e);
   expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
+});
+
+describe("without a relay", () => {
+  it("has no Settings view and no assistant", async () => {
+    page(engine().client, undefined, null);
+    await boardLoaded();
+    expect(screen.getByRole("button", { name: "Workflows" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Ask the assistant" }),
+    ).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+    await screen.findByRole("heading", { name: "Workflows" });
+    expect(
+      screen.queryByRole("button", { name: "With the assistant" }),
+    ).toBeNull();
+  });
+
+  it("mounts no assistant panel for an assistant visit and no relay-dependent call", async () => {
+    const e = engine();
+    page(e.client, assistantTarget(board as never) as OpenTarget, null);
+    await boardLoaded();
+    expect(screen.queryByRole("dialog", { name: "Assistant" })).toBeNull();
+    expect(screen.queryByText("Connecting to the community…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+    expect(e.calls.getCommunitySettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps Settings and the assistant when there is a relay", async () => {
+    page(engine().client);
+    await boardLoaded();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Ask the assistant" }),
+    ).toBeVisible();
+  });
+
+  it("hands a stage's thread to the host instead of waiting for a channel", async () => {
+    const e = engine({
+      runs: [run({ state: "running", steps: [step({ stage: "build" })] })],
+    });
+    e.calls.getCard.mockResolvedValue(
+      card({
+        workflow: "demo",
+        state: "running",
+        stageId: "build",
+        stages: [
+          create(StageThreadSchema, {
+            stage: "build",
+            visit: 1,
+            rootEventId: ROOT,
+            channelId: CHANNEL,
+          }),
+        ],
+      }),
+    );
+    const onOpenThread = vi.fn();
+    page(e.client, cardView, null, undefined, onOpenThread);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open thread" }),
+    );
+    expect(onOpenThread).toHaveBeenCalledWith(CHANNEL, ROOT);
+    expect(screen.queryByTestId("thread")).toBeNull();
+    expect(screen.queryByText("Connecting to the community…")).toBeNull();
+    expect(screen.queryByText("No access to the channel")).toBeNull();
+  });
+
+  it("shows a file with the command that fetches it, since nothing can link it", async () => {
+    withFiles(
+      [
+        saved({
+          name: "picture",
+          kind: "file",
+          mediaType: "image/png",
+          size: 10n,
+          mediaRef: "https://relay.example.org/media/abc.png",
+        }),
+      ],
+      null,
+    );
+    await userEvent.click(await screen.findByRole("tab", { name: "Files" }));
+    expect(await screen.findByText(/buzz media get/)).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  });
 });

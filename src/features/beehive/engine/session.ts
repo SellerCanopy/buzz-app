@@ -5,10 +5,31 @@ const RENEW_MS = 60_000;
 
 type TokenReply = { token: string; expires_at: number };
 
-/** A Beehive session: trades the person's signed event for a token and keeps it fresh. */
+/**
+ * The iOS web view injects this shortly after the page starts. It mints and renews the token
+ * natively, and may show a stage's thread in its own thread view. `refresh` drops the token the
+ * native side holds and mints a new one, for a token the engine refused.
+ */
+export type NativeToken = {
+  token(options?: { refresh?: boolean }): Promise<string>;
+  openThread?(channelId: string, rootEventId: string): void;
+};
+
+declare global {
+  interface Window {
+    __beehiveNative?: NativeToken;
+  }
+}
+
+/**
+ * A Beehive session: trades the person's signed event for a token and keeps it fresh.
+ * When the host supplies a native token source, that source mints and renews the token
+ * instead, so nothing here signs and the key never enters the page.
+ */
 export function createSession(
   carrier: Carrier,
   clock: () => number = Date.now,
+  native?: NativeToken,
 ) {
   let current: { token: string; expiresAt: number } | null = null;
   let pending: Promise<string> | null = null;
@@ -29,7 +50,31 @@ export function createSession(
     return reply.token;
   }
 
-  function token(): Promise<string> {
+  function token(refresh = false): Promise<string> {
+    // The native side caches and renews, so ask it every time. Read it on each
+    // call because the web view may inject it after the page starts.
+    const source = native ?? globalThis.window?.__beehiveNative;
+    if (source)
+      return source
+        .token(refresh ? { refresh: true } : undefined)
+        .catch((error: unknown) => {
+          throw new EngineError(
+            "unavailable",
+            error instanceof Error && error.message
+              ? error.message
+              : "Native sign-in failed",
+            0,
+          );
+        })
+        .then((value) => {
+          if (typeof value !== "string" || value === "")
+            throw new EngineError(
+              "unavailable",
+              "Native sign-in returned no token",
+              0,
+            );
+          return value;
+        });
     if (fresh() && current) return Promise.resolve(current.token);
     // One in-flight mint serves every concurrent caller.
     pending ??= mint().finally(() => {
@@ -55,7 +100,8 @@ export function createSession(
         // A sibling call may already have replaced the token the engine refused,
         // and that one is fine: only drop the one this call sent.
         if (current?.token === sent) current = null;
-        return carrier.post(path, body, { bearer: await token() }, signal);
+        // A native side that cached the refused token must mint a new one, not resend it.
+        return carrier.post(path, body, { bearer: await token(true) }, signal);
       }
     },
   };

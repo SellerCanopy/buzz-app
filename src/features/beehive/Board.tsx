@@ -49,7 +49,8 @@ export function Board({
   onOpen(card: string): void;
   onNew(): void;
   onNewFromIssue(): void;
-  onAskAssistant(): void;
+  /** Absent when there is no assistant to ask. */
+  onAskAssistant?: (() => void) | undefined;
   onOpenNeedsYou(): void;
 }) {
   const { live, retry, refresh } = useLive(client);
@@ -146,7 +147,9 @@ export function Board({
               </Button>
             )}
             {canRun && <Button onClick={onNewFromIssue}>From an issue</Button>}
-            <Button onClick={onAskAssistant}>Ask the assistant</Button>
+            {onAskAssistant && (
+              <Button onClick={onAskAssistant}>Ask the assistant</Button>
+            )}
             {canRun && (
               <Button variant="prominent" onClick={onNew}>
                 New card

@@ -34,7 +34,8 @@ export function FilesTab({
   cardId,
 }: {
   client: Client;
-  relay: RelayData;
+  /** Absent on the standalone page, where a file has no link to download from. */
+  relay: RelayData | undefined;
   cardId: string;
 }) {
   const [listing, setListing] = useState<Listing>({ status: "loading" });
@@ -125,7 +126,7 @@ function Artifact({
   name,
 }: {
   client: Client;
-  relay: RelayData;
+  relay: RelayData | undefined;
   cardId: string;
   name: string;
 }) {
@@ -227,17 +228,41 @@ function Body({
   relay,
   version,
 }: {
+  relay: RelayData | undefined;
+  version: ArtifactVersion;
+}) {
+  return relay ? (
+    <RelayBody relay={relay} version={version} />
+  ) : (
+    <Content version={version} media={undefined} />
+  );
+}
+
+function RelayBody({
+  relay,
+  version,
+}: {
   relay: RelayData;
   version: ArtifactVersion;
 }) {
   const { session } = useRelayConnection(relay);
+  return <Content version={version} media={(ref) => session.media(ref)} />;
+}
+
+function Content({
+  version,
+  media,
+}: {
+  version: ArtifactVersion;
+  media: ((ref: string) => string | undefined) | undefined;
+}) {
   if (version.kind !== "file")
     return (
       <section aria-label={version.name}>
         <pre className="beehive-file-text text-body-sm">{version.content}</pre>
       </section>
     );
-  const source = session.media(version.mediaRef);
+  const source = media?.(version.mediaRef);
   const kind = version.mediaType || "File";
   return (
     <div className="beehive-file">

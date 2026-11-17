@@ -82,7 +82,8 @@ export function BeehiveViews({
   onWorkflowsChanged,
 }: {
   client: Client;
-  relay: RelayData;
+  /** Settings reads the relay's channels, so a page without a relay has no Settings. */
+  relay: RelayData | undefined;
   canRun: boolean;
   isAdmin: boolean;
   /** The signed-in person's pubkey. */
@@ -106,8 +107,8 @@ export function BeehiveViews({
   onNew(): void;
   /** Opens the new card form on its From an issue tab. */
   onNewFromIssue(): void;
-  /** Opens the assistant over the view. */
-  onAskAssistant(): void;
+  /** Opens the assistant over the view. Absent when there is no assistant. */
+  onAskAssistant?: (() => void) | undefined;
   onEditWorkflow(name: string): void;
   onNewWorkflow(): void;
   onWorkflowsChanged(): void;
@@ -174,15 +175,17 @@ export function BeehiveViews({
           <SidebarNavigation>
             {SECTIONS.map((section) => (
               <NavigationSection key={section.label} label={section.label}>
-                {section.views.map((item) => (
-                  <NavigationItem
-                    key={item.view}
-                    label={item.label}
-                    selected={view === item.view}
-                    trailing={trailing(item.view)}
-                    onClick={() => choose(item.view)}
-                  />
-                ))}
+                {section.views
+                  .filter((item) => relay || item.view !== "settings")
+                  .map((item) => (
+                    <NavigationItem
+                      key={item.view}
+                      label={item.label}
+                      selected={view === item.view}
+                      trailing={trailing(item.view)}
+                      onClick={() => choose(item.view)}
+                    />
+                  ))}
               </NavigationSection>
             ))}
           </SidebarNavigation>
@@ -237,7 +240,11 @@ export function BeehiveViews({
                     {canRun && (
                       <Button onClick={() => setImporting(true)}>Import</Button>
                     )}
-                    <Button onClick={onAskAssistant}>With the assistant</Button>
+                    {onAskAssistant && (
+                      <Button onClick={onAskAssistant}>
+                        With the assistant
+                      </Button>
+                    )}
                     {canRun && (
                       <Button variant="prominent" onClick={onNewWorkflow}>
                         New workflow
@@ -263,7 +270,7 @@ export function BeehiveViews({
               <UsagePage client={client} />
             </>
           )}
-          {view === "settings" && (
+          {view === "settings" && relay && (
             <>
               <Header title="Settings" />
               <SettingsPage
