@@ -127,6 +127,7 @@ export function Chart({
         attributes: true,
         attributeFilter: [
           "data-color-mode",
+          "data-theme",
           "data-accent",
           "data-color-level",
           "class",

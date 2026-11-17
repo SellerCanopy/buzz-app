@@ -446,6 +446,133 @@ test("storage denial is visible and retryable; another window updates a live con
   }
 });
 
+const themeKey = "buzz-theme.v1";
+async function chooseTheme(page, name) {
+  const choice = page.getByRole("combobox", { name: "Theme", exact: true });
+  await choice.click();
+  await page.getByRole("option", { name, exact: true }).click();
+  await expect(choice).toHaveText(name);
+}
+async function expectBeehive(page) {
+  const html = page.locator("html");
+  await expect(html).toHaveAttribute("data-theme", "beehive");
+  await expect(html).toHaveAttribute("data-color-mode", "light");
+  await expect(html).toHaveCSS("background-color", "rgb(243, 235, 212)");
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+    "content",
+    "#f3ebd4",
+  );
+  // The shell takes warm neutrals and Honey, whatever accent was chosen.
+  const roles = await page.evaluate(() => {
+    const style = getComputedStyle(document.documentElement);
+    return ["--surface-panel", "--affordance-accent-prominent"].map((name) =>
+      style.getPropertyValue(name).trim(),
+    );
+  });
+  expect(roles).toEqual(["#fffdf7", "#f5c518"]);
+}
+
+test("Beehive is a light-only theme: it recolors the app, locks Mode, survives a reload before first paint, and Buzz restores the earlier mode", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await settings(page);
+  await chooseColorMode(page, "Dark");
+  await expectMode(page, "dark", true);
+  await chooseTheme(page, "Beehive");
+  await expectBeehive(page);
+  const mode = page.getByRole("combobox", { name: "Mode", exact: true });
+  await expect(mode).toHaveText("Light");
+  await expect(page.getByText("Beehive is light only.")).toBeVisible();
+  await mode.click();
+  for (const name of ["Dark", "System", "Light"])
+    await expect(
+      page.getByRole("option", { name, exact: true }),
+    ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), themeKey),
+  ).toBe("beehive");
+  // The earlier choice stays saved for Buzz.
+  expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
+    "dark",
+  );
+  // The saved theme paints before the application module may execute.
+  await page.route(/\/assets\/index-[^/]*\.js$/, (route) =>
+    route.fulfill({
+      contentType: "application/javascript",
+      headers: { "cache-control": "no-store" },
+      body: "/* Application execution deliberately withheld. */",
+    }),
+  );
+  try {
+    await page.reload({ waitUntil: "commit" });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "beehive");
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-color-mode",
+      "light",
+    );
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    await expect(page.locator("html")).toHaveCSS(
+      "background-color",
+      "rgb(243, 235, 212)",
+    );
+  } finally {
+    await page.unrouteAll({ behavior: "wait" });
+  }
+  await page.reload();
+  await reopenedSettings(page);
+  await expectBeehive(page);
+  await expect(
+    page.getByRole("combobox", { name: "Theme", exact: true }),
+  ).toHaveText("Beehive");
+  await expect(mode).toHaveText("Light");
+  await chooseTheme(page, "Buzz");
+  await expect(mode).toHaveText("Dark");
+  await expectMode(page, "dark", true);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "buzz");
+  await mode.click();
+  await expect(
+    page.getByRole("option", { name: "System", exact: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+});
+
+test("Beehive takes Honey over a saved accent and locks Mode in the profile menu", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(
+    ([accent, theme]) => {
+      if (!localStorage.getItem("buzz-accent.v1")) {
+        localStorage.setItem("buzz-accent.v1", accent);
+        localStorage.setItem("buzz-theme.v1", theme);
+      }
+    },
+    ["cobalt", "beehive"],
+  );
+  await page.goto(app.origin);
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "cobalt");
+  await expectBeehive(page);
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
+  await page
+    .locator("[data-profile-menu]")
+    .getByRole("menuitem", { name: "Appearance", exact: true })
+    .hover();
+  const choices = page.getByRole("menu", { name: "Appearance", exact: true });
+  for (const name of ["Light", "Dark", "System"])
+    await expect(
+      choices.getByRole("menuitemradio", { name, exact: true }),
+    ).toBeDisabled();
+  await expect(choices.getByText("Beehive is light only.")).toBeVisible();
+});
+
 test("saved dark document paints before the application module is allowed to execute", async ({
   page,
   app,

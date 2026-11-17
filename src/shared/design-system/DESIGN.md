@@ -1771,10 +1771,15 @@ ink together. Never recolor the whole shell. Nested dark scopes resolve their
 own ramp. Media pixels, the black viewing canvas, and white-on-dark media glass
 never follow the accent.
 
+**Exception, by owner decision (the Beehive PRD):** the Appearance Theme
+**Beehive** is an opt-in theme that recolors the shell with warm neutrals and
+always uses Honey. It is scoped to `:root[data-theme="beehive"]`, and Buzz stays
+the default.
+
 Swatches and their tooltips preview each family's strong fill and paired
 `text-on-accent` ink. They carry `data-accent` and `data-color-mode`.
-Appearance uses compact Mode and Vibe level Selects with a live illustrative
-preview. Do not mix colors or use opacity to invent lighter shades.
+Appearance uses compact Theme, Mode and Vibe level Selects with a live
+illustrative preview. Do not mix colors or use opacity to invent lighter shades.
 
 
 ## Density and rhythm
@@ -2050,6 +2055,9 @@ person’s size preference. Allow content to reflow before it clips.
 1. Use an existing component before assembling its appearance yourself.
 2. Choose a semantic role by purpose. Add a state sibling when the actual control needs it.
 3. Keep each new role paired in both modes, document it in the token registry, and check contrast.
+   The one exception is the light-only Beehive theme: it has no dark values
+   because Appearance forces Light while it is on. `check-contrast.mjs` measures
+   it in light mode, and `tokens.test.ts` names it.
 4. Fix shared decisions in their owner. Do not cancel shared styles from a feature stylesheet.
 5. Keep layout, media geometry, editor semantics and data behavior with their product owner.
 

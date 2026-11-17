@@ -6,6 +6,7 @@ import {
   APPEARANCE_KEY,
   FONT_SCALE_KEY,
   MESSAGE_WIDTH_KEY,
+  THEME_KEY,
   createAppearance,
   parseColorMode,
   parseColorModePreference,
@@ -106,8 +107,11 @@ it.each([
     expect(b.root.dataset.colorMode).toBe(mode);
     const app = createAppearance(b.host);
     expect(app.snapshot()).toEqual({
+      theme: "buzz",
+      themeError: null,
       preference: parseColorModePreference(value),
       mode,
+      modeLocked: false,
       error: null,
       messageWidth: "narrow",
       messageWidthError: null,
@@ -564,4 +568,267 @@ it("keeps density active on storage failure, retries, and follows other windows"
   app.dispose();
   app.setDensity("compact");
   expect(b.root.dataset.messageDensity).toBe("default");
+});
+
+it.each([
+  [null, "buzz"],
+  ["", "buzz"],
+  ["BEEHIVE", "buzz"],
+  ["dark", "buzz"],
+  ["buzz", "buzz"],
+  ["beehive", "beehive"],
+] as const)(
+  "bootstrap and service agree for stored theme %j",
+  (value, theme) => {
+    // A setting saved before themes existed has no theme key and loads as Buzz.
+    const b = browser("dark");
+    if (value !== null) b.values.set(THEME_KEY, value);
+    runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+      localStorage: b.storage,
+      document: b.host.document,
+      matchMedia: b.host.matchMedia,
+    });
+    const mode = theme === "beehive" ? "light" : "dark";
+    expect(b.root.dataset.theme).toBe(theme);
+    expect(b.root.dataset.colorMode).toBe(mode);
+    const app = createAppearance(b.host);
+    expect(app.snapshot()).toMatchObject({
+      theme,
+      preference: mode,
+      mode,
+      themeError: null,
+    });
+    expect(b.root.dataset.theme).toBe(theme);
+    app.dispose();
+  },
+);
+
+it("the bootstrap reads a denied theme without throwing and opens as Buzz", () => {
+  const b = browser("dark");
+  b.storage.getItem.mockImplementation((key: string) => {
+    if (key === THEME_KEY) throw new Error("denied");
+    return b.values.get(key) ?? null;
+  });
+  runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+    localStorage: b.storage,
+    document: b.host.document,
+    matchMedia: b.host.matchMedia,
+  });
+  expect(b.root.dataset.theme).toBe("buzz");
+  expect(b.root.dataset.colorMode).toBe("dark");
+});
+
+it.each(["dark", "system", "light"] as const)(
+  "Beehive forces Light and Buzz restores the saved %s mode",
+  (saved) => {
+    const b = browser(saved, true);
+    const app = createAppearance(b.host);
+    const changed = vi.fn();
+    app.subscribe(changed);
+    const before = app.snapshot();
+    app.setTheme("beehive");
+    expect(app.snapshot()).toMatchObject({
+      theme: "beehive",
+      preference: "light",
+      mode: "light",
+      modeLocked: true,
+      themeError: null,
+    });
+    expect(b.root.dataset).toMatchObject({
+      theme: "beehive",
+      colorMode: "light",
+    });
+    expect(b.values.get(THEME_KEY)).toBe("beehive");
+    // The earlier mode stays saved; Dark and System cannot be chosen meanwhile.
+    expect(b.values.get(APPEARANCE_KEY)).toBe(saved);
+    app.setMode("dark");
+    app.setMode("system");
+    expect(app.snapshot()).toMatchObject({
+      preference: "light",
+      mode: "light",
+    });
+    expect(b.values.get(APPEARANCE_KEY)).toBe(saved);
+    // A reload, and a system change, keep it light.
+    const reloaded = createAppearance(b.host);
+    expect(reloaded.snapshot()).toMatchObject({
+      theme: "beehive",
+      preference: "light",
+    });
+    reloaded.dispose();
+    b.systemDark(false);
+    b.systemDark(true);
+    expect(app.snapshot().mode).toBe("light");
+    // Buzz resolves System again against the scheme as it is now.
+    b.systemDark(false);
+    const mode = saved === "system" ? "light" : before.mode;
+    app.setTheme("buzz");
+    expect(app.snapshot()).toMatchObject({
+      theme: "buzz",
+      preference: before.preference,
+      mode,
+      modeLocked: false,
+    });
+    expect(b.root.dataset).toMatchObject({ theme: "buzz", colorMode: mode });
+    expect(b.values.get(THEME_KEY)).toBe("buzz");
+    expect(changed).toHaveBeenCalled();
+    app.dispose();
+  },
+);
+
+it("a theme save failure is visible, stays active, and retries; other windows are followed", () => {
+  const b = browser("dark");
+  const app = createAppearance(b.host);
+  b.storage.setItem.mockImplementationOnce(() => {
+    throw new Error("denied");
+  });
+  app.setTheme("beehive");
+  expect(app.snapshot()).toMatchObject({
+    theme: "beehive",
+    mode: "light",
+    themeError: expect.stringContaining("could not be saved"),
+  });
+  app.setTheme("beehive");
+  expect(app.snapshot().themeError).toBeNull();
+  expect(b.values.get(THEME_KEY)).toBe("beehive");
+  // Another window chooses Buzz; an unrelated store is ignored.
+  b.values.set(THEME_KEY, "buzz");
+  b.change(THEME_KEY, {});
+  expect(app.snapshot().theme).toBe("beehive");
+  b.change(THEME_KEY);
+  expect(app.snapshot()).toMatchObject({ theme: "buzz", mode: "dark" });
+  app.dispose();
+  app.setTheme("beehive");
+  expect(app.snapshot().theme).toBe("buzz");
+});
+
+it("a denied theme read keeps Buzz and says so", () => {
+  const b = browser("dark");
+  b.storage.getItem.mockImplementation((key: string) => {
+    if (key === THEME_KEY) throw new Error("denied");
+    return b.values.get(key) ?? null;
+  });
+  const app = createAppearance(b.host);
+  expect(app.snapshot()).toMatchObject({
+    theme: "buzz",
+    mode: "dark",
+    themeError: expect.stringContaining("could not be restored"),
+  });
+  app.dispose();
+});
+
+it.each([
+  ["buzz", "dark", false, "dark/buzz"],
+  ["beehive", "dark", true, "light/beehive"],
+  ["beehive", "system", true, "light/beehive"],
+] as const)(
+  "starts %s with saved %s and system dark %j without a first paint in another palette",
+  (theme, saved, systemDark, painted) => {
+    const b = browser(saved, systemDark);
+    b.values.set(THEME_KEY, theme);
+    const seen = new Set<string>();
+    const read = b.host.getComputedStyle;
+    (b.host as { getComputedStyle: unknown }).getComputedStyle = (
+      ...args: Parameters<typeof read>
+    ) => {
+      seen.add(`${b.root.dataset.colorMode}/${b.root.dataset.theme}`);
+      return read(...args);
+    };
+    createAppearance(b.host).dispose();
+    expect([...seen]).toEqual([painted]);
+  },
+);
+
+it("the bootstrap opens Beehive light with saved System on a dark system", () => {
+  const b = browser("system", true);
+  b.values.set(THEME_KEY, "beehive");
+  runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+    localStorage: b.storage,
+    document: b.host.document,
+    matchMedia: b.host.matchMedia,
+  });
+  expect(b.root.dataset).toMatchObject({
+    theme: "beehive",
+    colorMode: "light",
+  });
+});
+
+it("another window saving the Mode keeps Beehive light and Buzz restores it", () => {
+  const b = browser("light");
+  b.values.set(THEME_KEY, "beehive");
+  const app = createAppearance(b.host);
+  b.values.set(APPEARANCE_KEY, "dark");
+  b.change(APPEARANCE_KEY);
+  expect(app.snapshot()).toMatchObject({
+    theme: "beehive",
+    preference: "light",
+    mode: "light",
+    modeLocked: true,
+  });
+  expect(b.root.dataset.colorMode).toBe("light");
+  app.setTheme("buzz");
+  expect(app.snapshot()).toMatchObject({ preference: "dark", mode: "dark" });
+  app.dispose();
+});
+
+it("another window choosing Beehive changes this one without writing", () => {
+  const b = browser("dark");
+  const app = createAppearance(b.host);
+  b.storage.setItem.mockClear();
+  b.values.set(THEME_KEY, "beehive");
+  b.change(THEME_KEY);
+  expect(app.snapshot()).toMatchObject({
+    theme: "beehive",
+    preference: "light",
+    mode: "light",
+  });
+  expect(b.root.dataset).toMatchObject({
+    theme: "beehive",
+    colorMode: "light",
+  });
+  expect(b.storage.setItem).not.toHaveBeenCalled();
+  expect(b.values.get(APPEARANCE_KEY)).toBe("dark");
+  app.dispose();
+});
+
+it("clearing storage in another window returns to Buzz", () => {
+  const b = browser("dark");
+  b.values.set(THEME_KEY, "beehive");
+  const app = createAppearance(b.host);
+  expect(app.snapshot().theme).toBe("beehive");
+  b.values.clear();
+  b.change(null);
+  expect(app.snapshot()).toMatchObject({
+    theme: "buzz",
+    preference: "system",
+    modeLocked: false,
+  });
+  expect(b.root.dataset.theme).toBe("buzz");
+  app.dispose();
+});
+
+it("changing only the theme marks the palette as changing until it paints", () => {
+  const b = browser("light");
+  const app = createAppearance(b.host);
+  b.frame();
+  expect(b.root.dataset.paletteChanging).toBeUndefined();
+  app.setTheme("beehive");
+  expect(b.root.dataset.colorMode).toBe("light");
+  expect(b.root.dataset.paletteChanging).toBe("");
+  b.frame();
+  b.frame();
+  expect(b.root.dataset.paletteChanging).toBeUndefined();
+  app.dispose();
+});
+
+it("an accent chosen under Beehive is kept for Buzz", () => {
+  const b = browser("light");
+  const app = createAppearance(b.host);
+  app.setTheme("beehive");
+  app.setAccent("cobalt");
+  expect(app.snapshot().accent).toBe("cobalt");
+  expect(b.values.get(ACCENT_KEY)).toBe("cobalt");
+  app.setTheme("buzz");
+  expect(app.snapshot().accent).toBe("cobalt");
+  expect(b.root.dataset.accent).toBe("cobalt");
+  app.dispose();
 });

@@ -3,9 +3,11 @@ import { ACCENTS, type Accent, type Contrast } from "./accent";
 import {
   MAX_FONT_SCALE,
   MIN_FONT_SCALE,
+  THEMES,
   type Appearance,
   type ColorModePreference,
   type MessageDensity,
+  type Theme,
 } from "./service";
 
 /** Appearance as device settings, through the one live `appearance`. */
@@ -15,10 +17,26 @@ export function appearanceSettings(appearance: Appearance): DeviceSetting[] {
   return [
     {
       key: "appearance.mode",
-      description: "Light or dark, or follow the system.",
+      description:
+        "Light or dark, or follow the system. Always light while the Beehive theme is on.",
       schema: { type: "string", enum: ["system", "light", "dark"] },
       read: () => ({ value: now().preference, unsaved: now().error }),
-      write: (value) => appearance.setMode(value as ColorModePreference),
+      write: (value) => {
+        if (now().modeLocked)
+          throw new Error(
+            "Mode is Light while Beehive is on. Set appearance.theme to buzz first.",
+          );
+        appearance.setMode(value as ColorModePreference);
+      },
+      live,
+    },
+    {
+      key: "appearance.theme",
+      description:
+        "Color theme. Beehive recolors the app in warm yellow and is light only: it sets Mode to Light, and Buzz restores the earlier mode.",
+      schema: { type: "string", enum: THEMES },
+      read: () => ({ value: now().theme, unsaved: now().themeError }),
+      write: (value) => appearance.setTheme(value as Theme),
       live,
     },
     {
@@ -39,7 +57,8 @@ export function appearanceSettings(appearance: Appearance): DeviceSetting[] {
     },
     {
       key: "appearance.accent",
-      description: "Accent color for messages, send and selected rows.",
+      description:
+        "Accent color for messages, send and selected rows. Beehive always uses Honey; a choice made while it is on is kept for Buzz.",
       schema: { type: "string", enum: ACCENTS },
       read: () => ({ value: now().accent, unsaved: now().accentError }),
       write: (value) => appearance.setAccent(value as Accent),

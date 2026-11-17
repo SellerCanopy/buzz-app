@@ -784,3 +784,77 @@ it("offers a choice between usernames and full names only where the community ve
   expect(namePreference()).toBe("full-name");
   setNamePreference("username");
 });
+
+it("offers the themes, applies Beehive, and locks every Mode choice while it is on", async () => {
+  const appearance = createAppearance();
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const theme = screen.getByRole("combobox", { name: "Theme" });
+  expect(theme).toHaveTextContent("Buzz");
+  expect(document.getElementById("setting-theme")).toBeInTheDocument();
+  expect(screen.queryByText("Beehive is light only.")).not.toBeInTheDocument();
+  await user.click(theme);
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["Buzz", "Beehive"]);
+  await user.click(screen.getByRole("option", { name: "Beehive" }));
+  expect(theme).toHaveTextContent("Beehive");
+  expect(localStorage.getItem("buzz-theme.v1")).toBe("beehive");
+  expect(document.documentElement.dataset.theme).toBe("beehive");
+  expect(screen.getByText("Beehive is light only.")).toBeInTheDocument();
+  expect(screen.getByText("Beehive uses Honey.")).toBeInTheDocument();
+  const mode = screen.getByRole("combobox", { name: "Mode" });
+  expect(mode).toHaveTextContent("Light");
+  await user.click(mode);
+  for (const name of ["System", "Light", "Dark"])
+    expect(await screen.findByRole("option", { name })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  await user.keyboard("{Escape}");
+  for (const swatch of screen.getAllByRole("button", {
+    name: / accent color$/,
+  }))
+    expect(swatch).toBeDisabled();
+  await user.click(screen.getByRole("combobox", { name: "Theme" }));
+  await user.click(await screen.findByRole("option", { name: "Buzz" }));
+  expect(screen.queryByText("Beehive is light only.")).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Mode" })).toHaveTextContent(
+    "System",
+  );
+  appearance.dispose();
+});
+
+it("shows an unsaved theme with a retry, and hides the Mode toast while Beehive is on", async () => {
+  const appearance = createAppearance();
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("denied");
+    });
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  act(() => appearance.setMode("dark"));
+  expect(await screen.findByText("Appearance wasn’t saved")).toBeVisible();
+  act(() => appearance.setTheme("beehive"));
+  expect(await screen.findByText("Theme wasn’t saved")).toBeVisible();
+  // Mode is locked, so its failed save and Retry are not offered.
+  expect(screen.queryByText("Appearance wasn’t saved")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry saving appearance" }),
+  ).not.toBeInTheDocument();
+  write.mockRestore();
+  fireEvent.click(screen.getByRole("button", { name: "Retry saving theme" }));
+  expect(localStorage.getItem("buzz-theme.v1")).toBe("beehive");
+  await waitFor(() =>
+    expect(screen.queryByText("Theme wasn’t saved")).not.toBeInTheDocument(),
+  );
+  appearance.dispose();
+});

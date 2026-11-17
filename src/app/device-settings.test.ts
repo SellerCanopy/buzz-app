@@ -23,6 +23,7 @@ it("offers appearance and the message and agent preferences, and nothing else", 
       .map(({ key, value, saved }) => ({ key, value, saved })),
   ).toEqual([
     { key: "appearance.mode", value: "system", saved: true },
+    { key: "appearance.theme", value: "buzz", saved: true },
     { key: "appearance.interface_size", value: 100, saved: true },
     { key: "appearance.accent", value: "citrus", saved: true },
     { key: "appearance.vibe", value: "low", saved: true },
@@ -67,10 +68,41 @@ it("changes appearance as its own controls do: live, saved and announced", () =>
   expect(
     deviceSettings(next)
       .list()
-      .slice(0, 5)
+      .slice(0, 6)
       .map(({ value }) => value),
-  ).toEqual(["dark", 120, "cobalt", "high", "compact"]);
+  ).toEqual(["dark", "buzz", 120, "cobalt", "high", "compact"]);
   next.dispose();
+});
+
+it("sets the Beehive theme, which is light only, and restores the earlier mode", () => {
+  const appearance = createAppearance(window);
+  const settings = deviceSettings(appearance);
+  set(settings, "appearance.mode", "dark");
+  expect(set(settings, "appearance.theme", "beehive").value).toBe("beehive");
+  expect(settings.get("appearance.mode").value).toBe("light");
+  expect(document.documentElement.dataset.theme).toBe("beehive");
+  // Every value is refused, so an agent is never told a no-op was saved.
+  for (const value of ["light", "dark", "system"])
+    expect(() => set(settings, "appearance.mode", value)).toThrow(
+      "Mode is Light while Beehive is on. Set appearance.theme to buzz first.",
+    );
+  expect(() => set(settings, "appearance.theme", "Beehive")).toThrow(
+    /appearance.theme takes/,
+  );
+  expect(set(settings, "appearance.theme", "buzz").value).toBe("buzz");
+  expect(settings.get("appearance.mode").value).toBe("dark");
+  appearance.dispose();
+});
+
+it("keeps an accent chosen under Beehive for Buzz", () => {
+  const appearance = createAppearance(window);
+  const settings = deviceSettings(appearance);
+  expect(settings.get("appearance.accent").description).toMatch(/Beehive/);
+  set(settings, "appearance.theme", "beehive");
+  expect(set(settings, "appearance.accent", "cobalt").value).toBe("cobalt");
+  set(settings, "appearance.theme", "buzz");
+  expect(settings.get("appearance.accent").value).toBe("cobalt");
+  appearance.dispose();
 });
 
 it("refuses an accent's legacy alias rather than mapping it", () => {
@@ -106,6 +138,28 @@ it("answers saved false with the owner's reason when storage refuses", () => {
   expect(set(settings, "conversations.thread_placement", "side").saved).toBe(
     true,
   );
+  appearance.dispose();
+});
+
+it("answers a refused theme save with the reason, and a retry clears it", () => {
+  const appearance = createAppearance(window);
+  const settings = deviceSettings(appearance);
+  const refuse = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+  expect(set(settings, "appearance.theme", "beehive")).toMatchObject({
+    value: "beehive",
+    saved: false,
+    problem: expect.stringMatching(/could not be saved/),
+  });
+  refuse.mockRestore();
+  expect(set(settings, "appearance.theme", "beehive")).toMatchObject({
+    value: "beehive",
+    saved: true,
+  });
+  expect(settings.get("appearance.theme")).not.toHaveProperty("problem");
   appearance.dispose();
 });
 

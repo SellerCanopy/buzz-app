@@ -63,7 +63,8 @@ pub(crate) fn opaque_background<R: Runtime>(window: &tauri::WebviewWindow<R>) ->
         NSColor::colorWithSRGBRed_green_blue_alpha(r / 255.0, g / 255.0, b / 255.0, 1.0)
     };
     // Resolved by the system appearance: Buzz's own light/dark choice is page
-    // state, so it can differ until the page paints.
+    // state, so it can differ until the page paints. The Beehive theme uses a
+    // third background that this native copy does not know.
     let (light, dark) = (srgb(241.0, 241.0, 242.0), srgb(16.0, 16.0, 16.0));
     let provider = block2::RcBlock::new(move |appearance: std::ptr::NonNull<NSAppearance>| {
         let names = unsafe { [NSAppearanceNameAqua, NSAppearanceNameDarkAqua] };

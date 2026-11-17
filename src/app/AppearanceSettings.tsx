@@ -18,7 +18,7 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import type { Appearance } from "../shared/theme/service";
+import { THEMES, type Appearance, type Theme } from "../shared/theme/service";
 
 import {
   setThreadPlacementPreference,
@@ -48,6 +48,11 @@ import {
   useNamePreference,
 } from "../features/profiles/name-preference";
 import type { Communities } from "../features/communities/service";
+
+const themeLabels: Record<Theme, string> = {
+  buzz: "Buzz",
+  beehive: "Beehive",
+};
 
 const noRelay = () => () => {};
 /** Whether the connected community verifies people's names, so there is a
@@ -99,8 +104,11 @@ export function AppearanceSettings({
     if (target?.isConnected) target.focus();
   });
   const {
+    theme,
+    themeError,
     preference,
     mode,
+    modeLocked,
     error,
     messageWidth,
     messageWidthError,
@@ -113,6 +121,7 @@ export function AppearanceSettings({
     density,
     densityError,
   } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
+  const beehive = theme === "beehive";
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
@@ -120,8 +129,33 @@ export function AppearanceSettings({
         <InlineHeader title="Interface" />
         <SettingsGroup>
           <PreferenceRow
+            id="setting-theme"
+            title="Theme"
+            trailing={
+              <Select
+                variant="compact"
+                label="Theme"
+                value={theme}
+                groups={[
+                  {
+                    label: "Theme",
+                    options: THEMES.map((value) => ({
+                      value,
+                      label: themeLabels[value],
+                    })),
+                  },
+                ]}
+                onValueChange={(value) => {
+                  const next = THEMES.find((theme) => theme === value);
+                  if (next) appearance.setTheme(next);
+                }}
+              />
+            }
+          />
+          <PreferenceRow
             id="setting-mode"
             title="Mode"
+            {...(modeLocked && { subtitle: "Beehive is light only." })}
             trailing={
               <Select
                 variant="compact"
@@ -131,9 +165,13 @@ export function AppearanceSettings({
                   {
                     label: "Mode",
                     options: [
-                      { value: "system", label: "System" },
-                      { value: "light", label: "Light" },
-                      { value: "dark", label: "Dark" },
+                      {
+                        value: "system",
+                        label: "System",
+                        disabled: modeLocked,
+                      },
+                      { value: "light", label: "Light", disabled: modeLocked },
+                      { value: "dark", label: "Dark", disabled: modeLocked },
                     ],
                   },
                 ]}
@@ -196,6 +234,7 @@ export function AppearanceSettings({
           />
           <PreferenceRow
             title="Accent color"
+            {...(beehive && { subtitle: "Beehive uses Honey." })}
             trailing={(label) => (
               <fieldset
                 {...label}
@@ -229,6 +268,7 @@ export function AppearanceSettings({
                             inline: "nearest",
                           })
                         }
+                        disabled={beehive}
                         onClick={() => appearance.setAccent(color)}
                         icon={
                           <CircleIcon
@@ -566,6 +606,13 @@ export function AppearanceSettings({
             </Button>
           </ToastNotice>
         )}
+        {active && themeError && (
+          <ToastNotice title="Theme wasn’t saved" description={themeError}>
+            <Button size="sm" onClick={() => appearance.setTheme(theme)}>
+              Retry saving theme
+            </Button>
+          </ToastNotice>
+        )}
         {active && contrastError && (
           <ToastNotice
             title="Vibe level wasn’t saved"
@@ -611,7 +658,7 @@ export function AppearanceSettings({
             </Button>
           </ToastNotice>
         )}
-        {active && error && (
+        {active && error && !modeLocked && (
           <ToastNotice title="Appearance wasn’t saved" description={error}>
             <Button
               type="button"
