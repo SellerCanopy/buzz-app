@@ -1,0 +1,81 @@
+# Every file this fork edits that also exists upstream (block/buzz-app).
+#
+# scripts/check-private-names.mjs scans each path below for names that belong only to the
+# private fork. Keep this list to the files the fork really changes: a sync merge conflicts
+# here first. Compare with `git diff --name-only upstream/main...HEAD`.
+#
+# Format: one repo-relative path per line, then an optional note in parentheses.
+#   (only if ...)  the file is edited only when that condition held, so it may be absent.
+#   (fork-only)    the path belongs to the fork alone. It is not an upstream edit and is not
+#                  scanned. Fork-only paths are listed so the whole diff is accounted for.
+
+# Beehive shell wiring
+src/app/conversation-features.ts
+src/app/shell/presentation.ts
+src-tauri/src/lib.rs
+src-tauri/build.rs
+src-tauri/capabilities/default.json
+src/features/navigation/buzz-links.ts   (only if Phase 10 needed a buzz://beehive form)
+vite.config.ts
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+biome.json
+.gitignore
+scripts/design-system/check-icons.mjs
+docs/configuration.md
+docs/buzz-help.md
+docs/design-system.md
+
+# Opt-in Beehive theme (Appearance setting)
+public/appearance-init.js
+src/shared/theme/service.ts
+src/shared/theme/service.test.ts
+src/shared/theme/settings.ts
+src/shared/theme/tokens.test.ts
+src/shared/design-system/DESIGN.md
+src/shared/design-system/styles/tokens.css
+src/shared/design-system/tokens/contrast.test.mjs
+scripts/design-system/check-contrast.mjs
+src/app/AppearanceSettings.tsx
+src/app/AppearanceSettings.test.tsx
+src/app/IdentityReflection.tsx
+src/app/device-settings.test.ts
+src/app/shell/ProfileButton.tsx
+src/app/shell/SearchSettings.tsx
+src/bundled/charts/Chart.tsx
+src/bundled/terminal/renderer.ts
+src-tauri/src/window_state.rs
+tests/browser/appearance.spec.mjs
+
+# Claude account sign-in (only while that change is not upstream: drop these once it merges)
+docs/agent-protection.md  (only while Claude account sign-in is not upstream)
+src/app/DecisionsSettings.tsx  (only while Claude account sign-in is not upstream)
+src/app/DecisionsSettings.test.tsx  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/ClaudeSettings.tsx  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/ClaudeSettings.test.tsx  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/README.md  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/SignInCode.tsx  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/auth.tsx  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/auth.test.ts  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/index.ts  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/index.test.ts  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/setup.test.ts  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/tabs.tsx  (only while Claude account sign-in is not upstream)
+src/bundled/claude-code/tabs.test.tsx  (only while Claude account sign-in is not upstream)
+src/bundled/typesafe/README.md  (only while Claude account sign-in is not upstream)
+src/features/agents/state.ts  (only while Claude account sign-in is not upstream)
+src/features/settings/ApiKeyForm.tsx  (only while Claude account sign-in is not upstream)
+
+# Fork-only paths: not upstream edits, not scanned.
+src/features/beehive/**                 (fork-only)
+src-tauri/src/beehive.rs                (fork-only)
+tests/browser/beehive.spec.mjs          (fork-only)
+vite.beehive.config.ts                  (fork-only)
+scripts/gen-beehive.mjs                 (fork-only)
+scripts/check-beehive-standalone.mjs    (fork-only)
+scripts/sync-upstream.sh                (fork-only)
+scripts/upstream-edits.txt              (fork-only)
+scripts/check-private-names.mjs         (fork-only)
+scripts/check-private-names.test.mjs    (fork-only)
+tests/integration/sync-upstream.test.mjs (fork-only)
