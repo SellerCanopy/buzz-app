@@ -3,7 +3,7 @@ import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 
 /** What a card page asks a person to confirm first. */
-export type Confirm = "stop" | "merge" | "reset" | "remove";
+export type Confirm = "stop" | "skip" | "merge" | "reset" | "remove";
 
 const COPY: Record<
   Confirm,
@@ -20,6 +20,13 @@ const COPY: Record<
       "The run ends and the card moves to Stopped. What its stages already saved stays, and you can retry the run afterwards.",
     action: "Stop run",
     variant: "destructive",
+  },
+  skip: {
+    title: "Skip this stage?",
+    description:
+      "The card moves on as if the stage had passed, and the stage is marked skipped. Nothing the stage would have done is run.",
+    action: "Skip stage",
+    variant: "prominent",
   },
   merge: {
     title: "Merge the pull request?",

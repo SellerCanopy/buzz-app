@@ -107,13 +107,15 @@ export function useCardActions(
   const confirmed = async (card: Card, run: Run | undefined) => {
     const done = await (confirm === "stop" && run
       ? act(() => client.stopRun(run.id))
-      : confirm === "merge"
-        ? act(() => client.mergeCard(card.id))
-        : confirm === "reset"
-          ? act(() => client.resetCard(card.id))
-          : confirm === "remove"
-            ? act(() => client.removeCard(card.id), false)
-            : Promise.resolve(false));
+      : confirm === "skip"
+        ? act(() => client.skipStage(card.id))
+        : confirm === "merge"
+          ? act(() => client.mergeCard(card.id))
+          : confirm === "reset"
+            ? act(() => client.resetCard(card.id))
+            : confirm === "remove"
+              ? act(() => client.removeCard(card.id), false)
+              : Promise.resolve(false));
     setConfirm(undefined);
     if (done && confirm === "remove") onClose();
   };

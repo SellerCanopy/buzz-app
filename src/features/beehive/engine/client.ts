@@ -65,6 +65,7 @@ import {
   ListWorkflowsResponseSchema,
   MergeCardRequestSchema,
   PauseCardRequestSchema,
+  SkipStageRequestSchema,
   PollEventsRequestSchema,
   PreviewIntakeRequestSchema,
   PreviewIntakeResponseSchema,
@@ -332,6 +333,15 @@ export function createClient(session: Session) {
         PauseCardRequestSchema,
         CardSchema,
         create(PauseCardRequestSchema, { cardId }),
+        signal,
+      ),
+    /** Move a waiting or paused card past its current stage as if the stage had passed. */
+    skipStage: (cardId: string, signal?: AbortSignal) =>
+      unary(
+        "SkipStage",
+        SkipStageRequestSchema,
+        CardSchema,
+        create(SkipStageRequestSchema, { cardId }),
         signal,
       ),
     /** Stop a card's run and put the card back to idle. Its artifacts and branch are kept. */
