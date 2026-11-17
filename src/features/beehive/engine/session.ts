@@ -5,10 +5,30 @@ const RENEW_MS = 60_000;
 
 type TokenReply = { token: string; expires_at: number };
 
-/** A Beehive session: trades the person's signed event for a token and keeps it fresh. */
+/**
+ * The iOS web view injects this before the page loads. It mints and renews the token natively,
+ * and may show a stage's thread in its own thread view.
+ */
+export type NativeToken = {
+  token(): Promise<string>;
+  openThread?(channelId: string, rootEventId: string): void;
+};
+
+declare global {
+  interface Window {
+    __beehiveNative?: NativeToken;
+  }
+}
+
+/**
+ * A Beehive session: trades the person's signed event for a token and keeps it fresh.
+ * When the host supplies a native token source, that source mints and renews the token
+ * instead, so nothing here signs and the key never enters the page.
+ */
 export function createSession(
   carrier: Carrier,
   clock: () => number = Date.now,
+  native?: NativeToken,
 ) {
   let current: { token: string; expiresAt: number } | null = null;
   let pending: Promise<string> | null = null;
@@ -30,6 +50,17 @@ export function createSession(
   }
 
   function token(): Promise<string> {
+    // The native side caches and renews, so ask it every time. Read it on each
+    // call because the web view may inject it after the page starts.
+    const source = native ?? globalThis.window?.__beehiveNative;
+    if (source)
+      return source.token().catch((error: unknown) => {
+        throw new EngineError(
+          "unavailable",
+          error instanceof Error ? error.message : "Native sign-in failed",
+          0,
+        );
+      });
     if (fresh() && current) return Promise.resolve(current.token);
     // One in-flight mint serves every concurrent caller.
     pending ??= mint().finally(() => {

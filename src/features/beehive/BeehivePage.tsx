@@ -74,14 +74,21 @@ export function BeehivePage({
   navigation,
   navigator,
   Thread,
+  onOpenThread,
   level,
 }: {
   client: Client;
-  relay: RelayData;
+  /**
+   * The host's relay. Without one (the standalone page) there is no Settings, no assistant,
+   * and a stage's thread opens through `onOpenThread` instead of embedding.
+   */
+  relay?: RelayData | undefined;
   /** The host's store of the person's level, when it keeps one. */
   level?: LevelStore | undefined;
   /** The host's embedded thread, as Channels shows it. */
   Thread: (props: EmbeddedThreadProps) => ReactNode;
+  /** Shows a stage's thread where there is no relay to embed it. */
+  onOpenThread?: ((channelId: string, rootEventId: string) => void) | undefined;
 } & Pick<PageProps, "navigation"> & { navigator?: Navigation | undefined }) {
   const { canRun, isAdmin, me, problem, retry } = useAccess(client, level);
   const [adding, setAdding] = useState<"blank" | "issue">();
@@ -190,6 +197,7 @@ export function BeehivePage({
                       relay={relay}
                       navigator={navigator}
                       Thread={Thread}
+                      onOpenThread={onOpenThread}
                       id={open}
                       tab={target ? visitedTab(target) : undefined}
                       canRun={canRun}
@@ -238,10 +246,10 @@ export function BeehivePage({
             onOpen={openCard}
             onNew={() => setAdding("blank")}
             onNewFromIssue={() => setAdding("issue")}
-            onAskAssistant={openAssistant}
+            onAskAssistant={relay ? openAssistant : undefined}
           />
         </div>
-        {asking && (
+        {asking && relay && (
           <AssistantPanel
             client={client}
             relay={relay}

@@ -222,4 +222,115 @@ describe("session", () => {
     ).rejects.toMatchObject({ code: "unavailable" });
     expect(c.post.mock.calls.filter(([path]) => path === "/a")).toHaveLength(1);
   });
+
+  describe("with a native token source", () => {
+    it("uses the native token as the bearer and never signs or trades", async () => {
+      const c = carrier();
+      const native = { token: vi.fn(async () => "native1") };
+      await createSession(c, () => 1_000_000, native).call("/x", {});
+      expect(c.authorize).not.toHaveBeenCalled();
+      expect(c.post).toHaveBeenCalledTimes(1);
+      expect(c.post).toHaveBeenCalledWith(
+        "/x",
+        {},
+        { bearer: "native1" },
+        undefined,
+      );
+    });
+
+    it("asks the native side again for each call, so it can renew", async () => {
+      const c = carrier();
+      let n = 0;
+      const native = { token: vi.fn(async () => `n${++n}`) };
+      const session = createSession(c, () => 1_000_000, native);
+      await session.call("/a", {});
+      await session.call("/a", {});
+      expect(c.post).toHaveBeenLastCalledWith(
+        "/a",
+        {},
+        { bearer: "n2" },
+        undefined,
+      );
+      expect(c.authorize).not.toHaveBeenCalled();
+    });
+
+    it("retries once with a fresh native token on unauthenticated", async () => {
+      let calls = 0;
+      const c = carrier((path) =>
+        path === "/a" && calls++ === 0
+          ? new EngineError("unauthenticated", "expired", 401)
+          : undefined,
+      );
+      let n = 0;
+      const native = { token: vi.fn(async () => `n${++n}`) };
+      await expect(
+        createSession(c, () => 1_000_000, native).call("/a", {}),
+      ).resolves.toEqual({ ok: true });
+      expect(c.post).toHaveBeenLastCalledWith(
+        "/a",
+        {},
+        { bearer: "n2" },
+        undefined,
+      );
+      expect(c.authorize).not.toHaveBeenCalled();
+    });
+
+    it("reports a failed native token as unavailable and sends nothing", async () => {
+      const c = carrier();
+      const native = {
+        token: vi.fn(async () => {
+          throw new Error("no key");
+        }),
+      };
+      await expect(
+        createSession(c, () => 1_000_000, native).call("/a", {}),
+      ).rejects.toMatchObject({ code: "unavailable", message: "no key" });
+      expect(c.post).not.toHaveBeenCalled();
+    });
+
+    it("reads window.__beehiveNative when none is passed", async () => {
+      const c = carrier();
+      vi.stubGlobal("window", {
+        __beehiveNative: { token: async () => "injected" },
+      });
+      try {
+        await createSession(c, () => 1_000_000).call("/x", {});
+      } finally {
+        vi.unstubAllGlobals();
+      }
+      expect(c.authorize).not.toHaveBeenCalled();
+      expect(c.post).toHaveBeenCalledWith(
+        "/x",
+        {},
+        { bearer: "injected" },
+        undefined,
+      );
+    });
+  });
+
+  it("uses a native token source injected after the session was created", async () => {
+    const c = carrier();
+    const session = createSession(c, () => 1_000_000);
+    vi.stubGlobal("window", {
+      __beehiveNative: { token: async () => "late" },
+    });
+    try {
+      await session.call("/x", {});
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(c.authorize).not.toHaveBeenCalled();
+    expect(c.post).toHaveBeenCalledWith(
+      "/x",
+      {},
+      { bearer: "late" },
+      undefined,
+    );
+  });
+
+  it("signs in as before when no native token source exists", async () => {
+    const c = carrier();
+    await createSession(c, () => 1_000_000).call("/x", {});
+    expect(c.authorize).toHaveBeenCalledTimes(1);
+  });
 });

@@ -111,3 +111,46 @@ it("says nothing is running when no stage has a thread", () => {
   expect(screen.queryByTestId("thread")).toBeNull();
   expect(screen.queryByRole("combobox")).toBeNull();
 });
+
+it("without a relay shows the picker and hands the thread to the host", async () => {
+  const onOpenThread = vi.fn();
+  render(
+    <LiveTab
+      card={create(CardSchema, {
+        id: "card",
+        stageId: "review",
+        stages: [thread("build", 1, BUILD), thread("review", 1, REVIEW)],
+      })}
+      relay={undefined}
+      navigator={undefined}
+      Thread={Thread as never}
+      onOpenThread={onOpenThread}
+    />,
+  );
+  expect(screen.queryByTestId("thread")).toBeNull();
+  expect(screen.queryByText("Connecting to the community…")).toBeNull();
+  expect(screen.queryByText("No access to the channel")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  expect(onOpenThread).toHaveBeenCalledWith(CHANNEL, REVIEW);
+  await userEvent.click(screen.getByRole("combobox", { name: "Stage" }));
+  await userEvent.click(await screen.findByRole("option", { name: /^build/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  expect(onOpenThread).toHaveBeenLastCalledWith(CHANNEL, BUILD);
+});
+
+it("without a relay or a host to hand the thread to shows no link", () => {
+  render(
+    <LiveTab
+      card={create(CardSchema, {
+        id: "card",
+        stageId: "build",
+        stages: [thread("build", 1, BUILD)],
+      })}
+      relay={undefined}
+      navigator={undefined}
+      Thread={Thread as never}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: "Open thread" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open in channel" })).toBeNull();
+});
