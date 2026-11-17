@@ -315,6 +315,7 @@ function declarationsByMode(
   source = css,
   accent = DEFAULT_ACCENT,
   level = BASELINE_LEVEL,
+  theme = "buzz",
 ) {
   const light = new Map();
   const dark = new Map();
@@ -326,9 +327,16 @@ function declarationsByMode(
     if (
       owner !== ":root" &&
       owner !== ".dark" &&
-      !/\[data-(?:accent|color-level)="/.test(selector)
+      !/\[data-(?:accent|color-level|theme)="/.test(selector)
     )
       continue;
+    // A block only some of whose selectors name a theme is an accent block.
+    const blockTheme = selector
+      .split(",")
+      .every((part) => /\[data-theme="/.test(part))
+      ? /\[data-theme="([a-z]+)"\]/.exec(selector)?.[1]
+      : undefined;
+    if (blockTheme && blockTheme !== theme) continue;
     const family = /\[data-accent="([a-z]+)"\]/.exec(selector)?.[1];
     if (family && family !== accent) continue;
     const blockLevels = [
@@ -536,6 +544,28 @@ const accentFamilies = [
     [...css.matchAll(/\[data-accent="([a-z]+)"\]/g)].map((match) => match[1]),
   ),
 ];
+// Beehive is light only and always uses Honey, so it is one more variant, in
+// light mode alone; its own palette is measured wherever a family is.
+// The accent family a theme forces is the one its `[data-theme][data-accent]`
+// selector shares a rule with.
+const themeFamilies = [
+  ...css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .matchAll(/([^{}]*\[data-theme="([a-z]+)"\]\[data-accent\][^{}]*)\{/g),
+].flatMap(([, selector, theme]) => {
+  const family = /\[data-accent="([a-z]+)"\]/.exec(selector)?.[1];
+  return family ? [[family, theme]] : [];
+});
+const variants = [
+  ...accentFamilies.map((family) => [family, "buzz"]),
+  ...themeFamilies,
+];
+const modesOf = (family, level, theme) =>
+  Object.entries(declarationsByMode(css, family, level, theme)).filter(
+    ([mode]) => theme === "buzz" || mode === "light",
+  );
+const variantName = (family, theme) =>
+  theme === "buzz" ? family : `${theme}/${family}`;
 const ACCENT_PAIRS = [
   ["--text-dock-count", "--surface-dock-count"],
   ["--text-on-selection", "--surface-text-selection"],
@@ -566,22 +596,23 @@ const ACCENT_PAIRS = [
     surface,
   ]),
 ];
-for (const family of accentFamilies) {
+for (const [family, theme] of variants) {
+  const name = variantName(family, theme);
   for (const level of [BASELINE_LEVEL, ...LEVELS]) {
-    if (level !== BASELINE_LEVEL || family !== DEFAULT_ACCENT)
-      for (const [mode, map] of Object.entries(
-        declarationsByMode(css, family, level),
-      ))
-        audit(`${family}/${level}/${mode}`, map, false);
-    for (const [mode, map] of Object.entries(
-      declarationsByMode(css, family, level),
-    )) {
+    if (
+      level !== BASELINE_LEVEL ||
+      family !== DEFAULT_ACCENT ||
+      theme !== "buzz"
+    )
+      for (const [mode, map] of modesOf(family, level, theme))
+        audit(`${name}/${level}/${mode}`, map, false);
+    for (const [mode, map] of modesOf(family, level, theme)) {
       for (const [textRole, surfaceRole] of ACCENT_PAIRS) {
         const text = resolve(map, textRole);
         const surface = resolve(map, surfaceRole);
         if (!text || !surface) {
           boundaryFailures.push(
-            `${family}/${level}/${mode}: unresolved accent pair ${textRole} on ${surfaceRole}`,
+            `${name}/${level}/${mode}: unresolved accent pair ${textRole} on ${surfaceRole}`,
           );
           continue;
         }
@@ -590,7 +621,7 @@ for (const family of accentFamilies) {
         const wcag = wcagRatio(text, surface);
         if (lc < target || wcag < 4.5)
           failures.push({
-            mode: `${family}/${level}/${mode}`,
+            mode: `${name}/${level}/${mode}`,
             textRole,
             text,
             surfaceRole,
@@ -616,7 +647,7 @@ for (const family of accentFamilies) {
           selection && surface ? wcagRatio(selection, surface) : null;
         if (ratio === null || ratio < 3)
           boundaryFailures.push(
-            `${family}/${level}/${mode}: ${selectionRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+            `${name}/${level}/${mode}: ${selectionRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
           );
       }
       for (const surfaceRole of BOUNDARY_SURFACES) {
@@ -625,7 +656,7 @@ for (const family of accentFamilies) {
         const ratio = border && surface ? wcagRatio(border, surface) : null;
         if (ratio === null || ratio < 3)
           boundaryFailures.push(
-            `${family}/${level}/${mode}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+            `${name}/${level}/${mode}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
           );
       }
       for (const baseRole of MESSAGE_ICON_ROLES) {
@@ -638,7 +669,7 @@ for (const family of accentFamilies) {
           const ratio = icon && surface ? wcagRatio(icon, surface) : null;
           if (ratio === null || ratio < 3)
             boundaryFailures.push(
-              `${family}/${level}/${mode}: ${role} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+              `${name}/${level}/${mode}: ${role} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
             );
         }
       }

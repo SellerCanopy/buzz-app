@@ -158,7 +158,13 @@ export function createScreen(
       const appearance = new MutationObserver(update);
       appearance.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ["data-color-mode", "data-accent", "style", "class"],
+        attributeFilter: [
+          "data-color-mode",
+          "data-theme",
+          "data-accent",
+          "style",
+          "class",
+        ],
       });
       element.addEventListener("keydown", splash.dismiss);
       void update();

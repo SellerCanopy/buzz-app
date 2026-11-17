@@ -18,6 +18,7 @@ function resolvedPalette(
   mode: "light" | "dark",
   accent: Accent = DEFAULT_ACCENT,
   contrastMode: "low" | "high" = "low",
+  theme: "buzz" | "beehive" = "buzz",
 ) {
   const source = (
     readFileSync("src/shared/design-system/styles/tokens.css", "utf8") +
@@ -29,6 +30,12 @@ function resolvedPalette(
     /([^{}]+)\{([^{}]*)\}/g,
   )) {
     if (!selector.includes(":root") && !selector.includes(".dark")) continue;
+    // A block that only a theme owns applies only when that theme is chosen.
+    if (
+      selector.split(",").every((part) => part.includes('data-theme="')) &&
+      !selector.includes(`data-theme="${theme}"`)
+    )
+      continue;
     if (
       selector.includes('data-accent="') &&
       !selector.includes(`data-accent="${accent}"`)
@@ -254,6 +261,69 @@ it("the default Citrus accent keeps its strong fill and paired black ink", () =>
     expect(palette["--affordance-accent-prominent"]).toBe("#beda36");
     expect(palette["--text-on-accent"]).toBe("#000000");
   }
+});
+
+// The one named exception to "every role has both modes" and "never recolor the
+// shell": Beehive is an opt-in, light-only theme (owner decision, GH-29 PRD).
+// Anything else that scopes by theme, or any dark value for it, fails here.
+it("Beehive is the only theme, is light only, and recolors the shell with warm neutrals", () => {
+  const themed = [
+    ...readFileSync("src/shared/design-system/styles/tokens.css", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .matchAll(/([^{}]+)\{([^{}]*)\}/g),
+  ].filter(([, selector = ""]) =>
+    selector.split(",").every((part) => part.includes('data-theme="')),
+  );
+  expect(themed.map(([, selector = ""]) => selector.trim())).toEqual([
+    ':root[data-theme="beehive"]',
+  ]);
+  // Honey is whatever family the stylesheet gives the theme, not a literal.
+  const accentBlock = [
+    ...readFileSync("src/shared/design-system/styles/tokens.css", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .matchAll(/([^{}]+)\{/g),
+  ].find(([, selector = ""]) =>
+    selector.includes(':root[data-theme="beehive"][data-accent]'),
+  );
+  expect(accentBlock?.[1]?.split(",").map((part) => part.trim())).toContain(
+    ':root[data-theme="beehive"][data-accent]',
+  );
+  const honey = /\[data-accent="([a-z]+)"\]/.exec(accentBlock?.[1] ?? "")?.[1];
+  expect(honey).toBe("bee");
+  const buzz = resolvedPalette("light", honey as Accent, "low");
+  const beehive = resolvedPalette("light", honey as Accent, "low", "beehive");
+  const overridden = [...(themed[0]?.[2] ?? "").matchAll(/(--[\w-]+):/g)].map(
+    (match) => match[1] ?? "",
+  );
+  expect(overridden.length).toBeGreaterThan(0);
+  // It only repaints existing roles; it adds none and has no dark values.
+  for (const name of overridden) expect(buzz).toHaveProperty(name);
+  expect(beehive["--bg-app"]).toBe("#f3ebd4");
+  expect(beehive["--surface-panel"]).toBe("#fffdf7");
+  expect(beehive["--text-standard"]).toBe("#1f1a0a");
+  expect(beehive["--affordance-accent-prominent"]).toBe("#f5c518");
+  expect(beehive["--text-on-accent"]).toBe("#000000");
+  expect(beehive["--bg-app"]).not.toBe(buzz["--bg-app"]);
+  // Honey is the prominent fill, with ink on it; a lone mark stays ink.
+  expect(beehive["--affordance-prominent"]).toBe("#f5c518");
+  expect(beehive["--affordance-prominent-hover"]).toBe("#f0b70c");
+  expect(beehive["--affordance-prominent-pressed"]).toBe("#eba80c");
+  expect(beehive["--text-on-prominent"]).toBe("#1f1a0a");
+  expect(beehive["--affordance-prominent-mark"]).toBe("#1f1a0a");
+  // Chrome and selection sit on the shell, so each needs its own step.
+  expect(beehive["--affordance-chrome"]).not.toBe(beehive["--bg-app"]);
+  expect(beehive["--affordance-selected"]).not.toBe(beehive["--bg-app"]);
+  for (const [text, surface] of [
+    ["--text-standard", "--bg-app"],
+    ["--text-standard", "--surface-panel"],
+    ["--text-subtle", "--surface-panel"],
+    ["--text-metadata", "--surface-panel"],
+    ["--text-on-accent", "--surface-sidebar-selected"],
+  ] as const)
+    expect(
+      contrast(beehive[text], beehive[surface]),
+      `${text} on ${surface}`,
+    ).toBeGreaterThanOrEqual(4.5);
 });
 
 it.each(["light", "dark"] as const)(

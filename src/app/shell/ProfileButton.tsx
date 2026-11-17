@@ -93,10 +93,11 @@ export function ProfileButton({
     communities.presence.subscribe,
     communities.presence.snapshot,
   );
-  const { preference, error: appearanceError } = useSyncExternalStore(
-    appearance.subscribe,
-    appearance.snapshot,
-  );
+  const {
+    preference,
+    modeLocked,
+    error: appearanceError,
+  } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   const colorMode = colorModes[preference];
   const ColorModeIcon = colorMode.Icon;
   const connection = useRelayConnection(communities.relay);
@@ -494,6 +495,7 @@ export function ProfileButton({
                       key={value}
                       value={value}
                       closeOnClick={false}
+                      disabled={modeLocked}
                     >
                       <MenuIcon>
                         <Icon size={16} aria-hidden="true" />
@@ -503,7 +505,8 @@ export function ProfileButton({
                   );
                 })}
               </MenuRadioGroup>
-              {appearanceError && (
+              {modeLocked && <MenuNote>Beehive is light only.</MenuNote>}
+              {appearanceError && !modeLocked && (
                 <MenuNote role="alert">{appearanceError}</MenuNote>
               )}
             </MenuSubmenuPopup>

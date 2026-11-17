@@ -309,6 +309,57 @@ describe("semantic contrast contract", () => {
     );
   });
 
+  describe("Beehive theme", () => {
+    const block = tokens.indexOf(':root[data-theme="beehive"] {');
+    const inBeehive = (from, to) => {
+      const at = tokens.indexOf(from, block);
+      expect(block).toBeGreaterThan(-1);
+      expect(at).toBeGreaterThan(block);
+      return tokens.slice(0, at) + to + tokens.slice(at + from.length);
+    };
+
+    it("names a faint Beehive step under its own prefix", () => {
+      const result = check(
+        inBeehive("--neutral-12: #1f1a0a;", "--neutral-12: #e9dfc2;"),
+      );
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain("beehive/bee/neutral/light");
+    });
+
+    it("fails an unresolved variable inside the Beehive block", () => {
+      const result = check(
+        inBeehive(
+          "--text-on-prominent: var(--neutral-12);",
+          "--text-on-prominent: var(--missing);",
+        ),
+      );
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toMatch(/beehive\/bee\/[a-z]+\/light/);
+    });
+
+    it("keeps a Beehive-only fault out of Buzz and dark results", () => {
+      const result = check(
+        inBeehive("--neutral-12: #1f1a0a;", "--neutral-12: #e9dfc2;"),
+      );
+      expect(result.output).not.toMatch(
+        /(?<!beehive\/)bee\/(neutral|touch|high)/,
+      );
+      expect(result.output).not.toMatch(/beehive\/[^\n]*dark/);
+    });
+
+    it("measures the Beehive prominent fill against its ink", () => {
+      const result = check(
+        inBeehive(
+          "--affordance-prominent: var(--accent-9);",
+          "--affordance-prominent: var(--neutral-12);",
+        ),
+      );
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain("beehive/bee/");
+      expect(result.output).toContain("--text-on-prominent");
+    });
+  });
+
   it.each(["danger", "warning"])(
     "rejects the former low-contrast %s boundary",
     (role) => {

@@ -24,6 +24,11 @@ System, follows the computer’s color scheme as it changes. The choice is store
 device under `buzz-appearance.v1` in browser-origin localStorage. It does not sync
 through community profiles or relay events, and no theme marketplace is available.
 
+The **Theme** is Buzz (the default) or Beehive, stored under `buzz-theme.v1` and applied
+as `data-theme` on `<html>`. Beehive recolors the shell with warm neutrals and Honey.
+It is light only: while it is on, every Mode choice is unavailable and Mode shows
+Light, and Buzz restores the saved Mode when it returns.
+
 The app shell uses a solid neutral background with one continuous dot grid;
 reading panes remain opaque. The shared texture derives its color from the shell
 at the root in each mode. Startup, color-mode thumbnails and runtime browser
@@ -37,7 +42,7 @@ services. Failed reads and invalid values fall back to System. Failed saves keep
 selection for the current session and show a retry in Appearance.
 
 `public/appearance-init.js` runs as a parser-blocking same-origin script in the HTML
-head, before the React bundle. It sets `data-color-mode` on `<html>`; CSS supplies the
+head, before the React bundle. It sets `data-color-mode` and `data-theme` on `<html>`; CSS supplies the
 palette and `color-scheme`. It requires no unsafe-inline script CSP exception. Its
 storage key/parser is intentionally tiny and checked against the service in tests.
 `src/shared/theme/service.ts` owns live state, storage events, DOM application and

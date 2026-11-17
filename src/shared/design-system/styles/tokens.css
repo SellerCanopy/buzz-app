@@ -1843,6 +1843,8 @@
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
   --accent-overlay-highlight-dark: var(--shade-fill);
 }
+/* Beehive always uses Honey; the extra attribute outranks the other families. */
+:root[data-theme="beehive"][data-accent],
 :root[data-accent="bee"],
 [data-accent="bee"] {
   --accent-1-light: var(--bee-1-light);
@@ -1984,6 +1986,43 @@
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
   --accent-overlay-highlight-dark: var(--shade-fill);
+}
+
+/* Beehive is an opt-in, light-only theme that recolors the shell: warm neutrals
+   (with the Honey accent above). Appearance forces Light while it is on, so it
+   has no dark values by owner decision. Values come from the Beehive mock. */
+:root[data-theme="beehive"] {
+  --neutral-standard-text: #1f1a0a;
+  --bubble-neutral: #f3ebd4;
+  --bubble-received: #f7f0dc;
+  --neutral-navigation-text: #4a4125;
+  --neutral-navigation-unread: #2e2711;
+  --neutral-navigation-quiet: #f7f0dc;
+  --neutral-quiet-hover: #f7f0dc;
+  --neutral-1: #fffdf7;
+  --neutral-2: #fbf6e8;
+  --neutral-3: #f3ebd4;
+  --neutral-4: #e9dfc2;
+  --neutral-5: #ddd0ac;
+  --neutral-6: #c4b58a;
+  --neutral-7: #a39467;
+  --neutral-8: #867849;
+  --neutral-9: #6b5f3a;
+  --neutral-10: #5a4f2f;
+  --neutral-11: #2e2711;
+  --neutral-12: #1f1a0a;
+  --neutral-action-pressed: #5a4f2f;
+  --bg-app: var(--neutral-3);
+  /* Honey is the prominent fill, with the mock's ink on it; a lone mark
+     stays ink, since yellow on cream disappears. */
+  --affordance-prominent: var(--accent-9);
+  --affordance-prominent-hover: var(--accent-10);
+  --affordance-prominent-pressed: var(--accent-pressed);
+  --affordance-prominent-mark: var(--neutral-12);
+  --text-on-prominent: var(--neutral-12);
+  /* The shell is neutral-3, so chrome and selection need a step of their own. */
+  --affordance-chrome: var(--neutral-4);
+  --affordance-selected: var(--neutral-4);
 }
 
 /* Vibe changes bubble contrast only. Shared controls retain their neutral roles. */

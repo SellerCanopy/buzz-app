@@ -12,7 +12,16 @@
   } catch {
     // Storage may be denied; the system palette still opens safely.
   }
+  let theme = "buzz";
+  try {
+    // Beehive is light only, whatever Mode was saved.
+    if (localStorage.getItem("buzz-theme.v1") === "beehive") theme = "beehive";
+  } catch {
+    // The default theme remains usable without storage.
+  }
+  if (theme === "beehive") mode = "light";
   document.documentElement.dataset.colorMode = mode;
+  document.documentElement.dataset.theme = theme;
   let accent = "citrus";
   try {
     const accents = ["bee", "magenta", "iris", "cobalt", "citrus", "mono"];

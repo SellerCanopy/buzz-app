@@ -339,7 +339,7 @@ function ColorMode({ appearance }: { appearance: AppServices["appearance"] }) {
         variant="search"
         icon={<GearIcon size={21} />}
         title="Appearance"
-        subtitle="Color mode"
+        subtitle={state.modeLocked ? "Beehive is light only." : "Color mode"}
         trailing={
           <Select
             label="Color mode"
@@ -349,9 +349,17 @@ function ColorMode({ appearance }: { appearance: AppServices["appearance"] }) {
               {
                 label: "",
                 options: [
-                  { value: "system", label: "System" },
-                  { value: "light", label: "Light" },
-                  { value: "dark", label: "Dark" },
+                  {
+                    value: "system",
+                    label: "System",
+                    disabled: state.modeLocked,
+                  },
+                  {
+                    value: "light",
+                    label: "Light",
+                    disabled: state.modeLocked,
+                  },
+                  { value: "dark", label: "Dark", disabled: state.modeLocked },
                 ],
               },
             ]}
@@ -362,7 +370,7 @@ function ColorMode({ appearance }: { appearance: AppServices["appearance"] }) {
           />
         }
       />
-      {state.error && (
+      {state.error && !state.modeLocked && (
         <p role="alert" className="text-body-sm text-subtle">
           {state.error}{" "}
           <Button

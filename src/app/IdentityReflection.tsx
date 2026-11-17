@@ -166,7 +166,12 @@ export function IdentityReflection({
     const theme = new MutationObserver(schedule);
     theme.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-accent", "data-color-mode", "data-color-level"],
+      attributeFilter: [
+        "data-accent",
+        "data-color-mode",
+        "data-theme",
+        "data-color-level",
+      ],
     });
     document.addEventListener("visibilitychange", schedule);
     reduced.addEventListener("change", schedule);

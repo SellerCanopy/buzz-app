@@ -13,6 +13,12 @@ import {
 export type ColorMode = "light" | "dark";
 export type ColorModePreference = ColorMode | "system";
 export const APPEARANCE_KEY = "buzz-appearance.v1";
+/** Beehive recolors the shell and is light only; anything else loads as Buzz. */
+export const THEMES = ["buzz", "beehive"] as const;
+export type Theme = (typeof THEMES)[number];
+export const THEME_KEY = "buzz-theme.v1";
+export const parseTheme = (value: unknown): Theme =>
+  THEMES.find((theme) => theme === value) ?? "buzz";
 export type MessageWidth = "narrow" | "wide";
 export const MESSAGE_WIDTH_KEY = "buzz-message-width.v1";
 export const parseMessageWidth = (value: unknown): MessageWidth =>
@@ -43,8 +49,13 @@ export const parseMessageDensity = (value: unknown): MessageDensity =>
   value === "compact" ? "compact" : "default";
 
 export interface AppearanceSnapshot {
+  readonly theme: Theme;
+  readonly themeError: string | null;
+  /** What Mode shows: Light while Beehive is on, whatever the saved choice. */
   readonly preference: ColorModePreference;
   readonly mode: ColorMode;
+  /** True while Beehive is on: every Mode choice is unavailable. */
+  readonly modeLocked: boolean;
   readonly messageWidth: MessageWidth;
   readonly messageWidthError: string | null;
   readonly fontScale: number;
@@ -68,9 +79,14 @@ export function createAppearance(
         ? "dark"
         : "light"
       : preference;
+  // The saved Mode choice, untouched while Beehive is on so Buzz restores it.
+  let savedPreference: ColorModePreference = "system";
   let state: AppearanceSnapshot = {
+    theme: "buzz",
+    themeError: null,
     preference: "system",
     mode: "light",
+    modeLocked: false,
     error: null,
     messageWidth: "narrow",
     messageWidthError: null,
@@ -92,6 +108,7 @@ export function createAppearance(
     const changingPalette =
       root.dataset.colorMode &&
       (root.dataset.colorMode !== state.mode ||
+        root.dataset.theme !== state.theme ||
         root.dataset.accent !== state.accent ||
         root.dataset.colorLevel !==
           (state.contrast === "low" ? "touch" : state.contrast));
@@ -99,6 +116,7 @@ export function createAppearance(
     const guard = changingPalette ? ++paletteGuard : undefined;
     if (guard) root.dataset.paletteChanging = "";
     root.dataset.colorMode = state.mode;
+    root.dataset.theme = state.theme;
     root.dataset.accent = state.accent;
     // Preserve the existing soft-bubble selector for Chillin’.
     root.dataset.colorLevel =
@@ -130,17 +148,27 @@ export function createAppearance(
     apply();
     for (const listener of listeners) listener();
   };
-  const restore = () => {
+  /** Beehive shows Light; Buzz shows the saved choice. */
+  const shownMode = (): Pick<
+    AppearanceSnapshot,
+    "preference" | "mode" | "modeLocked"
+  > => {
+    const modeLocked = state.theme === "beehive";
+    const preference = modeLocked ? "light" : savedPreference;
+    return { preference, mode: resolvedMode(preference), modeLocked };
+  };
+  // The readers only load state; `settle` derives what Mode shows and tells
+  // listeners, so startup can read both keys before the first paint.
+  const settle = () => {
+    state = { ...state, ...shownMode() };
+    notify();
+  };
+  const readMode = () => {
     try {
-      const preference = parseColorModePreference(
+      savedPreference = parseColorModePreference(
         host?.localStorage.getItem(APPEARANCE_KEY),
       );
-      state = {
-        ...state,
-        preference,
-        mode: resolvedMode(preference),
-        error: null,
-      };
+      state = { ...state, error: null };
     } catch {
       state = {
         ...state,
@@ -148,7 +176,29 @@ export function createAppearance(
           "Appearance could not be restored. Choose a mode to try saving it again.",
       };
     }
-    notify();
+  };
+  const readTheme = () => {
+    try {
+      state = {
+        ...state,
+        theme: parseTheme(host?.localStorage.getItem(THEME_KEY)),
+        themeError: null,
+      };
+    } catch {
+      state = {
+        ...state,
+        themeError:
+          "Theme could not be restored. Choose a theme to try saving it again.",
+      };
+    }
+  };
+  const restore = () => {
+    readMode();
+    settle();
+  };
+  const restoreTheme = () => {
+    readTheme();
+    settle();
   };
   const onSystemSchemeChange = () => {
     if (disposed || state.preference !== "system") return;
@@ -248,6 +298,7 @@ export function createAppearance(
   const onStorage = (event: StorageEvent) => {
     if (
       event.key !== APPEARANCE_KEY &&
+      event.key !== THEME_KEY &&
       event.key !== FONT_SCALE_KEY &&
       event.key !== MESSAGE_WIDTH_KEY &&
       event.key !== ACCENT_KEY &&
@@ -260,6 +311,7 @@ export function createAppearance(
     // Re-read the current value: an older queued event must not undo a newer save.
     try {
       if (event.storageArea !== host?.localStorage) return;
+      if (event.key === null || event.key === THEME_KEY) restoreTheme();
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
       if (event.key === null || event.key === MESSAGE_WIDTH_KEY)
@@ -273,6 +325,7 @@ export function createAppearance(
       )
         restoreAccent();
     } catch {
+      if (event.key === null || event.key === THEME_KEY) restoreTheme();
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
       if (event.key === null || event.key === MESSAGE_WIDTH_KEY)
@@ -287,7 +340,9 @@ export function createAppearance(
         restoreAccent();
     }
   };
-  restore();
+  readTheme();
+  readMode();
+  settle();
   restoreFont();
   restoreMessageWidth();
   restoreAccent();
@@ -304,9 +359,24 @@ export function createAppearance(
         listeners.delete(listener);
       };
     },
+    setTheme(value: Theme) {
+      if (disposed) return;
+      const theme = parseTheme(value);
+      let themeError: string | null = null;
+      try {
+        if (!host) throw new Error("No browser storage");
+        host.localStorage.setItem(THEME_KEY, theme);
+      } catch {
+        themeError =
+          "This theme is active, but could not be saved on this device. Try again.";
+      }
+      state = { ...state, theme, themeError };
+      settle();
+    },
     setMode(preference: ColorModePreference) {
       if (
         disposed ||
+        state.modeLocked ||
         (preference !== "light" &&
           preference !== "dark" &&
           preference !== "system")
@@ -320,8 +390,9 @@ export function createAppearance(
         error =
           "This appearance is active, but could not be saved on this device. Try again.";
       }
-      state = { ...state, preference, mode: resolvedMode(preference), error };
-      notify();
+      savedPreference = preference;
+      state = { ...state, error };
+      settle();
     },
     setFontScale(value: number) {
       if (disposed || !Number.isFinite(value)) return;
