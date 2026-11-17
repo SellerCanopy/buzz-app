@@ -1,9 +1,13 @@
-// How Buzz's Claude authenticates, as the owner chooses: with an Anthropic
-// API key, pasted in setup and kept by native code in the OS credential store
-// (`claude_key.rs`), which gives it to every `claude` as `ANTHROPIC_API_KEY`,
-// never as an argument, and never back to the app; or with the Claude account
-// (a subscription) that `claude auth login` signs in to, which Claude keeps
-// itself.
+// How Buzz's Claude authenticates. With the person's own Claude setup when
+// it already works (a Claude account signed in with `claude auth login`, or
+// Amazon Bedrock, Google Vertex AI and the like, as `claude auth status`
+// finds it); otherwise as the owner chooses: with an Anthropic API key,
+// pasted in setup and kept by native code in the OS credential store
+// (`claude_key.rs`), which gives it to `claude` as `ANTHROPIC_API_KEY`, never
+// as an argument, and never back to the app; or with the Claude account (a
+// subscription) that `claude auth login` signs in to, which Claude keeps
+// itself. An explicit choice beats the own setup found; the key beats nothing
+// until the owner saves one.
 //
 // Builds can replace this one file with another way to sign in, so the rest
 // of the plugin reaches authentication only through its exports: keep their
@@ -29,8 +33,13 @@ const NO_KEY =
   "Claude needs an Anthropic API key. Add one in Settings → Claude.";
 const NO_REVIEW_KEY =
   "Claude security reviews need an Anthropic API key, even when Claude runs with your Claude account. Add one in Settings → Claude.";
-/** What setup says first: this is one for all of Claude, not per agent. */
-export const KEY_ONCE =
+/** What setup says while Claude has no working setup: either way works. */
+export const CONNECT =
+  "Buzz can help you configure your Claude setup with an API key, or use the Claude CLI to configure your own connection and refresh Buzz.";
+/** What setup says first: the key is one for all of Claude, not per agent. */
+export const KEY_ONCE = `${CONNECT} Create a key at console.anthropic.com and paste it below.`;
+/** The same where setup can also sign in to a Claude account (`signIn`). */
+const KEY_ONCE_ACCOUNT =
   "Sign in with your Claude account (Pro, Max, Team or Enterprise), or create an API key at console.anthropic.com and paste it below. You only have to set this up once.";
 const REJECTED_KEY =
   "Anthropic rejected the Claude API key. It may have been revoked or run out of credit. Paste a working key in Settings → Claude.";
@@ -70,6 +79,55 @@ async function output(spawn: Spawn, id: string) {
   return stdout;
 }
 
+/** How long `claude auth status` may take; it reads only local settings. */
+const STATUS_TIMEOUT_MS = 15_000;
+/** The person's own setup, as far as Claude says who it is for: the account's
+ * label, empty when it has none to show (a cloud provider's setup has no
+ * email). */
+type Connection = Readonly<{ label: string }>;
+
+/** The person's own Claude setup, which works without Buzz's key: what
+ * `claude auth status` finds in `~/.claude`, its settings and the app's
+ * environment, asked as every Claude starts (`ENV`) and without the key:
+ * found, or undefined when it is signed out; throws when Claude cannot say,
+ * such as before Buzz's copy is installed. Which setup it is stays Claude's
+ * own, so only an account's email and organization are shown. It reads only
+ * local settings, so revoked credentials still count until a turn fails. */
+async function ownConnection(spawn: Spawn): Promise<Connection | undefined> {
+  let stdout = "";
+  const process = await spawn("claude", {
+    args: ["auth", "status", "--json"],
+    env: ENV,
+    onStdout: (text) => {
+      stdout += text;
+    },
+  });
+  const timer = setTimeout(() => void process.kill(), STATUS_TIMEOUT_MS);
+  try {
+    // Not `end()`: it rejects once the process has already exited, as a
+    // status soon has.
+    await process.exited;
+  } finally {
+    clearTimeout(timer);
+  }
+  // Signed out exits 1, still with its JSON.
+  const status = JSON.parse(stdout) as {
+    loggedIn?: unknown;
+    email?: string;
+    orgName?: string;
+  } | null;
+  if (!status || typeof status !== "object")
+    throw new Error("Claude did not report its setup");
+  if (status.loggedIn !== true) return undefined;
+  // A personal account's organization is "<email>'s Organization".
+  const personal = status.email && status.orgName?.includes(status.email);
+  return {
+    label: [status.email, !personal && status.orgName]
+      .filter(Boolean)
+      .join(" · "),
+  };
+}
+
 /** The native store never returns saved credentials to setup or Settings.
  * Native code injects the key into the Claude processes that request it. */
 const nativeStore = ():
@@ -99,19 +157,20 @@ export const leadsHarnesses = false;
 export class ClaudeAuth {
   /** Which ways this build authenticates. */
   readonly id = "buzz-claude-auth:api-key+account";
-  /** What the last check found: the way in use, whether a key is saved, and
-   * the Claude account signed in, when it asked. */
-  found: Readonly<{
-    method: Method;
-    key: boolean;
-    account?: Readonly<{ label: string }>;
-  }> = { method: "api-key", key: false };
   private saved: Promise<boolean> | undefined;
-  private readonly listeners = new Set<() => void>();
-  /** The choice, without agent storage. */
-  private picked: Method | undefined;
+  /** The person's own setup, asked once until checked again. */
+  private own: Promise<Connection | undefined> | undefined;
+  /** Whether the last answer found the person's own setup; undefined until
+   * one has. */
+  private owned: boolean | undefined;
+  /** The last own setup found, and whether a key was saved, as last asked. */
+  private account: Connection | undefined;
+  private key = false;
+  /** The owner's choice as last read, or made without agent storage. */
+  private choice: Method | undefined;
   /** Counts choices made, so a check under way when one is made looks again. */
   private changes = 0;
+  private readonly listeners = new Set<() => void>();
 
   private readonly store;
 
@@ -120,6 +179,20 @@ export class ClaudeAuth {
     private readonly storage?: AgentStore,
   ) {
     this.store = spawn ? nativeStore() : undefined;
+  }
+
+  /** What the last check found: the way in use, whether a key is saved, and
+   * the Claude account or own setup Claude is signed in to, when it asked. */
+  get found(): Readonly<{
+    method: Method;
+    key: boolean;
+    account?: Readonly<{ label: string }>;
+  }> {
+    return {
+      method: this.choice ?? (this.account ? "account" : "api-key"),
+      key: this.key,
+      ...(this.account && { account: this.account }),
+    };
   }
 
   /** Optional management UI for this build's authentication method. */
@@ -134,6 +207,8 @@ export class ClaudeAuth {
       <ClaudeSettings
         setup={setup}
         active={active}
+        read={this.credentials}
+        connect={CONNECT}
         clearKey={() => this.clear()}
         connection={connection}
       />
@@ -157,7 +232,9 @@ export class ClaudeAuth {
   readonly signIn: ((step: Step) => Promise<void>) | undefined = async (
     step,
   ) => {
-    if (!(await this.account()))
+    // Asked afresh: a sign-in made or lapsed since the last answer counts.
+    this.own = undefined;
+    if (!(await this.connection()))
       await step("claude", ["auth", "login"], "Sign-in");
     await this.use("account");
   };
@@ -165,70 +242,32 @@ export class ClaudeAuth {
   /** Uses `method` for every `claude` started from now on. */
   async use(method: Method) {
     if (this.storage) await this.storage.set(METHOD_KEY, method);
-    else this.picked = method;
+    this.choice = method;
+    this.own = undefined;
     this.changes++;
-    this.found = { ...this.found, method };
     for (const listener of this.listeners) listener();
   }
 
   /** The way the owner chose, if they have, as saved: another program on
    * this computer may have chosen since this one read it. */
   private async chosen() {
-    const chosen = this.storage
-      ? await this.storage.read(METHOD_KEY)
-      : this.picked;
-    return isMethod(chosen) ? chosen : undefined;
-  }
-
-  /** The way chosen, or, until one is, the key when one is saved, and
-   * otherwise the account, once a check finds Claude signed in to one. Until
-   * then each asks again: setup may not have checked yet, or the person may
-   * have signed in from a terminal since. */
-  private async method(): Promise<Method> {
-    const chosen = await this.chosen();
-    if (chosen) return chosen;
-    if (await this.has()) return "api-key";
-    if (!this.found.account) await this.check();
-    return this.found.method;
-  }
-
-  /** The Claude account (a subscription) Claude is signed in to, or
-   * undefined. Signed out, `claude auth status` exits 1 and says so; an API
-   * key Claude holds, as from an `apiKeyHelper`, is not an account. */
-  private async account(): Promise<{ label: string } | undefined> {
-    const spawn = this.spawn;
-    if (!spawn) return undefined;
-    let stdout = "";
-    try {
-      const process = await spawn("claude", {
-        args: ["auth", "status", "--json"],
-        env: ENV,
-        onStdout: (text) => {
-          stdout += text;
-        },
-      });
-      // Not `end()`: it rejects once the process has already exited.
-      const timer = setTimeout(() => void process.kill(), 15_000);
-      await process.exited;
-      clearTimeout(timer);
-      const status = JSON.parse(stdout) as {
-        loggedIn?: boolean;
-        authMethod?: string;
-        email?: string;
-        orgName?: string;
-      };
-      if (!status.loggedIn || /api.?key/i.test(status.authMethod ?? ""))
-        return undefined;
-      // A personal account's organization is "<email>'s Organization".
-      const personal = status.email && status.orgName?.includes(status.email);
-      return {
-        label: [status.email, !personal && status.orgName]
-          .filter(Boolean)
-          .join(" · "),
-      };
-    } catch {
-      return undefined;
+    if (this.storage) {
+      const chosen = await this.storage.read(METHOD_KEY);
+      this.choice = isMethod(chosen) ? chosen : undefined;
     }
+    return this.choice;
+  }
+
+  /** Whether `args` start a Claude that runs as the person's account or own
+   * setup rather than with the key. A choice made decides; until one is,
+   * the own setup does. A protected launch reads no settings files, where a
+   * setup can live (provider variables, `apiKeyHelper`), and `auth status`
+   * cannot be asked that way: it keeps the key when one is saved. */
+  private async runsOnOwnSetup(args: readonly string[]) {
+    const chosen = await this.chosen();
+    if (chosen) return chosen === "account";
+    if (args.includes("--setting-sources") && (await this.has())) return false;
+    return !!(await this.connection());
   }
 
   /** Told when the credentials change, so running sessions start again. */
@@ -240,7 +279,8 @@ export class ClaudeAuth {
   };
 
   /** Whether a key is saved, asked once until it is saved again or checked;
-   * no key is asked again each time. */
+   * no key is asked again each time. A saved key is still what protected
+   * launches use beside the person's own setup. */
   private has() {
     const store = this.store;
     if (!store) return Promise.resolve(false);
@@ -251,38 +291,90 @@ export class ClaudeAuth {
     const forget = () => {
       if (this.saved === asking) this.saved = undefined;
     };
-    asking.then((saved) => saved || forget(), forget);
+    asking.then((saved) => {
+      this.key = saved;
+      if (!saved) forget();
+    }, forget);
     return asking;
   }
 
+  /** The person's own setup, asked once until it is checked again. An
+   * answer Claude could not give is not kept. A change of answer is a change
+   * of credentials, so listeners are told. */
+  private connection() {
+    const spawn = this.spawn;
+    if (!spawn) return Promise.resolve(undefined);
+    if (this.own) return this.own;
+    const asking = ownConnection(spawn).then(
+      (own) => {
+        if (this.own === asking) {
+          const changed = this.owned !== undefined && this.owned !== !!own;
+          this.owned = !!own;
+          this.account = own;
+          if (changed) for (const listener of this.listeners) listener();
+        }
+        return own;
+      },
+      () => {
+        if (this.own === asking) this.own = undefined;
+        return undefined;
+      },
+    );
+    this.own = asking;
+    return asking;
+  }
+
+  /** Whether Claude runs with the person's own setup or account rather than
+   * the key, as last checked. */
+  get usesOwnSetup() {
+    return this.found.method === "account" && this.account !== undefined;
+  }
+
   /** Whether Claude can run turns the chosen way: an account to show, or
-   * undefined. */
+   * undefined. Until the owner chooses, the person's own setup comes first,
+   * so a saved key never overrides it. */
   async check(): Promise<Readonly<{ account?: string }> | undefined> {
     for (;;) {
       const changes = this.changes;
       const chosen = await this.chosen();
-      // Each check asks the store itself, not a read another check started.
+      // Each check asks again, not a read another check started.
       this.saved = undefined;
-      // The account doesn't need the key store, so a refused one can't stop it.
-      const key = await this.has().catch((error: unknown) => {
-        if (chosen === "account") return false;
-        throw error;
-      });
-      // The account matters only when Claude may use it: chosen, or, until
-      // the owner chooses, when no key is saved, as Claude ran before keys.
-      const account =
-        chosen === "account" || (!chosen && !key)
-          ? await this.account()
-          : undefined;
+      this.own = undefined;
+      // The key is all that runs once chosen, so the own setup isn't asked.
+      const own = chosen === "api-key" ? undefined : await this.connection();
+      const method = chosen ?? (own ? "account" : "api-key");
+      // The key store is asked when the key could be used, or the owner
+      // chose: the own setup alone needs nothing from it. The account
+      // doesn't need it either, so a refused one can't stop it.
+      const key =
+        chosen === undefined && own
+          ? this.key
+          : await this.has().catch((error: unknown) => {
+              if (method === "account") return false;
+              throw error;
+            });
       // A choice made meanwhile, such as a key saved, outdates all this.
       if (changes !== this.changes) continue;
-      const method = chosen ?? (account ? "account" : "api-key");
-      this.found = { method, key, ...(account && { account }) };
+      this.key = key;
       if (method === "api-key") return key ? {} : undefined;
-      if (!account) return undefined;
-      return account.label ? { account: account.label } : {};
+      if (!own) return undefined;
+      return own.label ? { account: own.label } : {};
     }
   }
+
+  /** What Settings needs, asked again: whether the person has a setup of
+   * their own, and whether a key is saved, which security reviews still
+   * need. */
+  private readonly credentials = async () => {
+    this.saved = undefined;
+    this.own = undefined;
+    const [own, key] = await Promise.all([
+      this.connection(),
+      this.has(),
+      this.chosen(),
+    ]);
+    return { own: !!own, key };
+  };
 
   /** Saves `key` for every `claude` started from now on; what to say. A
    * save can't be stopped once it reaches the store, so `signal` only
@@ -293,6 +385,7 @@ export class ClaudeAuth {
     signal?.throwIfAborted();
     try {
       await store.save(key);
+      this.key = true;
     } finally {
       // A refused save leaves the key as it was; anything else may not.
       this.saved = undefined;
@@ -309,26 +402,30 @@ export class ClaudeAuth {
     if (!store) throw new Error("Claude runs only in the desktop app");
     try {
       await store.clear();
+      this.key = false;
     } finally {
       this.saved = undefined;
     }
     for (const listener of this.listeners) listener();
   }
 
-  /** `spawn`, starting each `claude` the chosen way: with the saved key,
-   * which native code sets itself, or with the account Claude signed in to.
-   * One with its own Claude folder (a review's) can't reach that account, so
-   * it always gets the key. `required` refuses to start one meant to use a
-   * key without one, so no such turn falls back on an account sign-in that
-   * `~/.claude` may hold. */
+  /** `spawn`, starting each `claude` the way it is set up: as the person's
+   * own setup or account, which works without Buzz's key, or with the saved
+   * key, which native code sets itself. One with its own Claude folder (a
+   * review's) can't reach that account, so it always gets the key.
+   * `required` refuses to start one meant to use a key without one, so no
+   * such turn falls back on an account sign-in that `~/.claude` may hold. */
   authorize(spawn: Spawn, required = false): Spawn {
     return async (id, options) => {
       // Buzz's copy, and the protected release (`claude-protected-*`).
       if (id !== "claude" && !id.startsWith("claude-protected-"))
         return spawn(id, options);
+      const args = options?.args ?? [];
+      // The version needs no credentials.
       if (
-        options?.env?.CLAUDE_CONFIG_DIR == null &&
-        (await this.method()) === "account"
+        args[0] !== "--version" &&
+        !options?.env?.CLAUDE_CONFIG_DIR &&
+        (await this.runsOnOwnSetup(args))
       )
         return spawn(id, options);
       if (required && !(await this.has())) throw new Error(NO_KEY);
@@ -362,6 +459,12 @@ export class ClaudeAuth {
    * Markdown: a missing or rejected key, or a lapsed sign-in, links to
    * `settings`, where it is fixed once for every Claude agent. */
   explainTurn(error: string, settings: string) {
+    // Claude's words don't say which credential failed. Beside the person's
+    // own setup, a saved key is still what protected launches use.
+    if (this.usesOwnSetup && (rejected(error) || /\/login\b/.test(error)))
+      return this.key
+        ? `Claude could not authenticate. Protected agents use the API key in [Settings](${settings}): replace it there if it was revoked or ran out of credit. Other agents use your own Claude setup: fix it with the Claude CLI. Then try again.`
+        : "Claude could not authenticate with your own Claude setup. Fix it with the Claude CLI, then try again.";
     if (error.includes(NO_KEY))
       return `Claude is missing an API key. Head to [Settings](${settings}) to add one.`;
     if (signedOut(error))
@@ -437,7 +540,9 @@ export function SignIn({
     <div className="grid gap-3">
       {/* Settings puts the introduction in its shared page header. */}
       {variant !== "dialog" && (
-        <p className="m-0 text-body-sm text-secondary">{KEY_ONCE}</p>
+        <p className="m-0 text-body-sm text-secondary">
+          {setup.auth.signIn ? KEY_ONCE_ACCOUNT : KEY_ONCE}
+        </p>
       )}
       {/* An account's sign-in lapsed: the key saved before still works. */}
       {setup.auth.found.method === "account" && setup.auth.found.key && (
@@ -475,18 +580,23 @@ export function SignedIn({
           Claude runs with your Anthropic API key.
         </p>
         <KeyForm setup={setup} replace onSaved={onSaved} />
-        <div>
-          <Button
-            type="button"
-            size="sm"
-            disabled={busy}
-            onClick={() => void setup.run("sign-in")}
-          >
-            Use Claude account
-          </Button>
-        </div>
+        {setup.auth.signIn && (
+          <div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy}
+              onClick={() => void setup.run("sign-in")}
+            >
+              Use Claude account
+            </Button>
+          </div>
+        )}
       </div>
     );
+  // Claude runs as the person set it up; with no way to sign in here, there
+  // is no key to replace.
+  if (!setup.auth.signIn) return null;
   return (
     <div className="grid gap-2">
       <p className="m-0 text-body-sm text-subtle">

@@ -5,7 +5,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { SavedApiKey } from "../../features/settings/SavedApiKey";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -16,6 +15,7 @@ import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SignIn } from "./auth";
 import { SignInCode } from "./SignInCode";
+import { SavedApiKey } from "../../features/settings/SavedApiKey";
 import type { ClaudeSetup } from "./setup";
 
 export type ClaudeConnection = {
@@ -23,20 +23,34 @@ export type ClaudeConnection = {
   onOpenChange(open: boolean): void;
 };
 
+type Credentials = Readonly<{
+  /** Whether the person has a Claude setup of their own, which Claude uses
+   * over a saved key. */
+  own: boolean;
+  /** Whether a key is saved; security reviews always use it. */
+  key: boolean;
+}>;
+
 /** Credentials are independent of the installed Claude version, so a missing
  * or outdated runtime never prevents removing a saved key. */
 export function ClaudeSettings({
   setup,
   active,
+  read,
+  connect,
   clearKey,
   connection,
 }: {
   setup: ClaudeSetup;
   active(): boolean;
+  read(): Promise<Credentials>;
+  /** What to say while Claude has neither a setup of its own nor a key. */
+  connect: string;
   clearKey(): Promise<void>;
   connection?: ClaudeConnection | undefined;
 }) {
   const [configured, setConfigured] = useState<boolean>();
+  const [own, setOwn] = useState<Credentials["own"]>();
   const [checking, setChecking] = useState(true);
   const [readError, setReadError] = useState("");
   const request = useRef(0);
@@ -67,9 +81,12 @@ export function ClaudeSettings({
     setChecking(true);
     setReadError("");
     try {
-      await setup.auth.check();
-      // Claude may run on the account without a key; this group is the key's.
-      if (request.current === current) setConfigured(setup.auth.found.key);
+      const credentials = await read();
+      if (request.current === current) {
+        setConfigured(credentials.key);
+        setOwn(credentials.own);
+      }
+      return credentials;
     } catch (error) {
       if (request.current === current) {
         setReadError(String(error));
@@ -77,7 +94,7 @@ export function ClaudeSettings({
     } finally {
       if (request.current === current) setChecking(false);
     }
-  }, [setup]);
+  }, [read]);
   useEffect(() => {
     const unsubscribe = setup.auth.subscribe(() => void check());
     void check();
@@ -86,6 +103,12 @@ export function ClaudeSettings({
       unsubscribe();
     };
   }, [setup, check]);
+  /** Looks again for the person's own setup, made with the Claude CLI, which
+   * ends key entry once it is found. */
+  const refresh = async () => {
+    await setup.check().catch(() => undefined);
+    if ((await check())?.own) changeConnection(false);
+  };
   useEffect(() => {
     if (connection?.open) void check();
   }, [connection?.open, check]);
@@ -138,8 +161,8 @@ export function ClaudeSettings({
         id="claude-settings-title"
         title="Claude"
         subtitle={
-          configured === false && !checking && !readError
-            ? "Claude needs your Claude account or an API key to connect."
+          configured === false && !own && !checking && !readError
+            ? connect
             : "Manage Claude’s credentials on this computer."
         }
       />
@@ -197,16 +220,18 @@ export function ClaudeSettings({
             </SettingsGroup>
           )}
         </LoadingRegion>
-        <div>
-          <InlineHeader title="Claude account" />
-          <SettingsGroup layout="form">
-            <ClaudeAccount
-              setup={setup}
-              active={active}
-              disabled={checking || saving || clearing || !active()}
-            />
-          </SettingsGroup>
-        </div>
+        {setup.auth.signIn && (
+          <div>
+            <InlineHeader title="Claude account" />
+            <SettingsGroup layout="form">
+              <ClaudeAccount
+                setup={setup}
+                active={active}
+                disabled={checking || saving || clearing || !active()}
+              />
+            </SettingsGroup>
+          </div>
+        )}
       </div>
       {configured === false && (
         <SignIn
@@ -225,6 +250,7 @@ export function ClaudeSettings({
               title="Connect Claude"
               description={
                 <>
+                  {!own && <>{connect} </>}
                   Create an API key at{" "}
                   <Button
                     variant="link"
@@ -244,7 +270,18 @@ export function ClaudeSettings({
                   and paste it below.
                 </>
               }
-              headerGap="compact"
+              actions={
+                !own && (
+                  <Button
+                    disabled={checking || saving}
+                    // Natively disabled, it would blur out of the open dialog.
+                    focusableWhenDisabled
+                    onClick={() => void refresh()}
+                  >
+                    Refresh
+                  </Button>
+                )
+              }
               preventClose={saving}
               onOpenChange={(open) => !open && changeConnection(false)}
               initialFocus={() =>
@@ -269,7 +306,7 @@ export function ClaudeSettings({
       {confirm && (
         <AlertDialog
           title="Remove Claude API key?"
-          description={`This removes the key from ${storage}. New local Claude sessions will need a key. A turn already running can finish.`}
+          description={`This removes the key from ${storage}. ${setup.auth.found.method === "account" ? "Security reviews" : "New local Claude sessions"} will need a key. A turn already running can finish.`}
           pending={clearing}
           onClose={() => setConfirm(false)}
           finalFocus={() =>

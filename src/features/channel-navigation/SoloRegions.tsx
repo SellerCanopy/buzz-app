@@ -1,8 +1,10 @@
 import { SoloDisclosure } from "./SoloDisclosure";
+import { RegionChannelGroup, RegionChannelGroups } from "./RegionChannelGroup";
 import {
   WorkspaceCompositionContext,
   RegionWorkspace,
   RegionChats,
+  RegionChatList,
   type ComposeWorkspaces,
 } from "./WorkspaceComposition";
 import {
@@ -98,9 +100,9 @@ export function SoloRegions({
   const snapshot = useSoloNavigation(session);
   const service = soloNavigationFor(session);
   const regions = orderContributedSidebarSections(
-    // A hidden region draws nothing; recovery is never hidden.
+    // Hidden sources draw nothing; explicitly disabled chats use ordinary Solo.
     snapshot.regions
-      .filter((region) => !region.hidden)
+      .filter((region) => !region.hidden && region.reason !== "disabled")
       .map((region) => ({
         key: `solo-region:${region.key}`,
         region,
@@ -465,6 +467,7 @@ function RegionFrame({
                     ...destinationUi,
                     Workspace: RegionWorkspace,
                     Chats: RegionChats,
+                    ChatList: RegionChatList,
                   }
                 : destinationUi
             }
@@ -502,7 +505,9 @@ function RegionFrame({
           <>
             {hasActions && <NavigationSectionHeading actions={headerActions} />}
             {headerNotice}
-            {contents}
+            <RegionChannelGroups session={session}>
+              {contents}
+            </RegionChannelGroups>
             {!composing && groupDisclosure ? ordinary : null}
           </>
         ) : (
@@ -526,7 +531,9 @@ function RegionFrame({
             headerActions={headerActions}
             headerNotice={headerNotice}
           >
-            {contents}
+            <RegionChannelGroups session={session}>
+              {contents}
+            </RegionChannelGroups>
             {!composing && groupDisclosure ? ordinary : null}
           </SidebarSection>
         )}
@@ -656,4 +663,5 @@ const destinationUi = {
   Conversation: RegionConversation,
   Card: RegionCard,
   Disclosure: SoloDisclosure,
+  ChannelGroup: RegionChannelGroup,
 };
