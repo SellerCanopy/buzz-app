@@ -24,7 +24,14 @@ import {
 import { Callout } from "./Callout";
 import { CardConfirm } from "./CardConfirm";
 import { CardMenu } from "./CardMenu";
-import { canPause, canRetry, canStart, canStop, isWebUrl } from "./cardActions";
+import {
+  canPause,
+  canRetry,
+  canSkip,
+  canStart,
+  canStop,
+  isWebUrl,
+} from "./cardActions";
 import { Details, pullState } from "./CardDetails";
 import { FilesTab } from "./FilesTab";
 import { stepStatus, subjectOf } from "./labels";
@@ -208,6 +215,11 @@ export function CardPage({
             {card && canRun && canPause(card, run) && (
               <Button disabled={pending} onClick={() => void pause(card)}>
                 Pause
+              </Button>
+            )}
+            {card && canRun && canSkip(card, run) && (
+              <Button disabled={pending} onClick={() => setConfirm("skip")}>
+                Skip stage
               </Button>
             )}
             {card && run && canRun && canStop(run) && (

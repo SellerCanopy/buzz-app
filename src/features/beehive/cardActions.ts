@@ -25,6 +25,15 @@ export function canPause(card: Card, run: Run | undefined): boolean {
   return !!run && !card.archived && run.state === "running";
 }
 
+/** A run that is waiting or paused can be moved past its stage. */
+export function canSkip(card: Card, run: Run | undefined): boolean {
+  return (
+    !!run &&
+    !card.archived &&
+    (run.state === "waiting" || run.state === "paused")
+  );
+}
+
 /** A card whose run failed or was stopped can start again from the stage it reached. */
 export function canRetry(card: Card, run: Run | undefined): boolean {
   return (

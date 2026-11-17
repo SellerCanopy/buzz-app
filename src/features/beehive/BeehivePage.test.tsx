@@ -182,6 +182,7 @@ function engine(
       create(RunSchema, { id: "run-2", cardId: ID, state: "running" }),
     ),
     pauseCard: vi.fn(async () => card()),
+    skipStage: vi.fn(async () => card()),
     resetCard: vi.fn(async () => card()),
     removeCard: vi.fn(async () => ({})),
     answerInbox: vi.fn(async (id: string) =>
@@ -2553,6 +2554,88 @@ it("holds a running card with Pause", async () => {
   page(e.client, cardView);
   await userEvent.click(await screen.findByRole("button", { name: "Pause" }));
   await vi.waitFor(() => expect(e.calls.pauseCard).toHaveBeenCalledWith(ID));
+});
+
+it("skips a waiting stage only after asking", async () => {
+  const e = engine({
+    runs: [run({ state: "waiting", steps: [step({ stage: "ship" })] })],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "waiting" }),
+  );
+  page(e.client, cardView);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Skip stage" }),
+  );
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Skip this stage?",
+  });
+  expect(e.calls.skipStage).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Skip stage" }),
+  );
+  await vi.waitFor(() => expect(e.calls.skipStage).toHaveBeenCalledWith(ID));
+});
+
+it("offers Skip stage on a paused run, and not on a working one or to a reader", async () => {
+  const paused = engine({
+    runs: [run({ state: "paused", steps: [step({ stage: "ship" })] })],
+  });
+  paused.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "waiting" }),
+  );
+  page(paused.client, cardView);
+  expect(
+    await screen.findByRole("button", { name: "Skip stage" }),
+  ).toBeVisible();
+  cleanup();
+
+  const running = engine({
+    runs: [run({ state: "running", steps: [step({ stage: "ship" })] })],
+  });
+  running.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "running" }),
+  );
+  page(running.client, cardView);
+  await screen.findByRole("tab", { name: "Steps" });
+  await levelApplied(running);
+  expect(screen.queryByRole("button", { name: "Skip stage" })).toBeNull();
+  cleanup();
+
+  const reader = engine({
+    role: "read",
+    runs: [run({ state: "waiting", steps: [step({ stage: "ship" })] })],
+  });
+  reader.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "waiting" }),
+  );
+  page(reader.client, cardView);
+  await screen.findByRole("tab", { name: "Steps" });
+  await levelApplied(reader);
+  expect(screen.queryByRole("button", { name: "Skip stage" })).toBeNull();
+});
+
+it("shows the engine's refusal to skip word for word", async () => {
+  const e = engine({
+    runs: [run({ state: "waiting", steps: [step({ stage: "ship" })] })],
+  });
+  e.calls.getCard.mockResolvedValue(
+    card({ workflow: "demo", state: "waiting" }),
+  );
+  e.calls.skipStage.mockRejectedValue(
+    new Error("Stop the current stage first"),
+  );
+  page(e.client, cardView);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Skip stage" }),
+  );
+  const dialog = await screen.findByRole("alertdialog");
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Skip stage" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Stop the current stage first",
+  );
 });
 
 it("gives a person who can only read no More actions menu when there is nothing to open", async () => {

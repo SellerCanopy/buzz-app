@@ -5,6 +5,7 @@ import {
   canMove,
   canPause,
   canRetry,
+  canSkip,
   canStart,
   canStop,
   isWebUrl,
@@ -37,6 +38,15 @@ it("stops a run that has not ended and holds one that is working", () => {
   expect(canPause(card(), run("running"))).toBe(true);
   expect(canPause(card(), run("paused"))).toBe(false);
   expect(canPause(card(), undefined)).toBe(false);
+});
+
+it("skips a stage only when the run is waiting or paused", () => {
+  expect(canSkip(card(), run("waiting"))).toBe(true);
+  expect(canSkip(card(), run("paused"))).toBe(true);
+  expect(canSkip(card(), run("running"))).toBe(false);
+  expect(canSkip(card(), run("ended"))).toBe(false);
+  expect(canSkip(card(), undefined)).toBe(false);
+  expect(canSkip(card({ archived: true }), run("waiting"))).toBe(false);
 });
 
 it("retries a failed or stopped card whose run ended", () => {
