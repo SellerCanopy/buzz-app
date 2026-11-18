@@ -115,8 +115,11 @@ export function ProfileButton({
     online: "Online",
     away: "Away",
     offline: "Offline",
-    unknown: "Status unavailable",
+    unknown: "Availability unknown",
   }[observed];
+  // The unknown label already names the control.
+  const availabilityName =
+    observed === "unknown" ? label : `Availability: ${label}`;
   const [statusChange, setStatusChange] = useState<{
     target: "online" | "away" | "offline";
     session: typeof session;
@@ -316,7 +319,7 @@ export function ProfileButton({
                   aria-label={
                     viewer
                       ? observed === "unknown"
-                        ? "Your status is unavailable"
+                        ? "Your availability is unknown"
                         : `Your status: ${label}`
                       : "Your avatar"
                   }
@@ -364,7 +367,7 @@ export function ProfileButton({
                 <MenuRoot modal={false}>
                   <span className={styles.availability} data-status={observed}>
                     <MenuTrigger
-                      aria-label={`Availability: ${label}${pending ? `, updating to ${currentChange.target}` : ""}`}
+                      aria-label={`${availabilityName}${pending ? `, updating to ${currentChange.target}` : ""}`}
                       render={
                         <Button variant="subtle" size="xs">
                           {pending && (
@@ -430,7 +433,7 @@ export function ProfileButton({
               role="alert"
               className="mx-3 my-2 max-w-56 text-body-sm text-danger"
             >
-              Could not confirm your status. Try again.
+              Could not confirm your availability. Try again.
             </p>
           )}
           {presence.error && (
