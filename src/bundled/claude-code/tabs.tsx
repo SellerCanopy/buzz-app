@@ -490,15 +490,20 @@ export function createTabs({
         {...props}
         models={modelChoices(state.models)}
         value={current.model}
-        defaultModel={providerDefaultModel(
-          providerDefaults.model,
-          state.models,
-        )}
+        defaultModel={
+          providerDefaults.model
+            ? providerDefaultModel(providerDefaults.model, state.models)
+            : undefined
+        }
         defaultLabel={providerDefaultLabel(
           providerDefaults.model,
           state.models,
         )}
-        defaultDescription="Following the provider's model default"
+        defaultDescription={
+          providerDefaults.model
+            ? `Currently ${providerDefaultLabel(providerDefaults.model, state.models)}`
+            : "Follows Claude Code settings"
+        }
         loading={state.modelsChecking}
         error={state.modelsError}
         retry={() => void setup.loadModels(true)}
@@ -813,8 +818,8 @@ export function createTabs({
                   saved.model)
                 : ""
             }
-            defaultModel={providerDefaultModel("", state.models)}
             defaultLabel={providerDefaultLabel("", state.models)}
+            defaultDescription="Follows Claude Code settings"
             onConfigure={onConfigure}
             onChange={(model) => {
               defaults.save({ model }).then(
@@ -1324,9 +1329,9 @@ export function createTabs({
           models={modelChoices(setupState.models)}
           value={draft.model}
           defaultModel={
-            remote
-              ? undefined
-              : providerDefaultModel(providerDefaults.model, setupState.models)
+            !remote && providerDefaults.model
+              ? providerDefaultModel(providerDefaults.model, setupState.models)
+              : undefined
           }
           defaultLabel={
             remote
@@ -1335,8 +1340,10 @@ export function createTabs({
           }
           defaultDescription={
             remote
-              ? "Use the model configured on the target"
-              : "Following the provider's model default"
+              ? "Follows the target computer's settings"
+              : providerDefaults.model
+                ? `Currently ${providerDefaultLabel(providerDefaults.model, setupState.models)}`
+                : "Follows Claude Code settings"
           }
           loading={setupState.modelsChecking}
           onChange={(model) => {
